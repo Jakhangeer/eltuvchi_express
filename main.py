@@ -2998,9 +2998,16 @@ async def partner_dashboard(
         .options(selectinload(Order.items), selectinload(Order.client), selectinload(Order.courier))
         .where(Order.partner_id == partner.id)
         .order_by(Order.created_at.desc())
-        .limit(100)
+        .limit(200)
     )
-    orders = orders_result.scalars().all()
+    all_orders = orders_result.scalars().all()
+
+    # Bugungi kunni O'zbekiston vaqti bo'yicha aniqlaymiz (server UTC'da
+    # ishlaganda, tun yarmidan keyingi soatlarda xato "kecha" chiqib
+    # qolmasligi uchun)
+    today_uzb = (datetime.utcnow() + UZB_TZ_OFFSET).date()
+    today_orders = [o for o in all_orders if (o.created_at + UZB_TZ_OFFSET).date() == today_uzb]
+    history_orders = [o for o in all_orders if (o.created_at + UZB_TZ_OFFSET).date() != today_uzb]
 
     withdrawal_result = await db.execute(
         select(WithdrawalRequest)
@@ -3016,7 +3023,8 @@ async def partner_dashboard(
         context={
             "partner": partner,
             "products": products,
-            "orders": orders,
+            "today_orders": today_orders,
+            "history_orders": history_orders,
             "status_labels": STATUS_LABELS_UZ,
             "current_user": current_user,
             "withdrawal_requests": withdrawal_requests,
@@ -3142,6 +3150,52 @@ async def partner_toggle_open(
     partner.is_open = not partner.is_open
     await db.commit()
     return RedirectResponse(url="/partner", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@partner_router.post("/settings/update")
+async def partner_update_settings(
+    brand_name: str = Form(...),
+    address: str = Form(...),
+    latitude: Optional[float] = Form(None),
+    longitude: Optional[float] = Form(None),
+    notification_sound: str = Form("chime1"),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_partner_user),
+):
+    """Hamkorning o'zi do'kon nomi, manzili, xaritadagi joylashuvi va
+    bildirishnoma signalini sozlashi uchun. DIQQAT: komissiya foizi,
+    ish vaqti, shahar kabi "shartnoma darajasidagi" narsalar bu yerda
+    YO'Q — ular faqat OWNER orqali o'zgartiriladi (avvalgi kelishuvga
+    ko'ra)."""
+    partner = await _get_own_partner(db, current_user)
+    partner.brand_name = brand_name
+    partner.address = address
+    if latitude is not None and longitude is not None:
+        partner.latitude = latitude
+        partner.longitude = longitude
+    if notification_sound in ("chime1", "chime2", "chime3"):
+        partner.notification_sound = notification_sound
+    await db.commit()
+    return RedirectResponse(url="/partner", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@partner_router.get("/api/new-orders-count")
+async def partner_new_orders_count(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_partner_user),
+):
+    """Kabinet sahifasi shu manzilni har necha soniyada bir so'rab turadi
+    (poll qiladi) — agar 'javob kutayotgan' (CREATED) buyurtmalar soni
+    ko'paygan bo'lsa, frontend signal chaladi. Sahifani qayta yuklash
+    (reload) shart emas — shu orqali, hamkor forma to'ldirib turgan
+    paytda ma'lumot yo'qolib ketmaydi."""
+    partner = await _get_own_partner(db, current_user)
+    count_result = await db.execute(
+        select(func.count(Order.id)).where(
+            Order.partner_id == partner.id, Order.status == OrderStatus.CREATED
+        )
+    )
+    return {"count": count_result.scalar() or 0}
 
 
 @partner_router.post("/orders/{order_id}/status")
