@@ -6,6 +6,9 @@
     <title>{{ partner.brand_name }} — Hamkor Kabineti</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Leaflet — buyurtmani olib ketgan kuryerni jonli kuzatish uchun -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <style>
         :root {
             --accent: #4f46e5;
@@ -54,6 +57,21 @@
 
     <!-- YANGI BUYURTMA BANNERI (JS orqali ko'rinadi) -->
     <div id="new-order-banner-slot"></div>
+
+    <!-- KURYERNI JONLI KUZATISH OYNASI -->
+    <div id="partner-tracking-overlay" class="hidden fixed inset-0 z-40 bg-slate-900/95 flex flex-col">
+        <div class="flex items-center justify-between p-4 border-b border-white/10">
+            <div>
+                <h2 class="text-sm font-black text-white">🛵 Buyurtma #<span id="partner-tracking-order-id"></span></h2>
+                <p id="partner-tracking-courier-info" class="text-[11px] text-slate-400 mt-0.5">Kuryer qidirilmoqda...</p>
+            </div>
+            <button onclick="closePartnerTracking()" class="text-white bg-white/10 w-8 h-8 rounded-full flex items-center justify-center">✕</button>
+        </div>
+        <div id="partner-tracking-map" class="flex-1"></div>
+        <div class="p-3 bg-slate-900 border-t border-white/10 text-center">
+            <p id="partner-tracking-status-text" class="text-[11px] text-slate-400">Joylashuv har 6 soniyada yangilanadi</p>
+        </div>
+    </div>
 
     <!-- BO'LIM TANLASH -->
     <div class="bg-white border-b sticky top-0 z-10 flex overflow-x-auto">
@@ -117,6 +135,8 @@
                         <input type="hidden" name="new_status" value="looking_for_courier">
                         <button type="submit" class="w-full text-white py-1.5 rounded-lg text-xs font-bold accent-bg">📦 Tayyor — kuryer kerak</button>
                     </form>
+                    {% elif order.status.value == 'on_the_way' %}
+                    <button type="button" onclick="openPartnerTracking({{ order.id }})" class="w-full bg-indigo-100 text-indigo-700 py-1.5 rounded-lg text-xs font-bold">🗺️ Kuryerni jonli kuzatish</button>
                     {% endif %}
                 </div>
                 {% else %}
@@ -395,6 +415,122 @@
             banner.textContent = '🔔 Yangi buyurtma keldi! Yangilash uchun bosing';
             banner.onclick = () => window.location.reload();
             slot.appendChild(banner);
+        }
+
+        // ==================== KURYERNI JONLI KUZATISH ====================
+        let partnerTrackMap = null;
+        let partnerTrackCourierMarker = null;
+        let partnerTrackShopMarker = null;
+        let partnerTrackDeliveryMarker = null;
+        let partnerTrackTimer = null;
+        let partnerTrackOrderId = null;
+
+        function escPT(v) {
+            if (v === null || v === undefined) return '';
+            return String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+
+        const PT_TRANSPORT_EMOJI = { walking: '🚶', bicycle: '🚲', scooter: '🛴', car: '🚗' };
+        function ptCourierIcon(transport) {
+            return L.divIcon({
+                html: `<div style="background:#4f46e5; width:30px; height:30px; border-radius:50%; display:flex; align-items:center; justify-content:center; border:3px solid #fff; box-shadow:0 2px 6px rgba(0,0,0,.4); font-size:15px;">${PT_TRANSPORT_EMOJI[transport] || '🛵'}</div>`,
+                className: '', iconSize: [30, 30], iconAnchor: [15, 15],
+            });
+        }
+        function ptShopIcon() {
+            return L.divIcon({
+                html: '<div style="background:#f59e0b; width:24px; height:24px; border-radius:6px; display:flex; align-items:center; justify-content:center; border:2px solid #fff; box-shadow:0 2px 6px rgba(0,0,0,.4); font-size:12px;">🏪</div>',
+                className: '', iconSize: [24, 24], iconAnchor: [12, 12],
+            });
+        }
+        function ptDeliveryIcon() {
+            return L.divIcon({
+                html: '<div style="background:#2563eb; width:22px; height:22px; border-radius:50%; display:flex; align-items:center; justify-content:center; border:2px solid #fff; box-shadow:0 2px 6px rgba(0,0,0,.4); font-size:11px;">📦</div>',
+                className: '', iconSize: [22, 22], iconAnchor: [11, 11],
+            });
+        }
+
+        function openPartnerTracking(orderId) {
+            partnerTrackOrderId = orderId;
+            document.getElementById('partner-tracking-order-id').textContent = orderId;
+            document.getElementById('partner-tracking-overlay').classList.remove('hidden');
+
+            if (!partnerTrackMap && typeof L !== 'undefined') {
+                partnerTrackMap = L.map('partner-tracking-map').setView([41.5504, 60.6318], 13);
+                const streets = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    maxZoom: 19, attribution: '&copy; OpenStreetMap'
+                }).addTo(partnerTrackMap);
+                const satellite = L.tileLayer(
+                    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+                    { maxZoom: 19, attribution: 'Tiles &copy; Esri' }
+                );
+                L.control.layers({ '🗺️ Sxema': streets, '🛰️ Sputnik': satellite }, {}, { position: 'topright', collapsed: true }).addTo(partnerTrackMap);
+            }
+            setTimeout(() => { if (partnerTrackMap) partnerTrackMap.invalidateSize(); }, 100);
+
+            pollPartnerTracking();
+            if (partnerTrackTimer) clearInterval(partnerTrackTimer);
+            partnerTrackTimer = setInterval(pollPartnerTracking, 6000);
+        }
+
+        function closePartnerTracking() {
+            document.getElementById('partner-tracking-overlay').classList.add('hidden');
+            if (partnerTrackTimer) { clearInterval(partnerTrackTimer); partnerTrackTimer = null; }
+            partnerTrackOrderId = null;
+        }
+
+        async function pollPartnerTracking() {
+            if (!partnerTrackOrderId) return;
+            try {
+                const res = await fetch(`/partner/orders/${partnerTrackOrderId}/track`, { credentials: 'same-origin' });
+                if (!res.ok) return;
+                const data = await res.json();
+
+                const infoEl = document.getElementById('partner-tracking-courier-info');
+                const statusEl = document.getElementById('partner-tracking-status-text');
+                if (!infoEl || !statusEl) return;
+
+                if (data.status !== 'on_the_way') {
+                    infoEl.textContent = data.status === 'delivered' ? "✅ Buyurtma yetkazildi!" : "Buyurtma holati o'zgardi";
+                    statusEl.textContent = '';
+                    if (partnerTrackTimer) { clearInterval(partnerTrackTimer); partnerTrackTimer = null; }
+                    if (data.status === 'delivered') setTimeout(closePartnerTracking, 2500);
+                    return;
+                }
+
+                infoEl.textContent = data.courier_name ? `${data.courier_name} — ${data.courier_phone || ''}` : 'Kuryer belgilandi';
+
+                if (!partnerTrackMap) return;
+
+                if (data.shop_location && !partnerTrackShopMarker) {
+                    partnerTrackShopMarker = L.marker([data.shop_location.lat, data.shop_location.lng], { icon: ptShopIcon() })
+                        .addTo(partnerTrackMap).bindPopup("🏪 " + escPT("{{ partner.brand_name }}"));
+                }
+                if (data.delivery_location && !partnerTrackDeliveryMarker) {
+                    partnerTrackDeliveryMarker = L.marker([data.delivery_location.lat, data.delivery_location.lng], { icon: ptDeliveryIcon() })
+                        .addTo(partnerTrackMap).bindPopup("📦 Yetkazish manzili");
+                }
+
+                if (data.courier_location) {
+                    const pos = [data.courier_location.lat, data.courier_location.lng];
+                    if (partnerTrackCourierMarker) {
+                        partnerTrackCourierMarker.setLatLng(pos);
+                        partnerTrackCourierMarker.setIcon(ptCourierIcon(data.courier_transport));
+                    } else {
+                        partnerTrackCourierMarker = L.marker(pos, { icon: ptCourierIcon(data.courier_transport) }).addTo(partnerTrackMap);
+                    }
+                    const bounds = [pos];
+                    if (partnerTrackShopMarker) bounds.push(partnerTrackShopMarker.getLatLng());
+                    if (partnerTrackDeliveryMarker) bounds.push(partnerTrackDeliveryMarker.getLatLng());
+                    if (bounds.length > 1) partnerTrackMap.fitBounds(bounds, { padding: [50, 80] });
+                    else partnerTrackMap.setView(pos, 15);
+                    statusEl.textContent = '📍 Joylashuv yangilandi — ' + new Date().toLocaleTimeString('uz-UZ');
+                } else {
+                    statusEl.textContent = "Kuryerning GPS signali hozircha yo'q — biroz kuting";
+                }
+            } catch (e) {
+                console.error('Kuryerni kuzatishda xatolik', e);
+            }
         }
 
         document.addEventListener('DOMContentLoaded', () => {

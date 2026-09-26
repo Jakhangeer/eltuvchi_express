@@ -6,6 +6,9 @@
     <title>Kuryer Kabineti</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Leaflet — faol buyurtmada do'kon (olib ketish) va mijoz (yetkazish) nuqtalarini xaritada ko'rsatish uchun -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 </head>
 <body class="bg-gray-100 min-h-screen" data-courier-online="{{ 'true' if (courier_profile and courier_profile.is_online) else 'false' }}">
     <script>
@@ -96,6 +99,18 @@
                     {% endfor %}
                 </ul>
                 <p class="text-sm font-bold mb-2">Yig'ib olish kerak: {{ "%.0f"|format(order.total_price + order.delivery_fee) }} so'm (naqd)</p>
+                {% set p_lat = order.partner.latitude if order.partner else None %}
+                {% set p_lng = order.partner.longitude if order.partner else None %}
+                {% if p_lat is not none or order.delivery_latitude is not none %}
+                <div class="courier-order-map mb-2" style="height:180px; border-radius:0.5rem;"
+                     data-partner-lat="{{ p_lat if p_lat is not none else '' }}"
+                     data-partner-lng="{{ p_lng if p_lng is not none else '' }}"
+                     data-partner-name="{{ order.partner.brand_name if order.partner else '' }}"
+                     data-delivery-lat="{{ order.delivery_latitude if order.delivery_latitude is not none else '' }}"
+                     data-delivery-lng="{{ order.delivery_longitude if order.delivery_longitude is not none else '' }}"
+                     data-my-lat="{{ courier_profile.latitude if courier_profile and courier_profile.latitude is not none else '' }}"
+                     data-my-lng="{{ courier_profile.longitude if courier_profile and courier_profile.longitude is not none else '' }}"></div>
+                {% endif %}
                 <form action="/courier/orders/{{ order.id }}/delivered" method="POST">
                     <button type="submit" class="w-full bg-green-600 text-white py-2 rounded-lg text-sm font-bold">✅ Yetkazdim</button>
                 </form>
@@ -287,6 +302,99 @@
         if (COURIER_IS_ONLINE) {
             startLiveLocationTracking();
         }
+    </script>
+
+    <!-- ================= FAOL BUYURTMA UCHUN MINI-XARITA (do'kon → mijoz) ================= -->
+    <script>
+        function initCourierOrderMaps() {
+            if (typeof L === 'undefined') return;
+            document.querySelectorAll('.courier-order-map').forEach(function (el) {
+                if (el.dataset.mapReady) return;
+                el.dataset.mapReady = '1';
+
+                const pLat = parseFloat(el.dataset.partnerLat);
+                const pLng = parseFloat(el.dataset.partnerLng);
+                const dLat = parseFloat(el.dataset.deliveryLat);
+                const dLng = parseFloat(el.dataset.deliveryLng);
+                const myLat = parseFloat(el.dataset.myLat);
+                const myLng = parseFloat(el.dataset.myLng);
+
+                const map = L.map(el).setView([41.5504, 60.6318], 13);
+                const streets = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    maxZoom: 19, attribution: '&copy; OpenStreetMap'
+                }).addTo(map);
+                const satellite = L.tileLayer(
+                    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+                    { maxZoom: 19, attribution: 'Tiles &copy; Esri' }
+                );
+                L.control.layers({ '🗺️': streets, '🛰️': satellite }, {}, { position: 'topright', collapsed: true }).addTo(map);
+
+                const bounds = [];
+                if (!isNaN(pLat) && !isNaN(pLng)) {
+                    L.marker([pLat, pLng], {
+                        icon: L.divIcon({
+                            html: '<div style="background:#f59e0b; width:26px; height:26px; border-radius:6px; display:flex; align-items:center; justify-content:center; border:2px solid #fff; box-shadow:0 2px 6px rgba(0,0,0,.4); font-size:13px;">🏪</div>',
+                            className: '', iconSize: [26, 26], iconAnchor: [13, 13],
+                        })
+                    }).addTo(map).bindPopup(el.dataset.partnerName || "Do'kon");
+                    bounds.push([pLat, pLng]);
+                }
+                if (!isNaN(dLat) && !isNaN(dLng)) {
+                    L.marker([dLat, dLng], {
+                        icon: L.divIcon({
+                            html: '<div style="background:#2563eb; width:24px; height:24px; border-radius:50%; display:flex; align-items:center; justify-content:center; border:2px solid #fff; box-shadow:0 2px 6px rgba(0,0,0,.4); font-size:12px;">📦</div>',
+                            className: '', iconSize: [24, 24], iconAnchor: [12, 12],
+                        })
+                    }).addTo(map).bindPopup("Yetkazish manzili");
+                    bounds.push([dLat, dLng]);
+                }
+                if (!isNaN(myLat) && !isNaN(myLng)) {
+                    L.marker([myLat, myLng], {
+                        icon: L.divIcon({
+                            html: '<div style="background:#16a34a; width:20px; height:20px; border-radius:50%; border:3px solid #fff; box-shadow:0 2px 6px rgba(0,0,0,.5);"></div>',
+                            className: '', iconSize: [20, 20], iconAnchor: [10, 10],
+                        })
+                    }).addTo(map).bindPopup("Siz shu yerdasiz");
+                    bounds.push([myLat, myLng]);
+                }
+
+                if (bounds.length >= 2) map.fitBounds(bounds, { padding: [30, 30] });
+                else if (bounds.length === 1) map.setView(bounds[0], 15);
+                setTimeout(function () { map.invalidateSize(); }, 200);
+
+                // ENG YAQIN HAQIQIY YO'L (ko'chalar bo'yicha, to'g'ri chiziq
+                // emas) — imkon bo'lsa KURYERNING HOZIRGI JOYIDAN mijozga
+                // qarab, bo'lmasa (GPS hali aniqlanmagan bo'lsa) do'kondan
+                // mijozga qarab chiziladi.
+                if (!isNaN(myLat) && !isNaN(myLng) && !isNaN(dLat) && !isNaN(dLng)) {
+                    drawShortestRoute(map, [myLat, myLng], [dLat, dLng]);
+                } else if (!isNaN(pLat) && !isNaN(pLng) && !isNaN(dLat) && !isNaN(dLng)) {
+                    drawShortestRoute(map, [pLat, pLng], [dLat, dLng]);
+                }
+            });
+        }
+
+        function drawShortestRoute(map, from, to) {
+            // DIQQAT: chiziq har bir xaritaning O'ZIGA (map._courierRouteLine)
+            // saqlanadi — bitta umumiy o'zgaruvchida saqlansa, kuryerda 2+
+            // faol buyurtma bo'lganda xaritalar bir-birining chizig'ini
+            // o'chirib yuborardi.
+            const url = `https://router.project-osrm.org/route/v1/driving/${from[1]},${from[0]};${to[1]},${to[0]}?overview=full&geometries=geojson`;
+            fetch(url)
+                .then(function (res) { return res.ok ? res.json() : null; })
+                .then(function (data) {
+                    if (!data || !data.routes || !data.routes[0]) return;
+                    const coords = data.routes[0].geometry.coordinates.map(function (c) { return [c[1], c[0]]; });
+                    if (map._courierRouteLine) map.removeLayer(map._courierRouteLine);
+                    map._courierRouteLine = L.polyline(coords, { color: '#4f46e5', weight: 4, opacity: 0.75 }).addTo(map);
+                    const km = (data.routes[0].distance / 1000).toFixed(1);
+                    const min = Math.round(data.routes[0].duration / 60);
+                    map._courierRouteLine.bindTooltip(`~${km} km · ~${min} daqiqa`, { permanent: false });
+                })
+                .catch(function (e) { console.error('Marshrutni chizishda xatolik (OSRM)', e); });
+        }
+
+        document.addEventListener('DOMContentLoaded', initCourierOrderMaps);
     </script>
 
     <!-- ================= YANGI BUYURTMANI ANIQLASH (poll) VA OVOZ CHALISH ================= -->

@@ -220,9 +220,14 @@
 
             if (!trackingMap && typeof L !== 'undefined') {
                 trackingMap = L.map('tracking-map').setView([41.5504, 60.6318], 13);
-                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                const streetsLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
                     maxZoom: 19, attribution: '&copy; OpenStreetMap'
                 }).addTo(trackingMap);
+                const satelliteLayer = L.tileLayer(
+                    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+                    { maxZoom: 19, attribution: 'Tiles &copy; Esri' }
+                );
+                L.control.layers({ '🗺️ Sxema': streetsLayer, '🛰️ Sputnik': satelliteLayer }, {}, { position: 'topright', collapsed: true }).addTo(trackingMap);
             }
             setTimeout(() => { if (trackingMap) trackingMap.invalidateSize(); }, 100);
 
@@ -237,9 +242,13 @@
             trackingOrderId = null;
         }
 
-        function getMotorbikeIcon() {
+        // Kuryerning transport turiga qarab xaritadagi belgisi o'zgaradi
+        // (piyoda/velosiped/skuter/avtomobil) — bo'lmasa odatiy mototsikl.
+        const TRACK_TRANSPORT_EMOJI = { walking: '🚶', bicycle: '🚲', scooter: '🛴', car: '🚗' };
+        function getMotorbikeIcon(transport) {
+            const emoji = TRACK_TRANSPORT_EMOJI[transport] || '🛵';
             return L.divIcon({
-                html: '<div style="background:#4f46e5; width:30px; height:30px; border-radius:50%; display:flex; align-items:center; justify-content:center; border:3px solid #fff; box-shadow:0 2px 6px rgba(0,0,0,.4); font-size:15px;">🛵</div>',
+                html: `<div style="background:#4f46e5; width:30px; height:30px; border-radius:50%; display:flex; align-items:center; justify-content:center; border:3px solid #fff; box-shadow:0 2px 6px rgba(0,0,0,.4); font-size:15px;">${emoji}</div>`,
                 className: '', iconSize: [30, 30], iconAnchor: [15, 15],
             });
         }
@@ -279,8 +288,9 @@
                     const pos = [data.courier_location.lat, data.courier_location.lng];
                     if (trackingCourierMarker) {
                         trackingCourierMarker.setLatLng(pos);
+                        trackingCourierMarker.setIcon(getMotorbikeIcon(data.courier_transport));
                     } else {
-                        trackingCourierMarker = L.marker(pos, { icon: getMotorbikeIcon() }).addTo(trackingMap);
+                        trackingCourierMarker = L.marker(pos, { icon: getMotorbikeIcon(data.courier_transport) }).addTo(trackingMap);
                     }
                     const bounds = [pos];
                     if (trackingPartnerMarker) bounds.push(trackingPartnerMarker.getLatLng());

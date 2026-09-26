@@ -143,16 +143,11 @@ class PartnerProfile(Base):
     min_order_amount = Column(Float, default=0.0)
 
     # Do'konning xaritadagi joylashuvi — hamkor o'zi xaritadan belgilaydi
-    # (yoki brauzer orqali avtomatik aniqlanadi). Kelajakda kuryerga
-    # yo'nalish ko'rsatish uchun ham kerak bo'ladi.
+    # (yoki brauzer orqali avtomatik aniqlanadi). Admin/operator va
+    # kuryer/mijoz xaritalarida "🏪" belgisi shu koordinata bo'yicha chiziladi.
     latitude = Column(Float, nullable=True)
     longitude = Column(Float, nullable=True)
     terms_accepted_at = Column(DateTime, nullable=True)
-
-    # Do'konning xaritadagi joylashuvi — hamkor o'z kabinetidan brauzer
-    # orqali avtomatik belgilaydi (Geolocation API)
-    latitude = Column(Float, nullable=True)
-    longitude = Column(Float, nullable=True)
 
     # Yangi buyurtma kelganda hamkor kabinetida qaysi signal ovozi
     # chalinishi — 3 ta tayyor variantdan biri (frontend Web Audio API
@@ -203,6 +198,16 @@ class Order(Base):
     total_price = Column(Float, nullable=False)
     delivery_fee = Column(Float, nullable=False)
     delivery_address = Column(String, nullable=False)
+
+    # Mijozning yetkazib berish nuqtasining ANIQ GPS koordinatasi — Mini App
+    # ichida buyurtma berayotganda brauzer/Telegram Geolocation orqali
+    # avtomatik olinadi (agar mijoz ruxsat bergan bo'lsa). Faqat matn manzil
+    # (delivery_address) emas, aynan shu koordinata orqali: (1) admin/operator
+    # xaritasida buyurtma nuqtasi ko'rinadi, (2) kuryer o'z kabinetida
+    # do'kon->mijoz yo'nalishini xaritada ko'radi. Mijoz koordinata bermagan
+    # bo'lsa — NULL qoladi, xarita shunchaki bu buyurtmani ko'rsatmaydi.
+    delivery_latitude = Column(Float, nullable=True)
+    delivery_longitude = Column(Float, nullable=True)
 
     # Mijozning maxsus istaklari ("Piyozsiz", "Achchiq bo'lmasin" va h.k.)
     client_comment = Column(Text, nullable=True)

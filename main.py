@@ -1128,8 +1128,18 @@ def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return 2 * r * math.asin(math.sqrt(a))
 
 
-# Joylashuv shuncha daqiqadan eski bo'lsa, kuryer "signal yo'q/oflayn" deb hisoblanadi
+# Joylashuv shuncha daqiqadan eski bo'lsa, kuryer "signal yo'q/oflayn" deb
+# hisoblanadi — bu qiymat AVTOMATIK BIRIKTIRISH (auto_assign_nearest_courier)
+# uchun ishlatiladi va ataylab bir oz "kechikishga toqatli" (mobil brauzerlar
+# fon rejimida GPS'ni sekinlashtirishi mumkin).
 COURIER_LOCATION_FRESHNESS_MINUTES = 15
+
+# Admin/operator JONLI XARITASI uchun alohida, ANCHA QATTIQROQ chegara:
+# kuryer ilovani yopib qo'ysa (watchPosition to'xtaydi), u xaritadan shu
+# necha daqiqada AVTOMATIK yo'qoladi — garchi bazada hali "online" deb
+# belgilangan bo'lsa ham (buyurtma qabul qilish huquqiga tegmaydi, faqat
+# xaritada ko'rinishga ta'sir qiladi).
+MAP_LOCATION_FRESHNESS_MINUTES = 2
 
 
 async def auto_assign_nearest_courier(db: AsyncSession, order: Order) -> Optional[User]:
@@ -1739,15 +1749,22 @@ async def couriers_live_locations(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_admin_user),
 ):
-    """Admin/operator xaritasi uchun JSON — barcha hozir ONLINE va
-    joylashuvi 'yangi' bo'lgan kuryerlar ro'yxati, har birining hozirgi GPS
-    nuqtasi va (agar bor bo'lsa) hozir yetkazayotgan buyurtmasi bilan."""
+    """Admin/operator xaritasi uchun JSON — BITTA so'rovda uchta qatlamni
+    qaytaradi: (1) hozir ONLINE va joylashuvi 'yangi' bo'lgan kuryerlar,
+    (2) shu shahardagi ochiq hamkorlar/do'konlar (statik joylashuv),
+    (3) hozir faol (hali yetkazilmagan/bekor qilinmagan) buyurtmalarning
+    mijoz-yetkazish nuqtalari. Operator (ADMIN) uchun bu har doim FAQAT
+    o'z shahri bilan cheklanadi — OWNER esa city_id orqali istalgan
+    shaharni yoki (bermasa) hammasini ko'radi."""
     is_owner = current_user.role == UserRole.OWNER
     active_city_id = city_id if is_owner else current_user.city_id
 
-    freshness_cutoff = datetime.utcnow() - timedelta(minutes=COURIER_LOCATION_FRESHNESS_MINUTES)
+    # DIQQAT: bu yerda MAP_LOCATION_FRESHNESS_MINUTES (qattiqroq) ishlatiladi,
+    # COURIER_LOCATION_FRESHNESS_MINUTES emas — sabab yuqoridagi izohda.
+    freshness_cutoff = datetime.utcnow() - timedelta(minutes=MAP_LOCATION_FRESHNESS_MINUTES)
 
-    stmt = (
+    # ---- 1) KURYERLAR ----
+    courier_stmt = (
         select(User)
         .join(CourierProfile, CourierProfile.user_id == User.id)
         .options(selectinload(User.courier_profile))
@@ -1761,9 +1778,9 @@ async def couriers_live_locations(
         )
     )
     if active_city_id is not None:
-        stmt = stmt.where(User.city_id == active_city_id)
+        courier_stmt = courier_stmt.where(User.city_id == active_city_id)
 
-    couriers = (await db.execute(stmt)).scalars().all()
+    couriers = (await db.execute(courier_stmt)).scalars().all()
 
     courier_ids = [c.id for c in couriers]
     active_orders_map = {}
@@ -1774,11 +1791,11 @@ async def couriers_live_locations(
         for o in orders_result.scalars().all():
             active_orders_map[o.courier_id] = o
 
-    data = []
+    couriers_data = []
     for c in couriers:
         cp = c.courier_profile
         active_order = active_orders_map.get(c.id)
-        data.append({
+        couriers_data.append({
             "courier_id": c.id,
             "full_name": c.full_name,
             "phone_number": c.phone_number,
@@ -1791,7 +1808,56 @@ async def couriers_live_locations(
             "active_order_address": active_order.delivery_address if active_order else None,
         })
 
-    return JSONResponse({"couriers": data})
+    # ---- 2) HAMKORLAR / DO'KONLAR ----
+    partner_stmt = select(PartnerProfile).where(
+        PartnerProfile.latitude.is_not(None),
+        PartnerProfile.longitude.is_not(None),
+    )
+    if active_city_id is not None:
+        partner_stmt = partner_stmt.where(PartnerProfile.city_id == active_city_id)
+    partners = (await db.execute(partner_stmt)).scalars().all()
+    partners_data = [
+        {
+            "partner_id": p.id,
+            "name": p.brand_name,
+            "category": p.category,
+            "address": p.address,
+            "lat": p.latitude,
+            "lng": p.longitude,
+            "is_open": p.is_open,
+        }
+        for p in partners
+    ]
+
+    # ---- 3) FAOL BUYURTMALAR — MIJOZ YETKAZISH NUQTASI ----
+    orders_stmt = (
+        select(Order)
+        .options(selectinload(Order.client), selectinload(Order.partner))
+        .where(
+            Order.status.notin_([OrderStatus.DELIVERED, OrderStatus.CANCELLED]),
+            Order.delivery_latitude.is_not(None),
+            Order.delivery_longitude.is_not(None),
+        )
+    )
+    if active_city_id is not None:
+        orders_stmt = orders_stmt.join(PartnerProfile, Order.partner_id == PartnerProfile.id).where(
+            PartnerProfile.city_id == active_city_id
+        )
+    active_orders = (await db.execute(orders_stmt)).scalars().all()
+    clients_data = [
+        {
+            "order_id": o.id,
+            "status": o.status.value,
+            "client_name": o.client.full_name if o.client else None,
+            "partner_name": o.partner.brand_name if o.partner else None,
+            "delivery_address": o.delivery_address,
+            "lat": o.delivery_latitude,
+            "lng": o.delivery_longitude,
+        }
+        for o in active_orders
+    ]
+
+    return JSONResponse({"couriers": couriers_data, "partners": partners_data, "active_clients": clients_data})
 
 
 @couriers_router.post("/create")
@@ -2794,6 +2860,10 @@ async def shop_order_track(order_id: int, init_data: str, db: AsyncSession = Dep
         "delivery_address": order.delivery_address,
         "courier_name": order.courier.full_name if order.courier else None,
         "courier_phone": order.courier.phone_number if order.courier else None,
+        "courier_transport": (
+            order.courier.courier_profile.transport_type
+            if order.courier and order.courier.courier_profile else None
+        ),
         "partner_name": order.partner.brand_name if order.partner else None,
         "partner_location": (
             {"lat": order.partner.latitude, "lng": order.partner.longitude}
@@ -2919,6 +2989,22 @@ async def shop_create_order(body: ShopOrderBody, db: AsyncSession = Depends(get_
     setting = setting_result.scalars().first()
     delivery_fee = (setting.base_delivery_fee * setting.weather_multiplier) if setting else 10000.0
 
+    # Mijoz Mini App ichida yuborgan GPS koordinatasi (shop.html'dagi
+    # `userLocation` — {lat, lon} shaklida keladi, ba'zi eski frontend
+    # variantlarida {lat, lng} ham bo'lishi mumkin — ikkalasini ham qabul
+    # qilamiz). Shu koordinata orqali admin/operator/kuryer xaritalarida
+    # aynan shu buyurtmaning yetkazish nuqtasi ko'rinadi.
+    delivery_lat = None
+    delivery_lng = None
+    if body.location and isinstance(body.location, dict):
+        delivery_lat = body.location.get("lat")
+        delivery_lng = body.location.get("lng", body.location.get("lon"))
+        try:
+            delivery_lat = float(delivery_lat) if delivery_lat is not None else None
+            delivery_lng = float(delivery_lng) if delivery_lng is not None else None
+        except (TypeError, ValueError):
+            delivery_lat, delivery_lng = None, None
+
     new_order = Order(
         client_id=client.id,
         partner_id=body.partner_id,
@@ -2926,6 +3012,8 @@ async def shop_create_order(body: ShopOrderBody, db: AsyncSession = Depends(get_
         total_price=total_price,
         delivery_fee=delivery_fee,
         delivery_address=body.delivery_address,
+        delivery_latitude=delivery_lat,
+        delivery_longitude=delivery_lng,
         client_comment=body.comment,
         order_type=body.order_type or "delivery",
         payment_method=body.payment_method or "cash",
@@ -3030,6 +3118,59 @@ async def partner_dashboard(
             "withdrawal_requests": withdrawal_requests,
         },
     )
+
+
+@partner_router.get("/orders/{order_id}/track")
+async def partner_order_track(
+    order_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_partner_user),
+):
+    """Hamkor kabinetida 'Yo'lda' bo'lgan buyurtmani jonli kuzatish —
+    mijoz tomonidagi /api/shop/orders/{id}/track bilan bir xil mantiq,
+    faqat bu yerda buyurtma albatta shu hamkorga tegishli bo'lishi
+    tekshiriladi. Hamkor faqat O'ZIGA xizmat qilayotgan kuryerni ko'radi."""
+    partner = await _get_own_partner(db, current_user)
+
+    order_result = await db.execute(
+        select(Order)
+        .options(selectinload(Order.courier).selectinload(User.courier_profile))
+        .where(Order.id == order_id, Order.partner_id == partner.id)
+    )
+    order = order_result.scalars().first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Buyurtma topilmadi")
+
+    courier_location = None
+    courier_transport = None
+    if order.status == OrderStatus.ON_THE_WAY and order.courier and order.courier.courier_profile:
+        cp = order.courier.courier_profile
+        courier_transport = cp.transport_type
+        if cp.latitude is not None and cp.longitude is not None:
+            courier_location = {
+                "lat": cp.latitude,
+                "lng": cp.longitude,
+                "updated_at": cp.location_updated_at.isoformat() if cp.location_updated_at else None,
+            }
+
+    return {
+        "id": order.id,
+        "status": order.status.value,
+        "courier_name": order.courier.full_name if order.courier else None,
+        "courier_phone": order.courier.phone_number if order.courier else None,
+        "courier_transport": courier_transport,
+        "courier_location": courier_location,
+        "delivery_location": (
+            {"lat": order.delivery_latitude, "lng": order.delivery_longitude}
+            if order.delivery_latitude is not None and order.delivery_longitude is not None
+            else None
+        ),
+        "shop_location": (
+            {"lat": partner.latitude, "lng": partner.longitude}
+            if partner.latitude is not None and partner.longitude is not None
+            else None
+        ),
+    }
 
 
 @partner_router.post("/withdraw")

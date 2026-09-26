@@ -367,7 +367,7 @@
                 </span>
             </div>
             <div id="courier-map" style="height: 380px; border-radius: 0.75rem;"></div>
-            <p class="text-[11px] text-gray-400 mt-2">🟢 bo'sh · 🔴 hozir buyurtma yetkazmoqda. Xarita har 5 soniyada o'zi yangilanadi.</p>
+            <p class="text-[11px] text-gray-400 mt-2">🟢 kuryer bo'sh · 🔴 yo'lda · 🏪 hamkor/do'kon · 📦 faol buyurtma (mijoz manzili). Yuqori o'ngdagi qatlam tugmasi orqali sputnik (yo'ldosh) ko'rinishga o'tish mumkin. Xarita har 5 soniyada o'zi yangilanadi.</p>
         </div>
 
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -1567,18 +1567,51 @@
         let courierMarkers = {};
         let courierMapFirstLoad = true;
 
+        // Transport turiga qarab kuryer belgisi (emoji) — kuryer profilida
+        // tanlangan transport_type shu jadval bo'yicha ko'rsatiladi.
+        const TRANSPORT_EMOJI = { walking: '🚶', bicycle: '🚲', scooter: '🛴', car: '🚗' };
+        function transportEmoji(t) { return TRANSPORT_EMOJI[t] || '🛵'; }
+
+        let partnerMarkers = {};
+        let clientMarkers = {};
+
         function initCourierMap() {
             if (courierMap || !document.getElementById('courier-map') || typeof L === 'undefined') return;
             courierMap = L.map('courier-map').setView([41.5504, 60.6318], 12);
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+
+            // ---- IKKI XIL QATLAM: ODATIY XARITA VA SPUTNIK (yo'ldosh) ----
+            const streetsLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
                 maxZoom: 19, attribution: '&copy; OpenStreetMap'
             }).addTo(courierMap);
+            const satelliteLayer = L.tileLayer(
+                'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+                { maxZoom: 19, attribution: 'Tiles &copy; Esri' }
+            );
+            L.control.layers(
+                { '🗺️ Sxema': streetsLayer, '🛰️ Sputnik': satelliteLayer },
+                {}, { position: 'topright', collapsed: true }
+            ).addTo(courierMap);
         }
 
-        function courierDotIcon(busy) {
+        function courierDivIcon(transport, busy) {
+            const color = busy ? '#dc2626' : '#16a34a';
             return L.divIcon({
-                html: `<div style="background:${busy ? '#dc2626' : '#16a34a'}; width:16px; height:16px; border-radius:50%; border:2px solid #fff; box-shadow:0 0 4px rgba(0,0,0,.4);"></div>`,
-                className: '', iconSize: [16, 16], iconAnchor: [8, 8],
+                html: `<div style="background:${color}; width:28px; height:28px; border-radius:50%; display:flex; align-items:center; justify-content:center; border:2px solid #fff; box-shadow:0 2px 6px rgba(0,0,0,.4); font-size:14px;">${transportEmoji(transport)}</div>`,
+                className: '', iconSize: [28, 28], iconAnchor: [14, 14],
+            });
+        }
+
+        function shopDivIcon(isOpen) {
+            return L.divIcon({
+                html: `<div style="background:${isOpen ? '#f59e0b' : '#9ca3af'}; width:24px; height:24px; border-radius:6px; display:flex; align-items:center; justify-content:center; border:2px solid #fff; box-shadow:0 2px 6px rgba(0,0,0,.4); font-size:12px;">🏪</div>`,
+                className: '', iconSize: [24, 24], iconAnchor: [12, 12],
+            });
+        }
+
+        function clientDivIcon() {
+            return L.divIcon({
+                html: `<div style="background:#2563eb; width:22px; height:22px; border-radius:50% 50% 50% 0; transform:rotate(-45deg); border:2px solid #fff; box-shadow:0 2px 6px rgba(0,0,0,.4); display:flex; align-items:center; justify-content:center;"><span style="transform:rotate(45deg); font-size:11px;">📦</span></div>`,
+                className: '', iconSize: [22, 22], iconAnchor: [11, 22],
             });
         }
 
@@ -1603,31 +1636,75 @@
                     });
 
                     const countEl = document.getElementById('courier-map-count');
-                    if (countEl) countEl.textContent = `${data.couriers.length} ta online kuryer`;
+                    if (countEl) countEl.textContent = `${data.couriers.length} ta online kuryer · ${data.partners.length} ta hamkor · ${data.active_clients.length} ta faol buyurtma`;
 
                     if (!courierMap) return;
-                    const seen = new Set();
                     const bounds = [];
+
+                    // ---- KURYERLAR ----
+                    const seenCouriers = new Set();
                     data.couriers.forEach(c => {
-                        seen.add(c.courier_id);
+                        seenCouriers.add(c.courier_id);
                         bounds.push([c.lat, c.lng]);
-                        const popupText = `<b>${esc(c.full_name)}</b><br>${esc(c.phone_number)}<br>` +
+                        const popupText = `<b>${esc(c.full_name)}</b> ${transportEmoji(c.transport_type)}<br>${esc(c.phone_number)}<br>` +
                             (c.busy ? `🛵 Buyurtma #${c.active_order_id}<br>📍 ${esc(c.active_order_address || '')}` : "🟢 Bo'sh");
                         if (courierMarkers[c.courier_id]) {
                             courierMarkers[c.courier_id].setLatLng([c.lat, c.lng]);
-                            courierMarkers[c.courier_id].setIcon(courierDotIcon(c.busy));
+                            courierMarkers[c.courier_id].setIcon(courierDivIcon(c.transport_type, c.busy));
                             courierMarkers[c.courier_id].getPopup().setContent(popupText);
                         } else {
-                            courierMarkers[c.courier_id] = L.marker([c.lat, c.lng], { icon: courierDotIcon(c.busy) })
+                            courierMarkers[c.courier_id] = L.marker([c.lat, c.lng], { icon: courierDivIcon(c.transport_type, c.busy) })
                                 .addTo(courierMap).bindPopup(popupText);
                         }
                     });
                     Object.keys(courierMarkers).forEach(id => {
-                        if (!seen.has(Number(id))) {
+                        if (!seenCouriers.has(Number(id))) {
                             courierMap.removeLayer(courierMarkers[id]);
                             delete courierMarkers[id];
                         }
                     });
+
+                    // ---- HAMKORLAR / DO'KONLAR (joylashuvi statik, faqat belgi qo'yiladi) ----
+                    const seenPartners = new Set();
+                    data.partners.forEach(p => {
+                        seenPartners.add(p.partner_id);
+                        bounds.push([p.lat, p.lng]);
+                        const popupText = `<b>🏪 ${esc(p.name)}</b><br>${esc(p.category || '')}<br>${esc(p.address || '')}<br>` + (p.is_open ? "🟢 Ochiq" : "🔴 Yopiq");
+                        if (partnerMarkers[p.partner_id]) {
+                            partnerMarkers[p.partner_id].setIcon(shopDivIcon(p.is_open));
+                            partnerMarkers[p.partner_id].getPopup().setContent(popupText);
+                        } else {
+                            partnerMarkers[p.partner_id] = L.marker([p.lat, p.lng], { icon: shopDivIcon(p.is_open) })
+                                .addTo(courierMap).bindPopup(popupText);
+                        }
+                    });
+                    Object.keys(partnerMarkers).forEach(id => {
+                        if (!seenPartners.has(Number(id))) {
+                            courierMap.removeLayer(partnerMarkers[id]);
+                            delete partnerMarkers[id];
+                        }
+                    });
+
+                    // ---- FAOL BUYURTMALAR — MIJOZ YETKAZISH NUQTASI ----
+                    const seenClients = new Set();
+                    data.active_clients.forEach(o => {
+                        seenClients.add(o.order_id);
+                        const popupText = `<b>📦 Buyurtma #${o.order_id}</b><br>${esc(o.client_name || '')}<br>${esc(o.delivery_address || '')}<br>🏪 ${esc(o.partner_name || '')}`;
+                        if (clientMarkers[o.order_id]) {
+                            clientMarkers[o.order_id].setLatLng([o.lat, o.lng]);
+                            clientMarkers[o.order_id].getPopup().setContent(popupText);
+                        } else {
+                            clientMarkers[o.order_id] = L.marker([o.lat, o.lng], { icon: clientDivIcon() })
+                                .addTo(courierMap).bindPopup(popupText);
+                        }
+                    });
+                    Object.keys(clientMarkers).forEach(id => {
+                        if (!seenClients.has(Number(id))) {
+                            courierMap.removeLayer(clientMarkers[id]);
+                            delete clientMarkers[id];
+                        }
+                    });
+
                     if (courierMapFirstLoad && bounds.length > 0) {
                         courierMap.fitBounds(bounds, { padding: [30, 30] });
                         courierMapFirstLoad = false;
