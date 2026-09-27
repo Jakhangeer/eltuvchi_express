@@ -9,57 +9,137 @@
     <!-- Leaflet — buyurtmani olib ketgan kuryerni jonli kuzatish uchun -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
     <style>
         :root {
-            --accent: #4f46e5;
+            --accent: #6366f1;
             --accent-dark: #4338ca;
+            --obsidian: #05060a;
         }
-        .accent-bg { background-color: var(--accent); }
-        .accent-bg:hover { background-color: var(--accent-dark); }
+        * { font-family: 'Plus Jakarta Sans', 'Inter', -apple-system, sans-serif; }
+        html, body { background: var(--obsidian); }
+        body {
+            background: radial-gradient(ellipse at top, #12142080 0%, #05060a 55%), var(--obsidian);
+            overscroll-behavior-y: contain;
+        }
+
+        .accent-bg { background: linear-gradient(135deg, var(--accent), var(--accent-dark)); }
         .accent-text { color: var(--accent); }
-        .accent-border { border-color: var(--accent); }
-        .tab-btn.active { border-bottom: 2px solid var(--accent); color: var(--accent); font-weight: 700; }
+        .accent-border { border-color: var(--accent) !important; }
+        .accent-glow { box-shadow: 0 10px 26px -8px color-mix(in srgb, var(--accent) 60%, transparent); }
+        .tab-btn.active { border-bottom: 2px solid var(--accent); color: var(--accent); font-weight: 800; }
+        .tab-btn { color: #94a3b8; transition: color .2s ease; }
+        .tab-btn:hover { color: #e2e8f0; }
+
+        .orb { position: fixed; border-radius: 50%; filter: blur(85px); opacity: .3; pointer-events: none; z-index: 0; }
+        .orb-1 { width: 320px; height: 320px; background: radial-gradient(circle, var(--accent), transparent 70%); top: -90px; right: -80px; animation: float1 18s ease-in-out infinite; }
+        .orb-2 { width: 260px; height: 260px; background: radial-gradient(circle, #34d399, transparent 70%); bottom: 5%; left: -100px; animation: float2 22s ease-in-out infinite; }
+        @keyframes float1 { 0%,100% { transform: translate(0,0); } 50% { transform: translate(-40px,50px); } }
+        @keyframes float2 { 0%,100% { transform: translate(0,0); } 50% { transform: translate(40px,-40px); } }
+
+        .glass { background: linear-gradient(180deg, rgba(255,255,255,0.055), rgba(255,255,255,0.02)); backdrop-filter: blur(20px) saturate(150%); -webkit-backdrop-filter: blur(20px) saturate(150%); border: 1px solid rgba(255,255,255,0.09); box-shadow: 0 20px 45px -18px rgba(0,0,0,.65), inset 0 1px 0 rgba(255,255,255,.05); }
+        .glass-strong { background: linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0.03)); backdrop-filter: blur(24px) saturate(160%); -webkit-backdrop-filter: blur(24px) saturate(160%); border: 1px solid rgba(255,255,255,0.12); }
+        .glass-input { background: rgba(255,255,255,.045); border: 1px solid rgba(255,255,255,.1); color: #f1f5f9; transition: all .2s ease; }
+        .glass-input::placeholder { color: #64748b; }
+        .glass-input:focus { outline: none; border-color: color-mix(in srgb, var(--accent) 60%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent); background: rgba(255,255,255,.07); }
+
+        .text-grad { background: linear-gradient(135deg, #a5b4fc, #6ee7b7); -webkit-background-clip: text; background-clip: text; color: transparent; }
+
+        .fade-up { animation: fadeUp .6s cubic-bezier(.2,.7,.2,1) both; }
+        @keyframes fadeUp { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
+
+        .btn-press { transition: transform .15s ease, box-shadow .25s ease; }
+        .btn-press:active { transform: scale(.96); }
+
+        .pulse-dot { position: relative; }
+        .pulse-dot::after { content: ''; position: absolute; inset: -5px; border-radius: 50%; border: 2px solid currentColor; animation: pulseDot 1.8s ease-out infinite; }
+        @keyframes pulseDot { 0% { transform: scale(.6); opacity: .8; } 100% { transform: scale(1.9); opacity: 0; } }
+
+        .order-card-new { animation: glowBorder 2.4s ease-in-out infinite; }
+        @keyframes glowBorder {
+            0%,100% { box-shadow: 0 0 0 1px rgba(99,102,241,.3), 0 20px 45px -18px rgba(0,0,0,.65); }
+            50% { box-shadow: 0 0 0 1px rgba(99,102,241,.65), 0 0 28px -4px rgba(99,102,241,.5), 0 20px 45px -18px rgba(0,0,0,.65); }
+        }
+
+        /* ---- To'liq ekran "yangi buyurtma" ogohlantirishi (radar effekti) ---- */
+        #new-order-alert-overlay { background: radial-gradient(circle at 50% 38%, color-mix(in srgb, var(--accent) 35%, transparent), rgba(5,6,10,.96) 70%); }
+        .radar-ring { position: absolute; border-radius: 50%; border: 2px solid rgba(165,180,252,.55); animation: radarExpand 2.2s ease-out infinite; }
+        .radar-ring.r2 { animation-delay: .7s; }
+        .radar-ring.r3 { animation-delay: 1.4s; }
+        @keyframes radarExpand { 0% { width: 40px; height: 40px; opacity: .9; } 100% { width: 280px; height: 280px; opacity: 0; } }
+        .bell-shake { animation: bellShake 1s ease-in-out infinite; }
+        @keyframes bellShake { 0%,100% { transform: rotate(0); } 10%,30% { transform: rotate(-14deg); } 20%,40% { transform: rotate(14deg); } 50% { transform: rotate(0); } }
+
+        /* ---- Menyu mahsulot kartochkalari ---- */
+        .product-card { transition: transform .18s ease, box-shadow .18s ease; }
+        .product-card:hover { transform: translateY(-2px); }
+
+        .leaflet-marker-icon { transition: transform 1.1s linear; }
+        .leaflet-popup-content-wrapper, .leaflet-popup-tip { background: #12131e; color: #e5e7eb; }
+
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,.15); border-radius: 10px; }
     </style>
 </head>
-<body class="bg-gray-100 min-h-screen">
+<body class="min-h-screen relative text-white">
     <script>
         const tg = window.Telegram?.WebApp;
         if (tg) { tg.ready(); tg.expand(); }
     </script>
 
-    <header class="text-white p-4 shadow-md accent-bg">
+    <div class="orb orb-1"></div>
+    <div class="orb orb-2"></div>
+
+    <!-- ================= YANGI BUYURTMA — TO'LIQ EKRAN OGOHLANTIRISH ================= -->
+    <div id="new-order-alert-overlay" class="hidden fixed inset-0 z-50 flex items-center justify-center">
+        <div class="relative flex items-center justify-center" style="width:280px; height:280px;">
+            <div class="radar-ring"></div>
+            <div class="radar-ring r2"></div>
+            <div class="radar-ring r3"></div>
+            <div class="glass-strong rounded-full w-28 h-28 flex items-center justify-center text-5xl bell-shake relative z-10">🔔</div>
+        </div>
+        <div class="absolute bottom-20 left-0 right-0 text-center px-6">
+            <p class="text-xl font-extrabold text-grad">Yangi buyurtma keldi!</p>
+            <button onclick="window.location.reload()" class="mt-4 btn-press accent-bg accent-glow text-white px-6 py-2.5 rounded-xl text-sm font-bold">Ko'rish →</button>
+        </div>
+    </div>
+
+    <header class="glass sticky top-0 z-20 px-4 py-3">
         <div class="flex justify-between items-center">
             <div>
-                <h1 class="text-lg font-bold">🏪 {{ partner.brand_name }}</h1>
-                <p class="text-xs text-indigo-100">{{ current_user.full_name }}</p>
+                <h1 class="text-base font-extrabold flex items-center gap-1.5">🏪 {{ partner.brand_name }}</h1>
+                <p class="text-[11px] text-slate-400">{{ current_user.full_name }}</p>
             </div>
-            <div id="live-clock" class="text-[11px] font-mono text-indigo-100 hidden sm:block"></div>
+            <div id="live-clock" class="text-[11px] font-mono text-slate-400 hidden sm:block glass rounded-full px-2.5 py-1"></div>
             <div class="flex items-center gap-2">
                 <div class="relative">
-                    <button onclick="document.getElementById('theme-menu').classList.toggle('hidden')" class="text-xs bg-white/15 px-2 py-1.5 rounded-lg">🎨</button>
-                    <div id="theme-menu" class="hidden absolute right-0 mt-1 bg-white rounded-lg shadow-lg p-2 flex gap-1.5 z-20">
-                        <button onclick="setTheme('#4f46e5','#4338ca')" class="w-6 h-6 rounded-full bg-indigo-600 border-2 border-white shadow"></button>
-                        <button onclick="setTheme('#059669','#047857')" class="w-6 h-6 rounded-full bg-emerald-600 border-2 border-white shadow"></button>
-                        <button onclick="setTheme('#e11d48','#be123c')" class="w-6 h-6 rounded-full bg-rose-600 border-2 border-white shadow"></button>
-                        <button onclick="setTheme('#d97706','#b45309')" class="w-6 h-6 rounded-full bg-amber-600 border-2 border-white shadow"></button>
-                        <button onclick="setTheme('#334155','#1e293b')" class="w-6 h-6 rounded-full bg-slate-700 border-2 border-white shadow"></button>
+                    <button onclick="document.getElementById('theme-menu').classList.toggle('hidden')" class="text-xs bg-white/8 border border-white/10 px-2.5 py-1.5 rounded-lg">🎨</button>
+                    <div id="theme-menu" class="hidden absolute right-0 mt-2 glass-strong rounded-xl shadow-lg p-2.5 flex gap-2 z-20">
+                        <button onclick="setTheme('#6366f1','#4338ca')" class="w-6 h-6 rounded-full bg-indigo-500 border-2 border-white/50 shadow"></button>
+                        <button onclick="setTheme('#10b981','#047857')" class="w-6 h-6 rounded-full bg-emerald-500 border-2 border-white/50 shadow"></button>
+                        <button onclick="setTheme('#f43f5e','#be123c')" class="w-6 h-6 rounded-full bg-rose-500 border-2 border-white/50 shadow"></button>
+                        <button onclick="setTheme('#f59e0b','#b45309')" class="w-6 h-6 rounded-full bg-amber-500 border-2 border-white/50 shadow"></button>
+                        <button onclick="setTheme('#38bdf8','#0369a1')" class="w-6 h-6 rounded-full bg-sky-500 border-2 border-white/50 shadow"></button>
                     </div>
                 </div>
-                <a href="/logout" class="text-xs underline text-indigo-100">Chiqish</a>
+                <a href="/logout" class="text-[11px] text-slate-400 hover:text-white transition-colors underline underline-offset-2">Chiqish</a>
             </div>
         </div>
-        <form action="/partner/status" method="POST" class="mt-2">
-            <button type="submit" class="px-3 py-1 rounded-lg text-xs font-bold {% if partner.is_open %}bg-green-500{% else %}bg-gray-500{% endif %}">
+        <form action="/partner/status" method="POST" class="js-haptic-form mt-2.5">
+            <button type="submit" class="btn-press px-3.5 py-1.5 rounded-lg text-xs font-bold text-white flex items-center gap-1.5 w-fit {% if partner.is_open %}bg-emerald-600{% else %}bg-slate-700{% endif %}">
+                <span class="pulse-dot inline-block w-2 h-2 rounded-full {% if partner.is_open %}bg-emerald-300{% else %}bg-slate-400{% endif %}"></span>
                 {% if partner.is_open %}🟢 Ochiq{% else %}🔴 Yopiq{% endif %}
             </button>
         </form>
     </header>
 
-    <!-- YANGI BUYURTMA BANNERI (JS orqali ko'rinadi) -->
+    <!-- YANGI BUYURTMA BANNERI (JS orqali ko'rinadi — eski, kichik variant, zaxira sifatida saqlanadi) -->
     <div id="new-order-banner-slot"></div>
 
     <!-- KURYERNI JONLI KUZATISH OYNASI -->
-    <div id="partner-tracking-overlay" class="hidden fixed inset-0 z-40 bg-slate-900/95 flex flex-col">
+    <div id="partner-tracking-overlay" class="hidden fixed inset-0 z-40 bg-slate-950/95 flex flex-col">
         <div class="flex items-center justify-between p-4 border-b border-white/10">
             <div>
                 <h2 class="text-sm font-black text-white">🛵 Buyurtma #<span id="partner-tracking-order-id"></span></h2>
@@ -68,169 +148,184 @@
             <button onclick="closePartnerTracking()" class="text-white bg-white/10 w-8 h-8 rounded-full flex items-center justify-center">✕</button>
         </div>
         <div id="partner-tracking-map" class="flex-1"></div>
-        <div class="p-3 bg-slate-900 border-t border-white/10 text-center">
+        <div class="p-3 bg-slate-950 border-t border-white/10 text-center">
             <p id="partner-tracking-status-text" class="text-[11px] text-slate-400">Joylashuv har 6 soniyada yangilanadi</p>
         </div>
     </div>
 
     <!-- BO'LIM TANLASH -->
-    <div class="bg-white border-b sticky top-0 z-10 flex overflow-x-auto">
-        <button onclick="showTab('orders')" data-tab-btn="orders" class="tab-btn active px-4 py-3 text-sm whitespace-nowrap">📦 Buyurtmalar</button>
-        <button onclick="showTab('history')" data-tab-btn="history" class="tab-btn px-4 py-3 text-sm whitespace-nowrap">📜 Tarix</button>
-        <button onclick="showTab('menu')" data-tab-btn="menu" class="tab-btn px-4 py-3 text-sm whitespace-nowrap">📋 Menyu</button>
-        <button onclick="showTab('balance')" data-tab-btn="balance" class="tab-btn px-4 py-3 text-sm whitespace-nowrap">💰 Balans</button>
-        <button onclick="showTab('settings')" data-tab-btn="settings" class="tab-btn px-4 py-3 text-sm whitespace-nowrap">⚙️ Sozlamalar</button>
+    <div class="glass sticky top-[57px] z-10 flex overflow-x-auto">
+        <button onclick="showTab('orders')" data-tab-btn="orders" class="tab-btn active px-4 py-3 text-sm whitespace-nowrap font-semibold">📦 Buyurtmalar</button>
+        <button onclick="showTab('history')" data-tab-btn="history" class="tab-btn px-4 py-3 text-sm whitespace-nowrap font-semibold">📜 Tarix</button>
+        <button onclick="showTab('menu')" data-tab-btn="menu" class="tab-btn px-4 py-3 text-sm whitespace-nowrap font-semibold">📋 Menyu</button>
+        <button onclick="showTab('balance')" data-tab-btn="balance" class="tab-btn px-4 py-3 text-sm whitespace-nowrap font-semibold">💰 Balans</button>
+        <button onclick="showTab('settings')" data-tab-btn="settings" class="tab-btn px-4 py-3 text-sm whitespace-nowrap font-semibold">⚙️ Sozlamalar</button>
     </div>
 
-    <div class="container mx-auto p-4 space-y-6 max-w-3xl">
+    <div class="container mx-auto p-4 space-y-4 max-w-3xl relative z-10">
 
         <!-- BUGUNGI BUYURTMALAR -->
-        <div id="tab-orders" class="tab-page bg-white p-6 rounded-xl shadow-md">
-            <h2 class="text-lg font-bold mb-4 accent-text">📦 Bugungi Buyurtmalar</h2>
+        <div id="tab-orders" class="tab-page fade-up glass p-5 rounded-2xl">
+            <h2 class="text-base font-extrabold mb-4 text-grad">📦 Bugungi Buyurtmalar</h2>
             <div class="space-y-3">
                 {% for order in today_orders %}
-                <div class="border rounded-lg p-3">
+                <div class="rounded-xl p-3.5 {% if order.status.value == 'created' %}order-card-new{% endif %}" style="background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.09);">
                     <div class="flex justify-between items-start mb-2">
                         <div>
                             <span class="font-bold text-sm">#{{ order.id }}</span>
-                            <span class="text-xs text-gray-400 ml-2">{{ order.created_at|uzb_time('%H:%M') }}</span>
+                            <span class="text-xs text-slate-500 ml-2">{{ order.created_at|uzb_time('%H:%M') }}</span>
                         </div>
-                        <span class="px-2 py-0.5 text-[10px] font-semibold rounded-full bg-blue-100 text-blue-800">
+                        <span class="px-2.5 py-0.5 text-[10px] font-bold rounded-full" style="background:color-mix(in srgb, var(--accent) 20%, transparent); color:#c7d2fe;">
                             {{ status_labels.get(order.status.value, order.status.value) }}
                         </span>
                     </div>
-                    <p class="text-xs text-gray-500 mb-1">📍 {{ order.delivery_address }}</p>
-                    <p class="text-xs text-gray-600 mb-1">👤 {{ order.client.full_name if order.client else '—' }} · <a href="tel:{{ order.client.phone_number if order.client else '' }}" class="underline">{{ order.client.phone_number if order.client else '—' }}</a></p>
+                    <p class="text-xs text-slate-400 mb-1">📍 {{ order.delivery_address }}</p>
+                    <p class="text-xs text-slate-300 mb-1">👤 {{ order.client.full_name if order.client else '—' }} · <a href="tel:{{ order.client.phone_number if order.client else '' }}" class="underline">{{ order.client.phone_number if order.client else '—' }}</a></p>
                     {% if order.courier %}
-                    <p class="text-xs text-gray-600 mb-1">🛵 {{ order.courier.full_name }} · <a href="tel:{{ order.courier.phone_number }}" class="underline">{{ order.courier.phone_number }}</a></p>
+                    <p class="text-xs text-slate-300 mb-1">🛵 {{ order.courier.full_name }} · <a href="tel:{{ order.courier.phone_number }}" class="underline">{{ order.courier.phone_number }}</a></p>
                     {% endif %}
                     {% if order.client_comment %}
-                    <p class="text-xs text-amber-700 bg-amber-50 rounded px-2 py-1 mb-2">💬 {{ order.client_comment }}</p>
+                    <p class="text-xs text-amber-300 rounded-lg px-2.5 py-1.5 mb-2" style="background:rgba(251,191,36,.1); border:1px solid rgba(251,191,36,.2);">💬 {{ order.client_comment }}</p>
                     {% endif %}
-                    <ul class="text-xs space-y-0.5 mb-2">
+                    <ul class="text-xs text-slate-400 space-y-0.5 mb-2">
                         {% for item in order.items %}
                         <li>• {{ item.product_name }} — {{ item.quantity }} x {{ item.unit_price }} so'm</li>
                         {% endfor %}
                     </ul>
-                    <p class="text-sm font-bold mb-2">Jami: {{ order.total_price }} so'm</p>
+                    <p class="text-sm font-bold mb-2 text-slate-100">Jami: {{ order.total_price }} so'm</p>
 
                     {% if order.status.value == 'created' %}
                     <div class="flex gap-2">
-                        <form action="/partner/orders/{{ order.id }}/status" method="POST" class="flex-1">
+                        <form action="/partner/orders/{{ order.id }}/status" method="POST" class="js-haptic-form flex-1">
                             <input type="hidden" name="new_status" value="accepted_by_partner">
-                            <button type="submit" class="w-full bg-green-600 text-white py-1.5 rounded-lg text-xs font-bold">✅ Qabul qilish</button>
+                            <button type="submit" class="btn-press w-full bg-emerald-600 text-white py-2 rounded-lg text-xs font-bold">✅ Qabul qilish</button>
                         </form>
-                        <form action="/partner/orders/{{ order.id }}/status" method="POST" class="flex-1">
+                        <form action="/partner/orders/{{ order.id }}/status" method="POST" class="js-haptic-form flex-1">
                             <input type="hidden" name="new_status" value="cancelled">
-                            <button type="submit" class="w-full bg-red-100 text-red-700 py-1.5 rounded-lg text-xs font-bold">✕ Rad etish</button>
+                            <button type="submit" class="btn-press w-full text-rose-300 py-2 rounded-lg text-xs font-bold" style="background:rgba(244,63,94,.12); border:1px solid rgba(244,63,94,.25);">✕ Rad etish</button>
                         </form>
                     </div>
                     {% elif order.status.value == 'accepted_by_partner' %}
-                    <form action="/partner/orders/{{ order.id }}/status" method="POST">
+                    <form action="/partner/orders/{{ order.id }}/status" method="POST" class="js-haptic-form">
                         <input type="hidden" name="new_status" value="preparing">
-                        <button type="submit" class="w-full text-white py-1.5 rounded-lg text-xs font-bold accent-bg">🍳 Tayyorlashni boshladim</button>
+                        <button type="submit" class="btn-press accent-bg accent-glow w-full text-white py-2 rounded-lg text-xs font-bold">🍳 Tayyorlashni boshladim</button>
                     </form>
                     {% elif order.status.value == 'preparing' %}
-                    <form action="/partner/orders/{{ order.id }}/status" method="POST">
+                    <form action="/partner/orders/{{ order.id }}/status" method="POST" class="js-haptic-form">
                         <input type="hidden" name="new_status" value="looking_for_courier">
-                        <button type="submit" class="w-full text-white py-1.5 rounded-lg text-xs font-bold accent-bg">📦 Tayyor — kuryer kerak</button>
+                        <button type="submit" class="btn-press accent-bg accent-glow w-full text-white py-2 rounded-lg text-xs font-bold">📦 Tayyor — kuryer kerak</button>
                     </form>
                     {% elif order.status.value == 'on_the_way' %}
-                    <button type="button" onclick="openPartnerTracking({{ order.id }})" class="w-full bg-indigo-100 text-indigo-700 py-1.5 rounded-lg text-xs font-bold">🗺️ Kuryerni jonli kuzatish</button>
+                    <button type="button" onclick="openPartnerTracking({{ order.id }})" class="btn-press w-full py-2 rounded-lg text-xs font-bold" style="background:color-mix(in srgb, var(--accent) 18%, transparent); color:#c7d2fe;">🗺️ Kuryerni jonli kuzatish</button>
                     {% endif %}
                 </div>
                 {% else %}
-                <p class="text-sm text-gray-400 text-center py-6">Bugun hali buyurtma yo'q</p>
+                <p class="text-sm text-slate-500 text-center py-8">Bugun hali buyurtma yo'q</p>
                 {% endfor %}
             </div>
         </div>
 
         <!-- BUYURTMALAR TARIXI -->
-        <div id="tab-history" class="tab-page bg-white p-6 rounded-xl shadow-md hidden">
-            <h2 class="text-lg font-bold mb-4 accent-text">📜 Buyurtmalar Tarixi</h2>
+        <div id="tab-history" class="tab-page fade-up glass p-5 rounded-2xl hidden">
+            <h2 class="text-base font-extrabold mb-4 text-grad">📜 Buyurtmalar Tarixi</h2>
             <div class="space-y-2 max-h-[32rem] overflow-y-auto">
                 {% for order in history_orders %}
-                <div class="border rounded-lg p-3 text-sm">
+                <div class="rounded-xl p-3 text-sm" style="background:rgba(255,255,255,.03); border:1px solid rgba(255,255,255,.08);">
                     <div class="flex justify-between items-center">
                         <span class="font-bold">#{{ order.id }}</span>
-                        <span class="text-xs text-gray-400">{{ order.created_at|uzb_time('%d.%m.%Y %H:%M') }}</span>
-                        <span class="px-2 py-0.5 text-[10px] font-semibold rounded-full bg-blue-100 text-blue-800">
+                        <span class="text-xs text-slate-500">{{ order.created_at|uzb_time('%d.%m.%Y %H:%M') }}</span>
+                        <span class="px-2.5 py-0.5 text-[10px] font-bold rounded-full" style="background:color-mix(in srgb, var(--accent) 20%, transparent); color:#c7d2fe;">
                             {{ status_labels.get(order.status.value, order.status.value) }}
                         </span>
                     </div>
-                    <p class="text-xs text-gray-500 mt-1">👤 {{ order.client.full_name if order.client else '—' }} · {{ "%.0f"|format(order.total_price) }} so'm</p>
+                    <p class="text-xs text-slate-400 mt-1">👤 {{ order.client.full_name if order.client else '—' }} · {{ "%.0f"|format(order.total_price) }} so'm</p>
                 </div>
                 {% else %}
-                <p class="text-sm text-gray-400 text-center py-6">Hozircha tarix yo'q</p>
+                <p class="text-sm text-slate-500 text-center py-8">Hozircha tarix yo'q</p>
                 {% endfor %}
             </div>
         </div>
 
         <!-- MENYU -->
-        <div id="tab-menu" class="tab-page hidden space-y-6">
-            <div class="bg-white p-6 rounded-xl shadow-md">
-                <h2 class="text-lg font-bold mb-4 accent-text">🍕 Yangi Mahsulot Qo'shish</h2>
-                <form action="/partner/products/create" method="POST" enctype="multipart/form-data" class="grid grid-cols-1 md:grid-cols-4 gap-2">
-                    <input type="text" name="name" placeholder="Nomi" class="p-2 border rounded-lg text-sm md:col-span-2" required>
-                    <input type="number" name="price" placeholder="Narxi" class="p-2 border rounded-lg text-sm" required>
-                    <button type="submit" class="bg-green-600 text-white rounded-lg text-sm font-bold">+ Qo'shish</button>
-                    <input type="text" name="category" list="category-suggestions" placeholder="Kategoriya (masalan: Fastfood)" value="Boshqa" class="p-2 border rounded-lg text-sm md:col-span-2">
-                    <input type="file" name="image" accept="image/png,image/jpeg,image/webp" class="p-1.5 border rounded-lg text-xs md:col-span-2">
+        <div id="tab-menu" class="tab-page fade-up hidden space-y-4">
+            <div class="glass p-5 rounded-2xl">
+                <h2 class="text-base font-extrabold mb-4 text-grad">🍕 Yangi Mahsulot Qo'shish</h2>
+                <form action="/partner/products/create" method="POST" enctype="multipart/form-data" class="js-haptic-form grid grid-cols-1 md:grid-cols-4 gap-2">
+                    <input type="text" name="name" placeholder="Nomi" class="glass-input p-2.5 rounded-lg text-sm md:col-span-2" required>
+                    <input type="number" name="price" placeholder="Narxi" class="glass-input p-2.5 rounded-lg text-sm" required>
+                    <button type="submit" class="btn-press bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-sm font-bold">+ Qo'shish</button>
+                    <input type="text" name="category" list="category-suggestions" placeholder="Kategoriya (masalan: Fastfood)" value="Boshqa" class="glass-input p-2.5 rounded-lg text-sm md:col-span-2">
+                    <input type="file" name="image" accept="image/png,image/jpeg,image/webp" class="glass-input p-1.5 rounded-lg text-xs md:col-span-2">
                     <datalist id="category-suggestions">
                         <option value="Ichimliklar"><option value="Fastfood"><option value="Pitsalar">
                         <option value="Shashliklar"><option value="Salatlar"><option value="Shirinliklar"><option value="Boshqa">
                     </datalist>
-                    <input type="text" name="description" placeholder="Tavsif (ixtiyoriy)" class="p-2 border rounded-lg text-sm md:col-span-4">
+                    <input type="text" name="description" placeholder="Tavsif (ixtiyoriy)" class="glass-input p-2.5 rounded-lg text-sm md:col-span-4">
                 </form>
             </div>
 
-            <div class="bg-white p-6 rounded-xl shadow-md">
-                <h2 class="text-lg font-bold mb-4 accent-text">📋 Menyu</h2>
-                <div class="space-y-2">
+            <div class="glass p-5 rounded-2xl">
+                <h2 class="text-base font-extrabold mb-4 text-grad">📋 Menyu</h2>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     {% for product in products %}
-                    <form action="/partner/products/{{ product.id }}/update" method="POST" enctype="multipart/form-data" class="flex flex-wrap gap-2 items-center border-b pb-2">
-                        {% if product.image_url %}<img src="{{ product.image_url }}" class="w-10 h-10 rounded object-cover">{% endif %}
-                        <input type="text" name="name" value="{{ product.name }}" class="flex-1 min-w-[100px] p-1.5 border rounded text-sm">
-                        <input type="number" name="price" value="{{ product.price }}" class="w-20 p-1.5 border rounded text-sm">
-                        <input type="text" name="category" value="{{ product.category or 'Boshqa' }}" list="category-suggestions" class="w-24 p-1.5 border rounded text-sm">
-                        <input type="file" name="image" accept="image/png,image/jpeg,image/webp" class="w-28 text-[10px]">
-                        <input type="text" name="description" value="{{ product.description or '' }}" class="flex-1 min-w-[100px] p-1.5 border rounded text-sm" placeholder="Tavsif">
-                        <button type="submit" class="text-xs bg-indigo-100 text-indigo-700 px-2 py-1 rounded font-semibold">Saqlash</button>
-                    </form>
-                    <div class="flex justify-end gap-2 -mt-1 mb-1">
-                        <form action="/partner/products/{{ product.id }}/toggle" method="POST">
-                            <button type="submit" class="text-[10px] px-2 py-0.5 rounded {% if product.is_available %}bg-green-100 text-green-800{% else %}bg-red-100 text-red-800{% endif %}">
-                                {% if product.is_available %}Mavjud{% else %}Tugagan{% endif %}
-                            </button>
-                        </form>
-                        <form action="/partner/products/{{ product.id }}/delete" method="POST" onsubmit="return confirm('O\'chirilsinmi?');">
-                            <button type="submit" class="text-[10px] text-red-600 font-bold">🗑️ O'chirish</button>
-                        </form>
+                    <div class="product-card rounded-xl p-3 flex flex-col gap-2" style="background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.09);">
+                        <div class="flex gap-2.5">
+                            {% if product.image_url %}
+                            <img src="{{ product.image_url }}" class="w-14 h-14 rounded-lg object-cover shrink-0" style="border:1px solid rgba(255,255,255,.1);">
+                            {% else %}
+                            <div class="w-14 h-14 rounded-lg shrink-0 flex items-center justify-center text-xl" style="background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.1);">🍽️</div>
+                            {% endif %}
+                            <div class="min-w-0 flex-1">
+                                <p class="font-bold text-sm truncate">{{ product.name }}</p>
+                                <p class="text-xs text-slate-400">{{ "%.0f"|format(product.price) }} so'm · {{ product.category or 'Boshqa' }}</p>
+                            </div>
+                            <div class="shrink-0 flex flex-col gap-1 items-end">
+                                <form action="/partner/products/{{ product.id }}/toggle" method="POST" class="js-haptic-form">
+                                    <button type="submit" class="text-[10px] px-2 py-0.5 rounded-full font-bold {% if product.is_available %}bg-emerald-500/20 text-emerald-300{% else %}bg-rose-500/20 text-rose-300{% endif %}">
+                                        {% if product.is_available %}Mavjud{% else %}Tugagan{% endif %}
+                                    </button>
+                                </form>
+                                <form action="/partner/products/{{ product.id }}/delete" method="POST" class="js-haptic-form" onsubmit="return confirm('O\'chirilsinmi?');">
+                                    <button type="submit" class="text-[10px] text-rose-400 font-bold">🗑️ O'chirish</button>
+                                </form>
+                            </div>
+                        </div>
+                        <details class="text-xs">
+                            <summary class="cursor-pointer text-slate-400 select-none">✏️ Tahrirlash</summary>
+                            <form action="/partner/products/{{ product.id }}/update" method="POST" enctype="multipart/form-data" class="js-haptic-form flex flex-wrap gap-1.5 items-center mt-2 pt-2" style="border-top:1px solid rgba(255,255,255,.08);">
+                                <input type="text" name="name" value="{{ product.name }}" class="glass-input flex-1 min-w-[90px] p-1.5 rounded text-xs">
+                                <input type="number" name="price" value="{{ product.price }}" class="glass-input w-20 p-1.5 rounded text-xs">
+                                <input type="text" name="category" value="{{ product.category or 'Boshqa' }}" list="category-suggestions" class="glass-input w-24 p-1.5 rounded text-xs">
+                                <input type="file" name="image" accept="image/png,image/jpeg,image/webp" class="w-28 text-[10px] text-slate-400">
+                                <input type="text" name="description" value="{{ product.description or '' }}" class="glass-input flex-1 min-w-[90px] p-1.5 rounded text-xs" placeholder="Tavsif">
+                                <button type="submit" class="text-xs px-2.5 py-1 rounded font-bold" style="background:color-mix(in srgb, var(--accent) 20%, transparent); color:#c7d2fe;">Saqlash</button>
+                            </form>
+                        </details>
                     </div>
                     {% else %}
-                    <p class="text-sm text-gray-400 text-center py-4">Hozircha mahsulot yo'q</p>
+                    <p class="text-sm text-slate-500 text-center py-6 sm:col-span-2">Hozircha mahsulot yo'q</p>
                     {% endfor %}
                 </div>
             </div>
         </div>
 
         <!-- BALANS -->
-        <div id="tab-balance" class="tab-page hidden bg-white p-4 rounded-xl shadow-md">
+        <div id="tab-balance" class="tab-page fade-up hidden glass p-5 rounded-2xl">
             <div class="flex justify-between items-center mb-3">
-                <span class="text-sm text-gray-500">💰 Joriy balansingiz</span>
-                <span class="text-xl font-bold text-green-600">{{ "%.0f"|format(partner.balance) }} so'm</span>
+                <span class="text-sm text-slate-400">💰 Joriy balansingiz</span>
+                <span class="text-xl font-extrabold text-emerald-400">{{ "%.0f"|format(partner.balance) }} so'm</span>
             </div>
-            <form action="/partner/withdraw" method="POST" class="flex gap-2">
-                <input type="number" name="amount" placeholder="Summa" max="{{ partner.balance }}" class="flex-1 p-2 border rounded-lg text-sm" required>
-                <button type="submit" class="text-white px-4 py-2 rounded-lg text-sm font-bold whitespace-nowrap accent-bg">💸 Yechib olish</button>
+            <form action="/partner/withdraw" method="POST" class="js-haptic-form flex gap-2">
+                <input type="number" name="amount" placeholder="Summa" max="{{ partner.balance }}" class="glass-input flex-1 p-2.5 rounded-lg text-sm" required>
+                <button type="submit" class="btn-press accent-bg accent-glow text-white px-4 py-2.5 rounded-lg text-sm font-bold whitespace-nowrap">💸 Yechib olish</button>
             </form>
             {% if withdrawal_requests %}
-            <div class="mt-3 pt-3 border-t space-y-1">
+            <div class="mt-3 pt-3 space-y-1.5" style="border-top:1px solid rgba(255,255,255,.08);">
                 {% for wd in withdrawal_requests %}
                 <div class="flex justify-between text-xs">
-                    <span>{{ wd.requested_at|uzb_time('%d.%m %H:%M') }}</span>
+                    <span class="text-slate-400">{{ wd.requested_at|uzb_time('%d.%m %H:%M') }}</span>
                     <span class="font-semibold">{{ "%.0f"|format(wd.amount) }} so'm</span>
-                    <span class="{% if wd.status.value == 'pending' %}text-amber-600{% elif wd.status.value == 'approved' %}text-green-600{% else %}text-red-600{% endif %}">
+                    <span class="{% if wd.status.value == 'pending' %}text-amber-400{% elif wd.status.value == 'approved' %}text-emerald-400{% else %}text-rose-400{% endif %}">
                         {% if wd.status.value == 'pending' %}⏳ Kutilmoqda{% elif wd.status.value == 'approved' %}✅ To'landi{% else %}✕ Rad etildi{% endif %}
                     </span>
                 </div>
@@ -240,26 +335,26 @@
         </div>
 
         <!-- SOZLAMALAR -->
-        <div id="tab-settings" class="tab-page hidden bg-white p-6 rounded-xl shadow-md">
-            <h2 class="text-lg font-bold mb-4 accent-text">⚙️ Do'kon Sozlamalari</h2>
-            <p class="text-xs text-gray-500 mb-4">Nomi, manzili, joylashuvi va yangi buyurtma signalini shu yerdan o'zgartirasiz. Komissiya, ish vaqti va shahar — faqat egasi tomonidan o'zgartiriladi.</p>
+        <div id="tab-settings" class="tab-page fade-up hidden glass p-5 rounded-2xl">
+            <h2 class="text-base font-extrabold mb-1 text-grad">⚙️ Do'kon Sozlamalari</h2>
+            <p class="text-xs text-slate-500 mb-4">Nomi, manzili, joylashuvi va yangi buyurtma signalini shu yerdan o'zgartirasiz. Komissiya, ish vaqti va shahar — faqat egasi tomonidan o'zgartiriladi.</p>
 
-            <form action="/partner/settings/update" method="POST" class="space-y-4">
+            <form action="/partner/settings/update" method="POST" class="js-haptic-form space-y-4">
                 <div>
-                    <label class="block text-xs font-medium">Do'kon nomi</label>
-                    <input type="text" name="brand_name" value="{{ partner.brand_name }}" class="w-full mt-1 p-2 border rounded-lg text-sm" required>
+                    <label class="block text-xs font-semibold text-slate-400 mb-1">Do'kon nomi</label>
+                    <input type="text" name="brand_name" value="{{ partner.brand_name }}" class="glass-input w-full p-2.5 rounded-lg text-sm" required>
                 </div>
                 <div>
-                    <label class="block text-xs font-medium">Manzil (matn)</label>
-                    <input type="text" name="address" value="{{ partner.address }}" class="w-full mt-1 p-2 border rounded-lg text-sm" required>
+                    <label class="block text-xs font-semibold text-slate-400 mb-1">Manzil (matn)</label>
+                    <input type="text" name="address" value="{{ partner.address }}" class="glass-input w-full p-2.5 rounded-lg text-sm" required>
                 </div>
 
                 <div>
-                    <label class="block text-xs font-medium mb-1">Xaritadagi joylashuv</label>
+                    <label class="block text-xs font-semibold text-slate-400 mb-1.5">Xaritadagi joylashuv</label>
                     <input type="hidden" name="latitude" id="partner-lat" value="{{ partner.latitude or '' }}">
                     <input type="hidden" name="longitude" id="partner-lng" value="{{ partner.longitude or '' }}">
-                    <button type="button" onclick="detectLocation()" class="w-full bg-gray-100 hover:bg-gray-200 py-2 rounded-lg text-sm font-semibold mb-2">📍 Joylashuvni aniqlash (GPS)</button>
-                    <p id="location-status" class="text-[11px] text-gray-500">
+                    <button type="button" onclick="detectLocation()" class="w-full py-2.5 rounded-lg text-sm font-semibold mb-2 glass-input">📍 Joylashuvni aniqlash (GPS)</button>
+                    <p id="location-status" class="text-[11px] text-slate-500">
                         {% if partner.latitude and partner.longitude %}
                         ✅ Joylashuv belgilangan ({{ "%.5f"|format(partner.latitude) }}, {{ "%.5f"|format(partner.longitude) }})
                         {% else %}
@@ -267,17 +362,17 @@
                         {% endif %}
                     </p>
                     {% if partner.latitude and partner.longitude %}
-                    <iframe id="map-preview" class="w-full h-40 rounded-lg border mt-2"
+                    <iframe id="map-preview" class="w-full h-40 rounded-lg mt-2" style="border:1px solid rgba(255,255,255,.12); filter:invert(0.92) hue-rotate(180deg) contrast(0.9);"
                         src="https://www.openstreetmap.org/export/embed.html?bbox={{ partner.longitude - 0.005 }}%2C{{ partner.latitude - 0.005 }}%2C{{ partner.longitude + 0.005 }}%2C{{ partner.latitude + 0.005 }}&marker={{ partner.latitude }}%2C{{ partner.longitude }}">
                     </iframe>
                     {% endif %}
                 </div>
 
                 <div>
-                    <label class="block text-xs font-medium mb-2">Yangi buyurtma signali</label>
+                    <label class="block text-xs font-semibold text-slate-400 mb-2">Yangi buyurtma signali</label>
                     <div class="grid grid-cols-3 gap-2">
                         {% for sound_id, sound_label in [("chime1", "🔔 Signal 1"), ("chime2", "🔔🔔 Signal 2"), ("chime3", "🎵 Signal 3")] %}
-                        <label class="flex flex-col items-center gap-1 p-2 border rounded-lg cursor-pointer {% if partner.notification_sound == sound_id or (not partner.notification_sound and sound_id == 'chime1') %}accent-border bg-indigo-50{% endif %}">
+                        <label class="flex flex-col items-center gap-1 p-2.5 rounded-lg cursor-pointer glass-input {% if partner.notification_sound == sound_id or (not partner.notification_sound and sound_id == 'chime1') %}accent-border{% endif %}" style= "{% if partner.notification_sound == sound_id or (not partner.notification_sound and sound_id == 'chime1') %}background:color-mix(in srgb, var(--accent) 15%, transparent);{% endif %}">
                             <input type="radio" name="notification_sound" value="{{ sound_id }}" class="hidden sound-radio" {% if partner.notification_sound == sound_id or (not partner.notification_sound and sound_id == 'chime1') %}checked{% endif %}>
                             <span class="text-xs font-semibold">{{ sound_label }}</span>
                             <button type="button" onclick="playSound('{{ sound_id }}')" class="text-[10px] accent-text underline">Eshitib ko'rish</button>
@@ -286,7 +381,7 @@
                     </div>
                 </div>
 
-                <button type="submit" class="w-full text-white py-2.5 rounded-lg font-bold text-sm accent-bg">Saqlash</button>
+                <button type="submit" class="btn-press accent-bg accent-glow w-full text-white py-2.5 rounded-lg font-bold text-sm">Saqlash</button>
             </form>
         </div>
 
@@ -302,7 +397,7 @@
             localStorage.setItem('partner_active_tab', tabName);
         }
 
-        // ---- MAVZU (rang) ----
+        // ---- MAVZU (aksent rang) ----
         function setTheme(main, dark) {
             document.documentElement.style.setProperty('--accent', main);
             document.documentElement.style.setProperty('--accent-dark', dark);
@@ -336,6 +431,7 @@
                     document.getElementById('partner-lat').value = pos.coords.latitude;
                     document.getElementById('partner-lng').value = pos.coords.longitude;
                     status.textContent = `✅ Aniqlandi (${pos.coords.latitude.toFixed(5)}, ${pos.coords.longitude.toFixed(5)}) — "Saqlash" bosing.`;
+                    if (navigator.vibrate) navigator.vibrate(16);
                 },
                 (err) => {
                     status.textContent = "Joylashuvni aniqlab bo'lmadi: " + err.message + ". Brauzer sozlamalarida joylashuvga ruxsat berilganini tekshiring.";
@@ -347,9 +443,20 @@
         document.querySelectorAll('.sound-radio').forEach(radio => {
             radio.addEventListener('change', () => {
                 document.querySelectorAll('.sound-radio').forEach(r => {
-                    r.closest('label').classList.remove('accent-border', 'bg-indigo-50');
+                    r.closest('label').classList.remove('accent-border');
+                    r.closest('label').style.background = '';
                 });
-                if (radio.checked) radio.closest('label').classList.add('accent-border', 'bg-indigo-50');
+                if (radio.checked) {
+                    radio.closest('label').classList.add('accent-border');
+                    radio.closest('label').style.background = 'color-mix(in srgb, var(--accent) 15%, transparent)';
+                }
+            });
+        });
+
+        // ---- HAPTIC — barcha muhim formalar uchun yengil vibratsiya ----
+        document.querySelectorAll('.js-haptic-form').forEach(function (form) {
+            form.addEventListener('submit', function () {
+                if (navigator.vibrate) navigator.vibrate(16);
             });
         });
 
@@ -357,6 +464,7 @@
         let audioCtx = null;
         function getAudioCtx() {
             if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            if (audioCtx.state === 'suspended') audioCtx.resume();
             return audioCtx;
         }
         function beep(freq, startTime, duration, ctx) {
@@ -406,15 +514,17 @@
             }
         }
 
+        // DIQQAT: bu funksiya endi to'liq ekran ogohlantirishni (radar
+        // animatsiyasi + baland ovoz + vibratsiya) ko'rsatadi — avvalgi
+        // kichik banner o'rniga. Funksiya nomi saqlanib qoldi, chunki
+        // checkForNewOrders() shuni chaqiradi.
         function showNewOrderBanner() {
-            const slot = document.getElementById('new-order-banner-slot');
-            if (document.getElementById('new-order-banner')) return;
-            const banner = document.createElement('div');
-            banner.id = 'new-order-banner';
-            banner.className = 'fixed top-16 left-1/2 -translate-x-1/2 bg-green-600 text-white px-4 py-2 rounded-xl shadow-lg z-50 text-sm font-bold cursor-pointer';
-            banner.textContent = '🔔 Yangi buyurtma keldi! Yangilash uchun bosing';
-            banner.onclick = () => window.location.reload();
-            slot.appendChild(banner);
+            const overlay = document.getElementById('new-order-alert-overlay');
+            if (navigator.vibrate) navigator.vibrate([50, 80, 50, 80, 120]);
+            if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.HapticFeedback) {
+                window.Telegram.WebApp.HapticFeedback.notificationOccurred('success');
+            }
+            if (overlay) overlay.classList.remove('hidden');
         }
 
         // ==================== KURYERNI JONLI KUZATISH ====================
@@ -457,14 +567,17 @@
 
             if (!partnerTrackMap && typeof L !== 'undefined') {
                 partnerTrackMap = L.map('partner-tracking-map').setView([41.5504, 60.6318], 13);
+                const darkLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+                    maxZoom: 20, subdomains: 'abcd', attribution: '&copy; OpenStreetMap &copy; CARTO'
+                }).addTo(partnerTrackMap);
                 const streets = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
                     maxZoom: 19, attribution: '&copy; OpenStreetMap'
-                }).addTo(partnerTrackMap);
+                });
                 const satellite = L.tileLayer(
                     'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
                     { maxZoom: 19, attribution: 'Tiles &copy; Esri' }
                 );
-                L.control.layers({ '🗺️ Sxema': streets, '🛰️ Sputnik': satellite }, {}, { position: 'topright', collapsed: true }).addTo(partnerTrackMap);
+                L.control.layers({ '🌑 Tungi': darkLayer, '🗺️ Sxema': streets, '🛰️ Sputnik': satellite }, {}, { position: 'topright', collapsed: true }).addTo(partnerTrackMap);
             }
             setTimeout(() => { if (partnerTrackMap) partnerTrackMap.invalidateSize(); }, 100);
 
