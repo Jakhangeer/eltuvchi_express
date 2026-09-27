@@ -833,6 +833,58 @@ async def admin_orders_live(
     ])
 
 
+@admin_router.get("/admin/analytics/hourly.json")
+async def admin_analytics_hourly(
+    city_id: Optional[int] = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user),
+):
+    """Dashboard'dagi JONLI GRAFIK (Chart.js) uchun — BUGUNGI kunning har
+    bir soati bo'yicha nechta buyurtma tushgani va nechta so'm
+    (yetkazilganlaridan) tushum kelgani. Har safar chaqirilganda qayta
+    hisoblanadi — shu sababli grafik "jonli" (yangi buyurtma kelishi
+    bilan tegishli soat ustuni o'zi o'sib boradi).
+
+    DIQQAT: soat — O'ZBEKISTON vaqti bo'yicha (UZB_TZ_OFFSET), server
+    (UTC) vaqti bo'yicha emas — aks holda kechqurun grafik "ertangi kun"
+    soatlariga siljib ketardi."""
+    is_owner = current_user.role == UserRole.OWNER
+    active_city_id = city_id if is_owner else current_user.city_id
+
+    today_uzb = (datetime.utcnow() + UZB_TZ_OFFSET).date()
+    # Keng SQL oralig'i (aniq filtr Python tomonida, UZB vaqti bo'yicha) —
+    # boshqa joylarda ham (masalan yuqoridagi tug'ilgan kun hisobida)
+    # ishlatilgan xuddi shu naqsh.
+    range_start = datetime.combine(today_uzb, datetime.min.time()) - UZB_TZ_OFFSET
+    range_end = range_start + timedelta(days=1, hours=1)
+
+    orders_stmt = select(Order.created_at, Order.total_price, Order.status).where(
+        Order.created_at >= range_start, Order.created_at < range_end
+    )
+    if active_city_id is not None:
+        orders_stmt = orders_stmt.join(PartnerProfile, Order.partner_id == PartnerProfile.id).where(
+            PartnerProfile.city_id == active_city_id
+        )
+    rows = (await db.execute(orders_stmt)).all()
+
+    order_counts = [0] * 24
+    revenue_by_hour = [0.0] * 24
+    for created_at, total_price, order_status in rows:
+        local_dt = created_at + UZB_TZ_OFFSET
+        if local_dt.date() != today_uzb:
+            continue
+        h = local_dt.hour
+        order_counts[h] += 1
+        if order_status == OrderStatus.DELIVERED:
+            revenue_by_hour[h] += total_price or 0.0
+
+    return JSONResponse({
+        "hours": [f"{h:02d}:00" for h in range(24)],
+        "order_counts": order_counts,
+        "revenue_by_hour": revenue_by_hour,
+    })
+
+
 # ==================== 2. TIZIM SOZLAMALARI (faqat OWNER) ====================
 @settings_router.post("")
 async def update_settings(
@@ -1486,6 +1538,73 @@ async def update_order_status_and_courier(
         print(f"Bildirishnoma yuborishda xatolik (buyurtma ishlashiga ta'sir qilmadi): {e}")
 
     return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@orders_router.post("/{order_id}/update-json")
+async def update_order_status_json(
+    order_id: int,
+    new_status: str = Form(...),
+    courier_id: Optional[int] = Form(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Yuqoridagi `/update` bilan AYNAN bir xil ish mantig'i (status,
+    moliya, Telegram bildirishnomalari) — faqat sahifani qayta
+    yuklab (redirect) yubormaydi, JSON qaytaradi. Admin/operator
+    panelidagi KANBAN taxtasi (sudrab-tashlab status o'zgartirish)
+    shu endpointdan foydalanadi, chunki drag-and-drop paytida butun
+    sahifani qayta yuklash tajribani buzadi."""
+    order_query = await db.execute(
+        select(Order)
+        .options(selectinload(Order.partner))
+        .where(Order.id == order_id)
+    )
+    order = order_query.scalars().first()
+
+    if not order:
+        raise HTTPException(status_code=404, detail="Buyurtma topilmadi")
+
+    old_status = order.status
+    old_courier_id = order.courier_id
+
+    try:
+        order.status = OrderStatus(new_status)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Noto'g'ri buyurtma holati")
+
+    if courier_id:
+        order.courier_id = courier_id
+
+    if order.status == OrderStatus.DELIVERED and old_status != OrderStatus.DELIVERED:
+        await apply_cod_delivery_financials(db, order)
+
+    await db.commit()
+
+    try:
+        if order.status != old_status:
+            client_query = await db.execute(select(User).where(User.id == order.client_id))
+            client = client_query.scalars().first()
+            if client and client.telegram_id:
+                label = STATUS_LABELS_UZ.get(order.status.value, order.status.value)
+                await send_telegram_message(
+                    client.telegram_id,
+                    f"📦 <b>Buyurtma #{order.id}</b> holati yangilandi:\n<b>{label}</b>",
+                )
+        if courier_id and courier_id != old_courier_id:
+            courier_query = await db.execute(select(User).where(User.id == courier_id))
+            courier = courier_query.scalars().first()
+            if courier and courier.telegram_id:
+                partner_name = order.partner.brand_name if order.partner else "—"
+                await send_telegram_message(
+                    courier.telegram_id,
+                    f"🛵 Sizga yangi buyurtma biriktirildi!\n\n"
+                    f"<b>Buyurtma:</b> #{order.id}\n"
+                    f"<b>Do'kon:</b> {partner_name}\n"
+                    f"<b>Manzil:</b> {order.delivery_address}",
+                )
+    except Exception as e:
+        print(f"Bildirishnoma yuborishda xatolik (buyurtma ishlashiga ta'sir qilmadi): {e}")
+
+    return JSONResponse({"ok": True, "id": order.id, "status": order.status.value})
 
 
 # ==================== 4. DO'KONLAR BOSHQARUVI ====================

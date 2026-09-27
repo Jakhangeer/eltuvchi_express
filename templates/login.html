@@ -6,46 +6,224 @@
     <title>Kirish — Eltuvchi Express</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --obsidian: #05060a;
+            --indigo-glow: #6366f1;
+            --emerald-glow: #34d399;
+            --amber-glow: #fbbf24;
+        }
+        * { font-family: 'Plus Jakarta Sans', 'Inter', -apple-system, sans-serif; }
+
+        body {
+            background: radial-gradient(ellipse at top, #12142080 0%, #05060a 60%), var(--obsidian);
+            overscroll-behavior: none;
+        }
+
+        /* ---- Orqa fondagi yumshoq, sekin harakatlanuvchi gradient shariklar ---- */
+        .orb {
+            position: fixed;
+            border-radius: 50%;
+            filter: blur(90px);
+            opacity: 0.45;
+            pointer-events: none;
+            z-index: 0;
+            will-change: transform;
+        }
+        .orb-1 { width: 420px; height: 420px; background: radial-gradient(circle, var(--indigo-glow), transparent 70%); top: -120px; left: -100px; animation: float1 16s ease-in-out infinite; }
+        .orb-2 { width: 380px; height: 380px; background: radial-gradient(circle, var(--emerald-glow), transparent 70%); bottom: -140px; right: -100px; animation: float2 20s ease-in-out infinite; }
+        .orb-3 { width: 300px; height: 300px; background: radial-gradient(circle, var(--amber-glow), transparent 70%); top: 40%; left: 50%; opacity: 0.18; animation: float3 24s ease-in-out infinite; }
+
+        @keyframes float1 { 0%,100% { transform: translate(0,0) scale(1); } 50% { transform: translate(60px,80px) scale(1.15); } }
+        @keyframes float2 { 0%,100% { transform: translate(0,0) scale(1); } 50% { transform: translate(-50px,-60px) scale(1.1); } }
+        @keyframes float3 { 0%,100% { transform: translate(-50%,-50%) scale(1); } 50% { transform: translate(-50%,-50%) scale(1.3) rotate(30deg); } }
+
+        /* ---- Nozik "particle" nuqtalar ---- */
+        .particle {
+            position: fixed; border-radius: 50%; background: rgba(255,255,255,.5);
+            pointer-events: none; z-index: 1; animation: drift linear infinite;
+        }
+        @keyframes drift {
+            0% { transform: translateY(0) translateX(0); opacity: 0; }
+            10% { opacity: .7; }
+            90% { opacity: .5; }
+            100% { transform: translateY(-100vh) translateX(20px); opacity: 0; }
+        }
+
+        /* ---- Shaffof (glass) karta ---- */
+        .glass-card {
+            background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02));
+            backdrop-filter: blur(24px) saturate(160%);
+            -webkit-backdrop-filter: blur(24px) saturate(160%);
+            border: 1px solid rgba(255,255,255,0.1);
+            box-shadow: 0 25px 60px -15px rgba(0,0,0,0.7), inset 0 1px 0 rgba(255,255,255,0.06);
+        }
+
+        .brand-badge {
+            background: linear-gradient(135deg, #6366f1, #818cf8 45%, #34d399);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+        }
+
+        .glow-ring {
+            box-shadow: 0 0 0 0 rgba(99,102,241,0.6);
+            animation: pulseRing 2.6s ease-out infinite;
+        }
+        @keyframes pulseRing {
+            0% { box-shadow: 0 0 0 0 rgba(99,102,241,0.55); }
+            70% { box-shadow: 0 0 0 14px rgba(99,102,241,0); }
+            100% { box-shadow: 0 0 0 0 rgba(99,102,241,0); }
+        }
+
+        .field-input {
+            background: rgba(255,255,255,0.04);
+            border: 1px solid rgba(255,255,255,0.09);
+            transition: all .25s ease;
+        }
+        .field-input:focus {
+            background: rgba(255,255,255,0.07);
+            border-color: rgba(99,102,241,0.65);
+            box-shadow: 0 0 0 4px rgba(99,102,241,0.15);
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #4f46e5, #6366f1 55%, #34d399);
+            background-size: 200% 200%;
+            transition: transform .18s ease, box-shadow .3s ease, background-position .6s ease;
+            box-shadow: 0 10px 30px -8px rgba(99,102,241,0.55);
+        }
+        .btn-primary:hover { background-position: 100% 100%; box-shadow: 0 14px 36px -6px rgba(99,102,241,0.75); }
+        .btn-primary:active { transform: scale(0.965); }
+
+        .btn-flash {
+            position: absolute; inset: 0; border-radius: inherit;
+            background: radial-gradient(circle, rgba(255,255,255,0.55), transparent 60%);
+            opacity: 0; transform: scale(0.4);
+            pointer-events: none;
+        }
+        .btn-flash.play { animation: flashPulse .55s ease-out; }
+        @keyframes flashPulse { 0% { opacity: .9; transform: scale(0.3); } 100% { opacity: 0; transform: scale(1.6); } }
+
+        .fade-up { animation: fadeUp .7s cubic-bezier(.2,.7,.2,1) both; }
+        @keyframes fadeUp { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: translateY(0); } }
+
+        .spinner {
+            width: 34px; height: 34px; border-radius: 50%;
+            border: 3px solid rgba(99,102,241,0.2); border-top-color: #818cf8;
+            animation: spin 0.9s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
 </head>
-<body class="bg-gray-100 min-h-screen flex items-center justify-center p-4">
+<body class="min-h-screen flex items-center justify-center p-4 relative overflow-hidden">
     <script>
         const tg = window.Telegram?.WebApp;
         if (tg) { tg.ready(); tg.expand(); }
     </script>
 
-    <div id="auto-login-status" class="hidden text-center text-sm text-gray-500 mb-4">
-        🔄 Telegram orqali avtomatik kirilmoqda...
+    <div class="orb orb-1"></div>
+    <div class="orb orb-2"></div>
+    <div class="orb orb-3"></div>
+    <div id="particle-layer"></div>
+
+    <!-- AVTOMATIK KIRISH HOLATI (Telegram Mini App) -->
+    <div id="auto-login-status" class="hidden relative z-10 flex-col items-center gap-4 text-center">
+        <div class="spinner"></div>
+        <p class="text-sm text-slate-300 font-medium">Telegram orqali avtomatik kirilmoqda...</p>
     </div>
 
-    <div id="login-form-wrapper" class="bg-white rounded-2xl shadow-xl w-full max-w-sm p-8">
-        <div class="flex flex-col items-center mb-6">
-            <img src="/static/images/logo.png" alt="Eltuvchi Express" class="h-16 w-16 object-contain mb-2" onerror="this.style.display='none'">
-            <h1 class="text-xl font-bold text-indigo-700">Eltuvchi Express</h1>
-            <p class="text-xs text-gray-500 mt-1">Boshqaruv Paneliga Kirish</p>
+    <!-- LOGIN KARTASI -->
+    <div id="login-form-wrapper" class="glass-card fade-up relative z-10 rounded-3xl w-full max-w-sm p-8">
+        <div class="flex flex-col items-center mb-7">
+            <div class="glow-ring w-16 h-16 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center mb-3 overflow-hidden">
+                <img src="/static/images/logo.png" alt="Eltuvchi Express" class="h-10 w-10 object-contain" onerror="this.style.display='none'; this.parentElement.innerHTML='🚀';">
+            </div>
+            <h1 class="text-2xl font-extrabold brand-badge tracking-tight">Eltuvchi Express</h1>
+            <p class="text-[11px] text-slate-400 mt-1 tracking-wide uppercase">Boshqaruv Paneliga Kirish</p>
         </div>
 
         {% if error %}
-        <div class="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg p-3 mb-4">
+        <div class="bg-red-500/10 border border-red-500/30 text-red-300 text-sm rounded-xl p-3 mb-5">
             {{ error }}
         </div>
         {% endif %}
 
-        <form action="/login" method="POST" class="space-y-4">
+        <form action="/login" method="POST" class="space-y-4" id="login-form">
             <input type="hidden" name="next" value="{{ next_url }}">
             <div>
-                <label class="block text-sm font-medium text-gray-700">Telefon raqami</label>
-                <input type="text" name="phone_number" placeholder="+998901234567" class="w-full mt-1 p-2.5 border rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none" required autofocus>
+                <label class="block text-xs font-semibold text-slate-400 mb-1.5 tracking-wide">TELEFON RAQAMI</label>
+                <input type="text" name="phone_number" placeholder="+998901234567"
+                       class="field-input w-full p-3 rounded-xl text-white placeholder-slate-500 outline-none text-sm"
+                       required autofocus>
             </div>
             <div>
-                <label class="block text-sm font-medium text-gray-700">Parol / PIN</label>
-                <input type="password" name="password" inputmode="numeric" class="w-full mt-1 p-2.5 border rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none" required>
-                <p class="text-[11px] text-gray-400 mt-1">Kuryer/hamkor uchun — 4 xonali PIN. Admin/operator uchun — oddiy parol.</p>
+                <label class="block text-xs font-semibold text-slate-400 mb-1.5 tracking-wide">PAROL / PIN</label>
+                <input type="password" name="password" inputmode="numeric"
+                       class="field-input w-full p-3 rounded-xl text-white placeholder-slate-500 outline-none text-sm">
+                <p class="text-[11px] text-slate-500 mt-1.5">Kuryer/hamkor uchun — 4 xonali PIN. Admin/operator uchun — oddiy parol.</p>
             </div>
-            <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-2.5 rounded-lg font-bold transition-colors">
-                Kirish
+            <button type="submit" id="login-submit-btn" class="btn-primary relative overflow-hidden w-full text-white py-3.5 rounded-xl font-bold text-sm tracking-wide">
+                <span class="btn-flash" id="btn-flash"></span>
+                <span class="relative z-10">Kirish →</span>
             </button>
         </form>
     </div>
+
+    <script>
+        // ---- Nozik suzuvchi zarrachalar (sof CSS + JS, tashqi kutubxonasiz) ----
+        (function spawnParticles() {
+            const layer = document.getElementById('particle-layer');
+            const count = window.innerWidth < 640 ? 14 : 26;
+            for (let i = 0; i < count; i++) {
+                const p = document.createElement('div');
+                const size = 1 + Math.random() * 2.5;
+                p.className = 'particle';
+                p.style.width = size + 'px';
+                p.style.height = size + 'px';
+                p.style.left = Math.random() * 100 + 'vw';
+                p.style.bottom = '-10px';
+                p.style.animationDuration = (10 + Math.random() * 14) + 's';
+                p.style.animationDelay = (Math.random() * 12) + 's';
+                layer.appendChild(p);
+            }
+        })();
+
+        // ---- Ovoz va "haptic" — tugma bosilganda yengil, qimmat tuyuladigan klik ----
+        let clickAudioCtx = null;
+        function playClickSound() {
+            try {
+                clickAudioCtx = clickAudioCtx || new (window.AudioContext || window.webkitAudioContext)();
+                if (clickAudioCtx.state === 'suspended') clickAudioCtx.resume();
+                const t = clickAudioCtx.currentTime;
+                const osc = clickAudioCtx.createOscillator();
+                const gain = clickAudioCtx.createGain();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(720, t);
+                osc.frequency.exponentialRampToValueAtTime(920, t + 0.09);
+                gain.gain.setValueAtTime(0, t);
+                gain.gain.linearRampToValueAtTime(0.25, t + 0.015);
+                gain.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
+                osc.connect(gain).connect(clickAudioCtx.destination);
+                osc.start(t); osc.stop(t + 0.25);
+            } catch (e) { /* ovoz ixtiyoriy — xato bo'lsa jim o'tkazamiz */ }
+        }
+
+        const loginForm = document.getElementById('login-form');
+        const submitBtn = document.getElementById('login-submit-btn');
+        const btnFlash = document.getElementById('btn-flash');
+        if (loginForm) {
+            loginForm.addEventListener('submit', function () {
+                playClickSound();
+                if (navigator.vibrate) navigator.vibrate(18);
+                btnFlash.classList.remove('play'); void btnFlash.offsetWidth; btnFlash.classList.add('play');
+                submitBtn.style.opacity = '0.85';
+            });
+        }
+    </script>
 
     <script>
         // Agar sahifa Telegram Mini App ichida ochilgan bo'lsa va Telegram
@@ -57,7 +235,9 @@
             if (!tg || !tg.initData) return;
 
             document.getElementById('login-form-wrapper').classList.add('hidden');
-            document.getElementById('auto-login-status').classList.remove('hidden');
+            const statusEl = document.getElementById('auto-login-status');
+            statusEl.classList.remove('hidden');
+            statusEl.classList.add('flex');
 
             try {
                 const res = await fetch('/telegram-login', {
@@ -75,11 +255,10 @@
             }
 
             // Avtomatik kirish ishlamadi — oddiy formani qayta ko'rsatamiz
-            document.getElementById('auto-login-status').classList.add('hidden');
+            statusEl.classList.add('hidden');
+            statusEl.classList.remove('flex');
             document.getElementById('login-form-wrapper').classList.remove('hidden');
         })();
     </script>
-
 </body>
 </html>
-

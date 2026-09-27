@@ -7,9 +7,13 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
     <script>
         tailwind.config = { darkMode: 'class' }
     </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
     <style>
         .nav-btn {
             display: block;
@@ -28,6 +32,135 @@
         html.dark .nav-btn:hover { background-color: #1f2937; }
         html.dark .nav-btn.active { background-color: #4f46e5; color: white; }
     </style>
+
+    <!-- ============================================================
+         ULTRA-PREMIUM "OBSIDIAN GLASS" QATLAMI
+         DIQQAT: bu qatlam MAVJUD 4-rangli tema tizimini (setTheme(),
+         card-bg, theme-title...) ALMASHTIRMAYDI — uni FAQAT "dark"
+         tanlanganda kuchaytiradi va uni STANDART (default) qiladi.
+         Shu sababli operator ham (bir xil shablonni ishlatgani uchun)
+         avtomatik premium ko'rinishni oladi, hech bir mavjud funksiya
+         (JS, forma, endpoint) buzilmaydi.
+         ============================================================ -->
+    <style>
+        * { font-family: 'Plus Jakarta Sans', 'Inter', -apple-system, sans-serif; }
+
+        body.dark {
+            background:
+                radial-gradient(ellipse 900px 500px at 10% -10%, rgba(99,102,241,.14), transparent 60%),
+                radial-gradient(ellipse 700px 500px at 110% 10%, rgba(52,211,153,.10), transparent 60%),
+                #05060a !important;
+        }
+
+        /* ---- Orqa fondagi sekin harakatlanuvchi shariklar — faqat dark rejimda ko'rinadi ---- */
+        .premium-orb { position: fixed; border-radius: 50%; filter: blur(100px); opacity: 0; pointer-events: none; z-index: 0; transition: opacity .6s ease; }
+        body.dark .premium-orb { opacity: .3; }
+        .premium-orb-1 { width: 420px; height: 420px; background: radial-gradient(circle, #6366f1, transparent 70%); top: -120px; left: -80px; animation: pOrb1 20s ease-in-out infinite; }
+        .premium-orb-2 { width: 380px; height: 380px; background: radial-gradient(circle, #34d399, transparent 70%); bottom: -100px; right: -60px; animation: pOrb2 24s ease-in-out infinite; }
+        @keyframes pOrb1 { 0%,100% { transform: translate(0,0); } 50% { transform: translate(70px,60px); } }
+        @keyframes pOrb2 { 0%,100% { transform: translate(0,0); } 50% { transform: translate(-60px,-50px); } }
+
+        /* ---- Shisha (glass) kartochkalar — mavjud .card-bg klassini kuchaytiradi ---- */
+        body.dark .card-bg {
+            background: linear-gradient(180deg, rgba(255,255,255,.055), rgba(255,255,255,.02)) !important;
+            backdrop-filter: blur(20px) saturate(150%);
+            -webkit-backdrop-filter: blur(20px) saturate(150%);
+            border: 1px solid rgba(255,255,255,.09) !important;
+            box-shadow: 0 20px 50px -20px rgba(0,0,0,.7), inset 0 1px 0 rgba(255,255,255,.05);
+            position: relative;
+            z-index: 1;
+        }
+        body.dark .theme-title { background: linear-gradient(135deg, #a5b4fc, #6ee7b7); -webkit-background-clip: text; background-clip: text; color: transparent !important; }
+        body.dark .theme-stat-number { background: linear-gradient(135deg, #c7d2fe, #a5b4fc); -webkit-background-clip: text; background-clip: text; color: transparent !important; }
+
+        /* ---- Header — shaffof, porlovchi gradient ---- */
+        body.dark #main-header {
+            background: linear-gradient(90deg, rgba(15,16,26,.9), rgba(20,18,35,.9)) !important;
+            backdrop-filter: blur(18px);
+            -webkit-backdrop-filter: blur(18px);
+            border-bottom: 1px solid rgba(255,255,255,.08);
+        }
+
+        /* ---- Yon panel (sidebar) ---- */
+        body.dark aside {
+            background: rgba(255,255,255,.03) !important;
+            backdrop-filter: blur(18px);
+            border-right: 1px solid rgba(255,255,255,.07) !important;
+        }
+        body.dark .nav-btn.active {
+            background: linear-gradient(135deg, #4f46e5, #6366f1) !important;
+            box-shadow: 0 8px 20px -6px rgba(99,102,241,.6);
+        }
+        body.dark .nav-btn:hover:not(.active) { background-color: rgba(255,255,255,.06) !important; }
+
+        /* ---- Tugmalar (theme-btn) ---- */
+        body.dark .theme-btn {
+            background: linear-gradient(135deg, #4f46e5, #818cf8) !important;
+            box-shadow: 0 10px 24px -8px rgba(99,102,241,.5);
+            transition: transform .15s ease, box-shadow .25s ease;
+        }
+        body.dark .theme-btn:active { transform: scale(.98); }
+
+        /* ---- Kichik "yangi/o'zgargan qator" yorqinligini dark rejimga moslash ---- */
+        body.dark tr.bg-amber-50 { background-color: rgba(99,102,241,.16) !important; }
+        body.dark .bg-amber-50 { background-color: rgba(99,102,241,.16) !important; }
+
+        /* ---- Skroll paneli (faqat dark) ---- */
+        body.dark ::-webkit-scrollbar { width: 8px; height: 8px; }
+        body.dark ::-webkit-scrollbar-thumb { background: rgba(255,255,255,.15); border-radius: 10px; }
+        body.dark ::-webkit-scrollbar-track { background: transparent; }
+
+        /* ---- Sahifa almashganda yumshoq fade-in ---- */
+        .app-page.page-fade-in { animation: pageFadeIn .35s cubic-bezier(.2,.7,.2,1) both; }
+        @keyframes pageFadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+        /* ---- Xaritadagi markerlarning SILLIQ harakati — pozitsiya har
+               yangilanganda (refreshCourierLocations 5 soniyada bir marta
+               ishlaydi) sakrab emas, yumshoq suzib o'tadi. ---- */
+        .leaflet-marker-icon { transition: transform 1.1s linear; }
+        .leaflet-popup-content-wrapper, .leaflet-popup-tip { background: #12131e; color: #e5e7eb; }
+
+        /* ---- Raqamlar hisoblanib chiqadigan animatsiya uchun tayyorgarlik ---- */
+        .count-up-ready { opacity: 0; }
+
+        /* ==================== KANBAN BOARD (Buyurtmalar) ==================== */
+        .kanban-col {
+            flex: 0 0 250px;
+            background: rgba(148,163,184,.08);
+            border: 1px solid rgba(148,163,184,.18);
+            border-radius: 0.9rem;
+            padding: 0.6rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+            max-height: 620px;
+        }
+        body.dark .kanban-col { background: rgba(255,255,255,.03); border-color: rgba(255,255,255,.08); }
+        .kanban-col.drag-over { outline: 2px dashed #818cf8; outline-offset: 2px; background: rgba(99,102,241,.08); }
+        .kanban-col-header { font-size: .72rem; font-weight: 800; text-transform: uppercase; letter-spacing: .03em; padding: 0.25rem 0.3rem; display: flex; justify-content: space-between; align-items: center; }
+        .kanban-col-body { display: flex; flex-direction: column; gap: 0.5rem; overflow-y: auto; padding: 0.15rem; }
+        .kanban-card {
+            background: #fff;
+            border: 1px solid rgba(0,0,0,.06);
+            border-radius: 0.7rem;
+            padding: 0.6rem 0.7rem;
+            font-size: .75rem;
+            cursor: grab;
+            box-shadow: 0 1px 3px rgba(0,0,0,.08);
+            transition: transform .15s ease, box-shadow .2s ease, opacity .15s ease;
+        }
+        body.dark .kanban-card { background: rgba(255,255,255,.06); border-color: rgba(255,255,255,.1); backdrop-filter: blur(8px); }
+        .kanban-card:hover { transform: translateY(-2px); box-shadow: 0 8px 18px -6px rgba(0,0,0,.25); }
+        .kanban-card.dragging { opacity: .35; cursor: grabbing; }
+        .kanban-card-id { font-weight: 800; }
+        .kanban-card-addr { opacity: .75; margin-top: 2px; }
+        .kanban-card-sum { margin-top: 4px; font-weight: 700; color: #4f46e5; }
+        body.dark .kanban-card-sum { color: #a5b4fc; }
+        .kanban-empty { font-size: .68rem; text-align: center; opacity: .45; padding: 1rem 0; }
+
+        /* ---- Dashboard'dagi jonli grafik kartasi ---- */
+        .chart-wrap { position: relative; height: 240px; }
+    </style>
 </head>
 <body id="app-body" class="bg-gray-100 text-gray-800 transition-colors duration-300"
       data-active-city-id="{{ active_city_id if active_city_id is not none else '' }}"
@@ -35,6 +168,9 @@
       data-order-statuses="{{ order_statuses_json }}"
       data-status-labels="{{ status_labels_json }}"
       data-next-status-map="{{ next_status_map_json }}">
+
+    <div class="premium-orb premium-orb-1"></div>
+    <div class="premium-orb premium-orb-2"></div>
 
     <header id="main-header" class="bg-indigo-700 text-white p-4 shadow-md flex justify-between items-center transition-colors duration-300">
         <h1 class="text-xl font-bold flex items-center gap-2">
@@ -174,6 +310,20 @@
 
         </div>
 
+        <!-- JONLI GRAFIK — bugungi kunning soat bo'yicha buyurtmalar/tushum dinamikasi -->
+        <div class="card-bg bg-white p-6 rounded-xl shadow-md">
+            <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
+                <h2 class="theme-title text-lg font-bold text-indigo-700">📈 Bugungi Dinamika (soat bo'yicha)</h2>
+                <span class="text-xs font-semibold flex items-center gap-1.5 text-gray-500">
+                    <span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+                    Har 30 soniyada yangilanadi
+                </span>
+            </div>
+            <div class="chart-wrap">
+                <canvas id="hourly-chart"></canvas>
+            </div>
+        </div>
+
         {% if is_owner and analytics %}
         <!-- ANALITIKA (faqat OWNER) -->
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -265,14 +415,27 @@
 
         <!-- ORDERS -->
         <div class="card-bg bg-white p-6 rounded-xl shadow-md">
-            <div class="flex items-center justify-between mb-4">
+            <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
                 <h2 class="theme-title text-lg font-bold text-indigo-700">📦 Buyurtmalar Boshqaruvi</h2>
-                <span class="text-xs font-semibold flex items-center gap-1.5 text-gray-500">
-                    <span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
-                    Jonli yangilanadi
-                </span>
+                <div class="flex items-center gap-3">
+                    <div class="flex items-center rounded-lg overflow-hidden border dark:border-gray-700 text-xs font-semibold">
+                        <button type="button" id="orders-view-btn-table" onclick="setOrdersView('table')" class="px-3 py-1.5">📋 Jadval</button>
+                        <button type="button" id="orders-view-btn-kanban" onclick="setOrdersView('kanban')" class="px-3 py-1.5">🗂️ Kanban</button>
+                    </div>
+                    <span class="text-xs font-semibold flex items-center gap-1.5 text-gray-500">
+                        <span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+                        Jonli yangilanadi
+                    </span>
+                </div>
             </div>
-            <div class="overflow-x-auto">
+
+            <!-- KANBAN KO'RINISHI (sudrab-tashlab holatni o'zgartirish) -->
+            <div id="orders-kanban-view" class="hidden -mx-1 pb-1 overflow-x-auto">
+                <div id="kanban-columns" class="flex gap-3" style="min-height: 120px;"></div>
+                <p class="text-[11px] text-gray-400 mt-2">💡 Kartochkani sudrab, boshqa ustunga tashlang — buyurtma holati avtomatik yangilanadi.</p>
+            </div>
+
+            <div id="orders-table-view" class="overflow-x-auto">
                 <table class="w-full text-left border-collapse">
                     <thead>
                         <tr class="bg-gray-100 dark:bg-gray-700 border-b text-sm">
@@ -1500,13 +1663,16 @@
         }
 
         function showPage(pageName) {
-            document.querySelectorAll('.app-page').forEach(el => { el.style.display = 'none'; });
+            document.querySelectorAll('.app-page').forEach(el => { el.style.display = 'none'; el.classList.remove('page-fade-in'); });
             const target = document.querySelector(`.app-page[data-page="${pageName}"]`);
             // Agar sahifa OWNER-only bo'lib, operator uchun Jinja tomonidan
             // umuman renderlanmagan bo'lsa, target topilmaydi — shunda
             // xato bermasdan bosh sahifaga qaytamiz.
             if (target) {
                 target.style.display = '';
+                // Yumshoq fade-in — faqat vizual, hech qanday funksiyaga tegmaydi
+                void target.offsetWidth;
+                target.classList.add('page-fade-in');
             } else if (pageName !== 'bosh') {
                 showPage('bosh');
                 return;
@@ -1579,16 +1745,20 @@
             if (courierMap || !document.getElementById('courier-map') || typeof L === 'undefined') return;
             courierMap = L.map('courier-map').setView([41.5504, 60.6318], 12);
 
-            // ---- IKKI XIL QATLAM: ODATIY XARITA VA SPUTNIK (yo'ldosh) ----
+            // ---- UCHTA QATLAM: TUNGI (standart, futuristik "mission control"
+            // ko'rinishi), ODATIY SXEMA va SPUTNIK ----
+            const darkLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+                maxZoom: 20, subdomains: 'abcd', attribution: '&copy; OpenStreetMap &copy; CARTO'
+            }).addTo(courierMap);
             const streetsLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
                 maxZoom: 19, attribution: '&copy; OpenStreetMap'
-            }).addTo(courierMap);
+            });
             const satelliteLayer = L.tileLayer(
                 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
                 { maxZoom: 19, attribution: 'Tiles &copy; Esri' }
             );
             L.control.layers(
-                { '🗺️ Sxema': streetsLayer, '🛰️ Sputnik': satelliteLayer },
+                { '🌑 Tungi': darkLayer, '🗺️ Sxema': streetsLayer, '🛰️ Sputnik': satelliteLayer },
                 {}, { position: 'topright', collapsed: true }
             ).addTo(courierMap);
         }
@@ -1833,17 +2003,228 @@
                             if (freshMain) setTimeout(() => freshMain.classList.remove('bg-amber-50'), 6000);
                         }
                     });
+
+                    // Jadval bilan bir vaqtda Kanban taxtasini ham sinxronlaymiz —
+                    // alohida so'rov yubormaydi, xuddi shu ma'lumotdan foydalanadi.
+                    LAST_ORDERS = orders;
+                    if (!kanbanDragActive && document.getElementById('orders-kanban-view') && !document.getElementById('orders-kanban-view').classList.contains('hidden')) {
+                        renderKanbanBoard(orders);
+                    }
                 })
                 .catch(e => console.error('Buyurtmalarni yangilashda xatolik', e));
         }
 
+        // ==================== KANBAN TAXTASI (sudrab-tashlab holat o'zgartirish) ====================
+        let LAST_ORDERS = [];
+        let kanbanDragActive = false;
+        let kanbanInitialized = false;
+
+        function setOrdersView(view) {
+            const tableView = document.getElementById('orders-table-view');
+            const kanbanView = document.getElementById('orders-kanban-view');
+            const btnTable = document.getElementById('orders-view-btn-table');
+            const btnKanban = document.getElementById('orders-view-btn-kanban');
+            if (!tableView || !kanbanView) return;
+
+            const isKanban = view === 'kanban';
+            tableView.classList.toggle('hidden', isKanban);
+            kanbanView.classList.toggle('hidden', !isKanban);
+
+            [btnTable, btnKanban].forEach(b => b && b.classList.remove('bg-indigo-600', 'text-white'));
+            (isKanban ? btnKanban : btnTable)?.classList.add('bg-indigo-600', 'text-white');
+
+            if (isKanban) renderKanbanBoard(LAST_ORDERS);
+            localStorage.setItem('admin_orders_view', view);
+        }
+
+        // Har bir status uchun qaysi kolonkaga tegishli ekanini va rangini
+        // aniqlaymiz — ORDER_STATUSES/STATUS_LABELS <body> data-atributidan
+        // (Jinja orqali) allaqachon o'qilgan (yuqorida e'lon qilingan).
+        const KANBAN_STATUS_COLORS = {
+            created: '#64748b', accepted_by_partner: '#0ea5e9', preparing: '#f59e0b',
+            looking_for_courier: '#a855f7', on_the_way: '#6366f1', delivered: '#22c55e', cancelled: '#ef4444',
+        };
+
+        function kanbanCardHtml(o) {
+            const total = (o.total_price || 0) + (o.delivery_fee || 0);
+            return `
+                <div class="kanban-card" draggable="true" data-order-id="${o.id}" data-status="${o.status}">
+                    <div class="flex items-center justify-between">
+                        <span class="kanban-card-id">#${o.id}</span>
+                        <span class="text-[10px] opacity-60">${o.courier_name ? '🛵 ' + esc(o.courier_name) : ''}</span>
+                    </div>
+                    <div class="kanban-card-addr">${esc(o.client_name || 'Mijoz')} · ${esc((o.delivery_address || '').slice(0, 34))}</div>
+                    <div class="kanban-card-sum">${Math.round(total).toLocaleString('uz-UZ')} so'm</div>
+                </div>`;
+        }
+
+        function renderKanbanBoard(orders) {
+            const container = document.getElementById('kanban-columns');
+            if (!container || !ORDER_STATUSES.length) return;
+            orders = orders || [];
+
+            container.innerHTML = ORDER_STATUSES.map(st => {
+                const items = orders.filter(o => o.status === st);
+                const color = KANBAN_STATUS_COLORS[st] || '#6366f1';
+                const cardsHtml = items.length
+                    ? items.map(kanbanCardHtml).join('')
+                    : '<div class="kanban-empty">Bo\'sh</div>';
+                return `
+                    <div class="kanban-col">
+                        <div class="kanban-col-header" style="border-top:3px solid ${color}; border-radius:.9rem .9rem 0 0;">
+                            <span>${esc(STATUS_LABELS[st] || st)}</span>
+                            <span style="background:${color}22; color:${color}; padding:1px 7px; border-radius:9999px;">${items.length}</span>
+                        </div>
+                        <div class="kanban-col-body" data-status-col="${st}">${cardsHtml}</div>
+                    </div>`;
+            }).join('');
+
+            attachKanbanDragHandlers();
+        }
+
+        function attachKanbanDragHandlers() {
+            document.querySelectorAll('.kanban-card').forEach(card => {
+                card.addEventListener('dragstart', e => {
+                    kanbanDragActive = true;
+                    card.classList.add('dragging');
+                    e.dataTransfer.setData('text/plain', card.dataset.orderId);
+                    e.dataTransfer.effectAllowed = 'move';
+                });
+                card.addEventListener('dragend', () => {
+                    kanbanDragActive = false;
+                    card.classList.remove('dragging');
+                });
+            });
+
+            document.querySelectorAll('.kanban-col-body').forEach(col => {
+                col.addEventListener('dragover', e => {
+                    e.preventDefault();
+                    col.closest('.kanban-col').classList.add('drag-over');
+                });
+                col.addEventListener('dragleave', () => {
+                    col.closest('.kanban-col').classList.remove('drag-over');
+                });
+                col.addEventListener('drop', e => {
+                    e.preventDefault();
+                    col.closest('.kanban-col').classList.remove('drag-over');
+                    const orderId = e.dataTransfer.getData('text/plain');
+                    const newStatus = col.dataset.statusCol;
+                    const card = document.querySelector(`.kanban-card[data-order-id="${orderId}"]`);
+                    if (!card || card.dataset.status === newStatus) return;
+
+                    // Optimistik UI — kartani darhol yangi ustunga ko'chiramiz,
+                    // agar server rad etsa (masalan noto'g'ri status o'tishi),
+                    // keyingi refreshOrders() haqiqiy holatni qaytaradi.
+                    card.dataset.status = newStatus;
+                    card.classList.add('just-moved');
+                    col.appendChild(card);
+                    updateKanbanColumnCounts();
+
+                    const fd = new FormData();
+                    fd.append('new_status', newStatus);
+                    fetch(`/admin/orders/${orderId}/update-json`, { method: 'POST', body: fd, credentials: 'same-origin' })
+                        .then(res => { if (!res.ok) throw new Error('status'); return res.json(); })
+                        .then(() => { if (navigator.vibrate) navigator.vibrate(14); refreshOrders(); })
+                        .catch(err => { console.error('Kanban status yangilashda xatolik', err); refreshOrders(); });
+                });
+            });
+        }
+
+        function updateKanbanColumnCounts() {
+            document.querySelectorAll('.kanban-col').forEach(col => {
+                const body = col.querySelector('.kanban-col-body');
+                const countEl = col.querySelector('.kanban-col-header span:last-child');
+                if (body && countEl) countEl.textContent = body.querySelectorAll('.kanban-card').length;
+            });
+        }
+
+        // ==================== JONLI GRAFIK (Chart.js) ====================
+        let hourlyChartInstance = null;
+        function renderHourlyChart() {
+            const canvas = document.getElementById('hourly-chart');
+            if (!canvas || typeof Chart === 'undefined') return;
+            const url = '/admin/analytics/hourly.json' + (ADMIN_ACTIVE_CITY_ID !== null ? ('?city_id=' + ADMIN_ACTIVE_CITY_ID) : '');
+            fetch(url, { credentials: 'same-origin' })
+                .then(res => res.ok ? res.json() : null)
+                .then(data => {
+                    if (!data) return;
+                    const isDark = document.body.classList.contains('dark');
+                    const gridColor = isDark ? 'rgba(255,255,255,.08)' : 'rgba(0,0,0,.06)';
+                    const textColor = isDark ? '#cbd5e1' : '#475569';
+
+                    if (hourlyChartInstance) {
+                        hourlyChartInstance.data.datasets[0].data = data.order_counts;
+                        hourlyChartInstance.data.datasets[1].data = data.revenue_by_hour;
+                        hourlyChartInstance.update('none');
+                        return;
+                    }
+
+                    hourlyChartInstance = new Chart(canvas.getContext('2d'), {
+                        data: {
+                            labels: data.hours,
+                            datasets: [
+                                {
+                                    type: 'bar', label: 'Buyurtmalar soni', data: data.order_counts,
+                                    backgroundColor: 'rgba(99,102,241,.55)', borderRadius: 4, yAxisID: 'y',
+                                },
+                                {
+                                    type: 'line', label: "Tushum (so'm)", data: data.revenue_by_hour,
+                                    borderColor: '#34d399', backgroundColor: 'rgba(52,211,153,.15)',
+                                    tension: .35, fill: true, yAxisID: 'y1', pointRadius: 2,
+                                },
+                            ],
+                        },
+                        options: {
+                            responsive: true, maintainAspectRatio: false,
+                            interaction: { mode: 'index', intersect: false },
+                            plugins: { legend: { labels: { color: textColor, font: { size: 11 } } } },
+                            scales: {
+                                x: { ticks: { color: textColor, font: { size: 10 } }, grid: { color: gridColor } },
+                                y: { position: 'left', beginAtZero: true, ticks: { color: textColor, precision: 0 }, grid: { color: gridColor } },
+                                y1: { position: 'right', beginAtZero: true, ticks: { color: textColor }, grid: { display: false } },
+                            },
+                        },
+                    });
+                })
+                .catch(e => console.error('Grafikni yuklashda xatolik', e));
+        }
+
+        // Dashboard'dagi statistik raqamlar 0'dan haqiqiy qiymatgacha
+        // "hisoblanib chiqadi" — faqat vizual, qiymatning o'zi hech
+        // qachon o'zgarmaydi (faqat matn animatsiyasi).
+        function animateStatNumbers() {
+            document.querySelectorAll('.theme-stat-number, .stat-number-animate').forEach(el => {
+                const raw = el.textContent.trim();
+                const match = raw.match(/[\d.,]+/);
+                if (!match) return;
+                const numStr = match[0].replace(/,/g, '');
+                const target = parseFloat(numStr);
+                if (isNaN(target) || el.dataset.counted) return;
+                el.dataset.counted = '1';
+                const prefix = raw.slice(0, match.index);
+                const suffix = raw.slice(match.index + match[0].length);
+                const duration = 900;
+                const start = performance.now();
+                function step(now) {
+                    const p = Math.min(1, (now - start) / duration);
+                    const eased = 1 - Math.pow(1 - p, 3);
+                    const current = Math.round(target * eased);
+                    el.textContent = prefix + current.toLocaleString('uz-UZ') + suffix;
+                    if (p < 1) requestAnimationFrame(step);
+                    else el.textContent = raw;
+                }
+                requestAnimationFrame(step);
+            });
+        }
+
         document.addEventListener('DOMContentLoaded', () => {
-            const savedTheme = localStorage.getItem('admin_theme') || 'indigo';
+            const savedTheme = localStorage.getItem('admin_theme') || 'dark';
             setTheme(savedTheme);
             applyWeatherMultiplier();
             showPage(localStorage.getItem('admin_active_page') || 'bosh');
             updateLiveClock();
             setInterval(updateLiveClock, 1000);
+            animateStatNumbers();
 
             if (document.getElementById('courier-map')) initCourierMap();
             refreshCourierLocations();
@@ -1851,6 +2232,13 @@
 
             refreshOrders();
             setInterval(refreshOrders, 8000);
+
+            setOrdersView(localStorage.getItem('admin_orders_view') || 'table');
+
+            if (document.getElementById('hourly-chart')) {
+                renderHourlyChart();
+                setInterval(renderHourlyChart, 30000);
+            }
         });
     </script>
 </body>

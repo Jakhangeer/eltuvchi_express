@@ -9,74 +9,159 @@
     <!-- Leaflet — faol buyurtmada do'kon (olib ketish) va mijoz (yetkazish) nuqtalarini xaritada ko'rsatish uchun -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --obsidian: #05060a;
+            --indigo: #6366f1;
+            --emerald: #34d399;
+            --amber: #fbbf24;
+            --rose: #f43f5e;
+        }
+        * { font-family: 'Plus Jakarta Sans', 'Inter', -apple-system, sans-serif; }
+        html, body { background: var(--obsidian); }
+        body {
+            background: radial-gradient(ellipse at top, #12142080 0%, #05060a 55%), var(--obsidian);
+            overscroll-behavior-y: contain;
+        }
+
+        .orb { position: fixed; border-radius: 50%; filter: blur(80px); opacity: .35; pointer-events: none; z-index: 0; }
+        .orb-1 { width: 300px; height: 300px; background: radial-gradient(circle, var(--indigo), transparent 70%); top: -80px; right: -80px; animation: float1 18s ease-in-out infinite; }
+        .orb-2 { width: 260px; height: 260px; background: radial-gradient(circle, var(--emerald), transparent 70%); bottom: 10%; left: -100px; animation: float2 22s ease-in-out infinite; }
+        @keyframes float1 { 0%,100% { transform: translate(0,0); } 50% { transform: translate(-40px,50px); } }
+        @keyframes float2 { 0%,100% { transform: translate(0,0); } 50% { transform: translate(40px,-40px); } }
+
+        .glass { background: linear-gradient(180deg, rgba(255,255,255,0.055), rgba(255,255,255,0.02)); backdrop-filter: blur(20px) saturate(150%); -webkit-backdrop-filter: blur(20px) saturate(150%); border: 1px solid rgba(255,255,255,0.09); box-shadow: 0 20px 45px -18px rgba(0,0,0,.65), inset 0 1px 0 rgba(255,255,255,.05); }
+        .glass-strong { background: linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0.03)); backdrop-filter: blur(24px) saturate(160%); -webkit-backdrop-filter: blur(24px) saturate(160%); border: 1px solid rgba(255,255,255,0.12); }
+
+        .text-grad { background: linear-gradient(135deg, #818cf8, #34d399); -webkit-background-clip: text; background-clip: text; color: transparent; }
+
+        .fade-up { animation: fadeUp .6s cubic-bezier(.2,.7,.2,1) both; }
+        @keyframes fadeUp { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
+        .stagger-1 { animation-delay: .05s; } .stagger-2 { animation-delay: .1s; } .stagger-3 { animation-delay: .15s; } .stagger-4 { animation-delay: .2s; } .stagger-5 { animation-delay: .25s; }
+
+        .pulse-dot { position: relative; }
+        .pulse-dot::after { content: ''; position: absolute; inset: -6px; border-radius: 50%; border: 2px solid currentColor; animation: pulseDot 1.8s ease-out infinite; }
+        @keyframes pulseDot { 0% { transform: scale(.6); opacity: .8; } 100% { transform: scale(1.9); opacity: 0; } }
+
+        .active-order-card { animation: glowBorder 2.6s ease-in-out infinite; }
+        @keyframes glowBorder {
+            0%,100% { box-shadow: 0 0 0 1px rgba(99,102,241,.35), 0 20px 45px -18px rgba(0,0,0,.65); }
+            50% { box-shadow: 0 0 0 1px rgba(99,102,241,.7), 0 0 34px -4px rgba(99,102,241,.55), 0 20px 45px -18px rgba(0,0,0,.65); }
+        }
+
+        .btn-go { background: linear-gradient(135deg, #16a34a, #34d399); box-shadow: 0 10px 26px -8px rgba(52,211,153,.5); transition: transform .15s ease, box-shadow .25s ease; }
+        .btn-go:active { transform: scale(.97); }
+        .btn-accept { background: linear-gradient(135deg, #4f46e5, #818cf8); box-shadow: 0 10px 24px -8px rgba(99,102,241,.5); transition: transform .15s ease, box-shadow .25s ease; }
+        .btn-accept:active { transform: scale(.97); }
+        .btn-toggle-on { background: linear-gradient(135deg, #dc2626, #f43f5e); box-shadow: 0 10px 24px -8px rgba(244,63,94,.5); }
+        .btn-toggle-off { background: linear-gradient(135deg, #16a34a, #34d399); box-shadow: 0 10px 24px -8px rgba(52,211,153,.5); }
+        .btn-press { transition: transform .15s ease; }
+        .btn-press:active { transform: scale(.96); }
+
+        .row-lift { transition: transform .18s ease, border-color .18s ease, background .18s ease; }
+        .row-lift:active { transform: scale(.985); }
+
+        .sound-pill { transition: all .2s ease; }
+        .sound-pill.selected { border-color: rgba(99,102,241,.65) !important; background: rgba(99,102,241,.12) !important; box-shadow: 0 0 0 3px rgba(99,102,241,.12); }
+
+        /* ---- Yangi buyurtma to'liq ekran ogohlantirishi: radar effekti ---- */
+        #new-order-alert-overlay { background: radial-gradient(circle at 50% 40%, rgba(79,70,229,.35), rgba(5,6,10,.96) 70%); }
+        .radar-ring { position: absolute; border-radius: 50%; border: 2px solid rgba(129,140,248,.55); animation: radarExpand 2.2s ease-out infinite; }
+        .radar-ring.r2 { animation-delay: .7s; }
+        .radar-ring.r3 { animation-delay: 1.4s; }
+        @keyframes radarExpand { 0% { width: 40px; height: 40px; opacity: .9; } 100% { width: 280px; height: 280px; opacity: 0; } }
+        .bell-shake { animation: bellShake 1s ease-in-out infinite; }
+        @keyframes bellShake { 0%,100% { transform: rotate(0); } 10%,30% { transform: rotate(-14deg); } 20%,40% { transform: rotate(14deg); } 50% { transform: rotate(0); } }
+
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,.15); border-radius: 10px; }
+    </style>
 </head>
-<body class="bg-gray-100 min-h-screen" data-courier-online="{{ 'true' if (courier_profile and courier_profile.is_online) else 'false' }}">
+<body class="min-h-screen relative text-white" data-courier-online="{{ 'true' if (courier_profile and courier_profile.is_online) else 'false' }}">
     <script>
         const tg = window.Telegram?.WebApp;
         if (tg) { tg.ready(); tg.expand(); }
     </script>
 
-    <header class="bg-indigo-700 text-white p-4 flex justify-between items-center shadow-md sticky top-0 z-10">
+    <div class="orb orb-1"></div>
+    <div class="orb orb-2"></div>
+
+    <!-- ================= YANGI BUYURTMA — TO'LIQ EKRAN OGOHLANTIRISH ================= -->
+    <div id="new-order-alert-overlay" class="hidden fixed inset-0 z-50 flex items-center justify-center">
+        <div class="relative flex items-center justify-center" style="width:280px; height:280px;">
+            <div class="radar-ring"></div>
+            <div class="radar-ring r2"></div>
+            <div class="radar-ring r3"></div>
+            <div class="glass-strong rounded-full w-28 h-28 flex items-center justify-center text-5xl bell-shake relative z-10">🔔</div>
+        </div>
+        <div class="absolute bottom-16 left-0 right-0 text-center px-6">
+            <p class="text-xl font-extrabold text-grad">Yangi buyurtma!</p>
+            <p class="text-xs text-slate-400 mt-1">Ro'yxat yangilanmoqda...</p>
+        </div>
+    </div>
+
+    <header class="glass sticky top-0 z-20 px-4 py-3 flex justify-between items-center">
         <div>
-            <h1 class="text-lg font-bold">🛵 {{ current_user.full_name }}</h1>
-            <p class="text-xs text-indigo-200">{{ current_user.phone_number }}</p>
+            <h1 class="text-base font-extrabold flex items-center gap-1.5">🛵 {{ current_user.full_name }}</h1>
+            <p class="text-[11px] text-slate-400">{{ current_user.phone_number }}</p>
         </div>
         <div class="flex items-center gap-3">
-            <div id="live-clock" class="text-[11px] font-mono text-indigo-200"></div>
-            <a href="/logout" class="text-xs underline text-indigo-200">Chiqish</a>
+            <div id="live-clock" class="text-[11px] font-mono text-slate-400 glass rounded-full px-2.5 py-1"></div>
+            <a href="/logout" class="text-[11px] text-slate-400 hover:text-white transition-colors underline underline-offset-2">Chiqish</a>
         </div>
     </header>
 
     <!-- ONLINE/OFFLINE HOLATI VA JONLI JOYLASHUV -->
-    <div class="container mx-auto px-4 pt-4 max-w-2xl">
-        <div class="bg-white p-4 rounded-xl shadow-md flex items-center justify-between">
-            <div>
-                <p class="text-sm font-bold {% if courier_profile and courier_profile.is_online %}text-green-600{% else %}text-gray-400{% endif %}" id="online-status-label">
-                    {% if courier_profile and courier_profile.is_online %}🟢 Siz onlaynsiz — buyurtmalar avtomatik biriktiriladi{% else %}⚪ Siz oflaynsiz — buyurtma olmaysiz{% endif %}
+    <div class="container mx-auto px-4 pt-4 max-w-2xl relative z-10">
+        <div class="glass fade-up rounded-2xl p-4 flex items-center justify-between gap-3">
+            <div class="min-w-0">
+                <p class="text-sm font-bold flex items-center gap-2 {% if courier_profile and courier_profile.is_online %}text-emerald-400{% else %}text-slate-500{% endif %}" id="online-status-label">
+                    <span class="pulse-dot inline-block w-2.5 h-2.5 rounded-full {% if courier_profile and courier_profile.is_online %}bg-emerald-400{% else %}bg-slate-600{% endif %}"></span>
+                    {% if courier_profile and courier_profile.is_online %}Siz onlaynsiz — buyurtmalar avtomatik biriktiriladi{% else %}Siz oflaynsiz — buyurtma olmaysiz{% endif %}
                 </p>
-                <p class="text-[11px] text-gray-400 mt-0.5" id="gps-status-label">
+                <p class="text-[11px] text-slate-500 mt-1 truncate" id="gps-status-label">
                     {% if courier_profile and courier_profile.is_online %}📍 Joylashuv aniqlanmoqda...{% else %}Ish boshlash uchun tugmani bosing{% endif %}
                 </p>
             </div>
-            <form action="/courier/toggle-online" method="POST">
-                <button type="submit" class="px-5 py-2.5 rounded-lg text-sm font-bold {% if courier_profile and courier_profile.is_online %}bg-red-600 text-white{% else %}bg-green-600 text-white{% endif %}">
-                    {% if courier_profile and courier_profile.is_online %}⏹ Ishni tugatish{% else %}▶️ Ish boshlash{% endif %}
+            <form action="/courier/toggle-online" method="POST" class="js-haptic-form shrink-0">
+                <button type="submit" class="btn-press px-5 py-2.5 rounded-xl text-sm font-bold text-white {% if courier_profile and courier_profile.is_online %}btn-toggle-on{% else %}btn-toggle-off{% endif %}">
+                    {% if courier_profile and courier_profile.is_online %}⏹ Tugatish{% else %}▶️ Boshlash{% endif %}
                 </button>
             </form>
         </div>
     </div>
 
-    <div class="container mx-auto p-4 space-y-6 max-w-2xl">
+    <div class="container mx-auto p-4 space-y-4 max-w-2xl relative z-10">
 
         <!-- BALANS -->
-        <div class="bg-white p-4 rounded-xl shadow-md">
+        <div class="glass fade-up stagger-1 rounded-2xl p-4">
             <div class="flex justify-between items-center">
-                <span class="text-sm text-gray-500">💰 Sizdagi qarz (egasiga topshirilishi kerak)</span>
-                <span class="text-xl font-bold {% if courier_profile and courier_profile.balance > 0 %}text-red-600{% else %}text-green-600{% endif %}">
+                <span class="text-xs text-slate-400">💰 Sizdagi qarz (egasiga topshirilishi kerak)</span>
+                <span class="text-xl font-extrabold {% if courier_profile and courier_profile.balance > 0 %}text-rose-400{% else %}text-emerald-400{% endif %}">
                     {{ "%.0f"|format(courier_profile.balance if courier_profile else 0) }} so'm
                 </span>
             </div>
-            <p class="text-[11px] text-gray-400 mt-1">
+            <p class="text-[11px] text-slate-500 mt-1.5">
                 Bu — naqd pulda yig'gan, hali egasiga topshirmagan summangiz. Har yetkazgan buyurtmadan keyin bu raqam avtomatik oshadi; egasiga naqd pul topshirganingizda, u buni kamaytiradi.
             </p>
 
             {% if courier_profile and courier_profile.balance < 0 %}
-            <!-- Balans manfiy — bu holda egasi SIZGA qarz (masalan onlayn to'lovli
-                 buyurtmalarda pul sizning qo'lingizga tegmagan bo'lsa) — shu holatda
-                 pul so'rash imkoni ochiladi. -->
-            <form action="/courier/withdraw" method="POST" class="flex gap-2 mt-3 pt-3 border-t">
-                <input type="number" name="amount" placeholder="Summa" max="{{ -courier_profile.balance }}" class="flex-1 p-2 border rounded-lg text-sm" required>
-                <button type="submit" class="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-bold whitespace-nowrap">💸 Yechib olish</button>
+            <form action="/courier/withdraw" method="POST" class="js-haptic-form flex gap-2 mt-3 pt-3 border-t border-white/10">
+                <input type="number" name="amount" placeholder="Summa" max="{{ -courier_profile.balance }}" class="flex-1 p-2.5 rounded-xl text-sm text-white placeholder-slate-500 outline-none" style="background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.09);" required>
+                <button type="submit" class="btn-press btn-accept text-white px-4 py-2 rounded-xl text-sm font-bold whitespace-nowrap">💸 Yechib olish</button>
             </form>
             {% endif %}
 
             {% if withdrawal_requests %}
-            <div class="mt-3 pt-3 border-t space-y-1">
+            <div class="mt-3 pt-3 border-t border-white/10 space-y-1.5">
                 {% for wd in withdrawal_requests %}
                 <div class="flex justify-between text-xs">
-                    <span>{{ wd.requested_at|uzb_time('%d.%m %H:%M') }}</span>
+                    <span class="text-slate-400">{{ wd.requested_at|uzb_time('%d.%m %H:%M') }}</span>
                     <span class="font-semibold">{{ "%.0f"|format(wd.amount) }} so'm</span>
-                    <span class="{% if wd.status.value == 'pending' %}text-amber-600{% elif wd.status.value == 'approved' %}text-green-600{% else %}text-red-600{% endif %}">
+                    <span class="{% if wd.status.value == 'pending' %}text-amber-400{% elif wd.status.value == 'approved' %}text-emerald-400{% else %}text-rose-400{% endif %}">
                         {% if wd.status.value == 'pending' %}⏳ Kutilmoqda{% elif wd.status.value == 'approved' %}✅ To'landi{% else %}✕ Rad etildi{% endif %}
                     </span>
                 </div>
@@ -87,22 +172,22 @@
 
         {% if my_active_orders %}
         <!-- HOZIR YETKAZAYOTGAN BUYURTMA -->
-        <div class="bg-white p-6 rounded-xl shadow-md border-2 border-indigo-500">
-            <h2 class="text-lg font-bold mb-3 text-indigo-700">🚴 Sizda hozir yo'lda</h2>
+        <div class="active-order-card glass-strong fade-up stagger-2 p-5 rounded-2xl">
+            <h2 class="text-base font-extrabold mb-3 text-grad flex items-center gap-2">🚴 Sizda hozir yo'lda</h2>
             {% for order in my_active_orders %}
-            <div class="border rounded-lg p-3 mb-2">
+            <div class="rounded-xl p-3 mb-2 last:mb-0" style="background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.08);">
                 <p class="font-bold text-sm">#{{ order.id }} — {{ order.partner.brand_name if order.partner else '—' }}</p>
-                <p class="text-xs text-gray-500 mb-2">📍 {{ order.delivery_address }}</p>
-                <ul class="text-xs space-y-0.5 mb-2">
+                <p class="text-xs text-slate-400 mb-2">📍 {{ order.delivery_address }}</p>
+                <ul class="text-xs text-slate-300 space-y-0.5 mb-2">
                     {% for item in order.items %}
                     <li>• {{ item.product_name }} — {{ item.quantity }} ta</li>
                     {% endfor %}
                 </ul>
-                <p class="text-sm font-bold mb-2">Yig'ib olish kerak: {{ "%.0f"|format(order.total_price + order.delivery_fee) }} so'm (naqd)</p>
+                <p class="text-sm font-bold mb-2 text-amber-300">Yig'ib olish kerak: {{ "%.0f"|format(order.total_price + order.delivery_fee) }} so'm (naqd)</p>
                 {% set p_lat = order.partner.latitude if order.partner else None %}
                 {% set p_lng = order.partner.longitude if order.partner else None %}
                 {% if p_lat is not none or order.delivery_latitude is not none %}
-                <div class="courier-order-map mb-2" style="height:180px; border-radius:0.5rem;"
+                <div class="courier-order-map mb-2 overflow-hidden" style="height:180px; border-radius:0.9rem; border:1px solid rgba(255,255,255,.1);"
                      data-partner-lat="{{ p_lat if p_lat is not none else '' }}"
                      data-partner-lng="{{ p_lng if p_lng is not none else '' }}"
                      data-partner-name="{{ order.partner.brand_name if order.partner else '' }}"
@@ -111,8 +196,8 @@
                      data-my-lat="{{ courier_profile.latitude if courier_profile and courier_profile.latitude is not none else '' }}"
                      data-my-lng="{{ courier_profile.longitude if courier_profile and courier_profile.longitude is not none else '' }}"></div>
                 {% endif %}
-                <form action="/courier/orders/{{ order.id }}/delivered" method="POST">
-                    <button type="submit" class="w-full bg-green-600 text-white py-2 rounded-lg text-sm font-bold">✅ Yetkazdim</button>
+                <form action="/courier/orders/{{ order.id }}/delivered" method="POST" class="js-haptic-form">
+                    <button type="submit" class="btn-go w-full text-white py-2.5 rounded-xl text-sm font-bold">✅ Yetkazdim</button>
                 </form>
             </div>
             {% endfor %}
@@ -120,55 +205,56 @@
         {% endif %}
 
         <!-- BO'SH BUYURTMALAR -->
-        <div class="bg-white p-6 rounded-xl shadow-md">
-            <h2 class="text-lg font-bold mb-3 text-indigo-700">📦 Yangi Buyurtmalar</h2>
+        <div class="glass fade-up stagger-3 p-5 rounded-2xl">
+            <h2 class="text-base font-extrabold mb-3 flex items-center gap-2">📦 Yangi Buyurtmalar</h2>
             <div class="space-y-2">
                 {% for order in available_orders %}
-                <div class="border rounded-lg p-3">
+                <div class="row-lift rounded-xl p-3" style="background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.08);">
                     <p class="font-bold text-sm">#{{ order.id }} — {{ order.partner.brand_name if order.partner else '—' }}</p>
-                    <p class="text-xs text-gray-500 mb-1">📍 {{ order.delivery_address }}</p>
-                    <p class="text-xs text-green-700 font-semibold mb-2">Yetkazish haqingiz: taxminan {{ "%.0f"|format(order.delivery_fee * 0.8) }} so'm</p>
-                    <form action="/courier/orders/{{ order.id }}/accept" method="POST">
-                        <button type="submit" class="w-full bg-indigo-600 text-white py-2 rounded-lg text-sm font-bold">🛵 Qabul qilaman</button>
+                    <p class="text-xs text-slate-400 mb-1">📍 {{ order.delivery_address }}</p>
+                    <p class="text-xs text-emerald-400 font-semibold mb-2">Yetkazish haqingiz: taxminan {{ "%.0f"|format(order.delivery_fee * 0.8) }} so'm</p>
+                    <form action="/courier/orders/{{ order.id }}/accept" method="POST" class="js-haptic-form">
+                        <button type="submit" class="btn-accept btn-press w-full text-white py-2.5 rounded-xl text-sm font-bold">🛵 Qabul qilaman</button>
                     </form>
                 </div>
                 {% else %}
-                <p class="text-sm text-gray-400 text-center py-6">Hozircha bo'sh buyurtma yo'q</p>
+                <p class="text-sm text-slate-500 text-center py-6">Hozircha bo'sh buyurtma yo'q</p>
                 {% endfor %}
             </div>
         </div>
 
         <!-- TARIX -->
-        <div class="bg-white p-6 rounded-xl shadow-md">
-            <h2 class="text-lg font-bold mb-3 text-indigo-700">📜 Yetkazilgan Buyurtmalar</h2>
+        <div class="glass fade-up stagger-4 p-5 rounded-2xl">
+            <h2 class="text-base font-extrabold mb-3">📜 Yetkazilgan Buyurtmalar</h2>
             <div class="space-y-1 max-h-64 overflow-y-auto">
                 {% for order in history_orders %}
-                <div class="flex justify-between text-xs border-b py-1.5">
-                    <span>#{{ order.id }} — {{ order.created_at|uzb_time('%d.%m %H:%M') }}</span>
-                    <span class="font-semibold">{{ "%.0f"|format(order.delivery_fee) }} so'm</span>
+                <div class="flex justify-between text-xs border-b border-white/5 py-2">
+                    <span class="text-slate-400">#{{ order.id }} — {{ order.created_at|uzb_time('%d.%m %H:%M') }}</span>
+                    <span class="font-semibold text-slate-200">{{ "%.0f"|format(order.delivery_fee) }} so'm</span>
                 </div>
                 {% else %}
-                <p class="text-sm text-gray-400 text-center py-4">Hali tarix yo'q</p>
+                <p class="text-sm text-slate-500 text-center py-4">Hali tarix yo'q</p>
                 {% endfor %}
             </div>
         </div>
 
         <!-- BILDIRISHNOMA OVOZI -->
-        <div class="bg-white p-6 rounded-xl shadow-md">
-            <h2 class="text-lg font-bold mb-1 text-indigo-700">🔔 Bildirishnoma ovozi</h2>
-            <p class="text-[11px] text-gray-400 mb-3">Yangi buyurtma kelganda qaysi ovoz chalinishini tanlang.</p>
+        <div class="glass fade-up stagger-5 p-5 rounded-2xl">
+            <h2 class="text-base font-extrabold mb-1">🔔 Bildirishnoma ovozi</h2>
+            <p class="text-[11px] text-slate-500 mb-3">Yangi buyurtma kelganda qaysi ovoz chalinishini tanlang.</p>
             <div class="space-y-2" id="sound-options">
                 {% for key, label in COURIER_SOUND_OPTIONS.items() %}
-                <label class="flex items-center justify-between border rounded-lg p-3 cursor-pointer {% if courier_profile and courier_profile.notification_sound == key %}border-indigo-500 bg-indigo-50{% else %}border-gray-200{% endif %}" data-sound-option="{{ key }}">
+                <label class="sound-pill flex items-center justify-between rounded-xl p-3 cursor-pointer {% if courier_profile and courier_profile.notification_sound == key %}selected{% endif %}"
+                       style="background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.09);" data-sound-option="{{ key }}">
                     <span class="flex items-center gap-2 text-sm font-semibold">
                         <input type="radio" name="notification_sound" value="{{ key }}" {% if courier_profile and courier_profile.notification_sound == key %}checked{% endif %}>
                         {{ label }}
                     </span>
-                    <button type="button" class="text-xs bg-gray-100 px-3 py-1.5 rounded-lg font-semibold" onclick="playCourierSound('{{ key }}'); event.preventDefault(); event.stopPropagation();">▶️ Eshitish</button>
+                    <button type="button" class="text-xs px-3 py-1.5 rounded-lg font-semibold" style="background:rgba(255,255,255,.08);" onclick="playCourierSound('{{ key }}'); event.preventDefault(); event.stopPropagation();">▶️ Eshitish</button>
                 </label>
                 {% endfor %}
             </div>
-            <p id="sound-save-status" class="text-[11px] text-green-600 mt-2 h-4"></p>
+            <p id="sound-save-status" class="text-[11px] text-emerald-400 mt-2 h-4"></p>
         </div>
 
     </div>
@@ -187,6 +273,19 @@
         }
         updateLiveClock();
         setInterval(updateLiveClock, 1000);
+    </script>
+
+    <!-- ================= UMUMIY HAPTIC/CLICK TUYG'USI — barcha muhim formalar uchun ================= -->
+    <script>
+        // Har qanday ".js-haptic-form" jo'natilganda yengil vibratsiya (agar
+        // qurilma qo'llasa) — tugmalar "jonli, qimmat" tuyulishi uchun.
+        // Formaning haqiqiy yuborilishiga (backendga POST) hech qanday
+        // ta'sir qilmaydi — faqat qo'shimcha tuyg'u.
+        document.querySelectorAll('.js-haptic-form').forEach(function (form) {
+            form.addEventListener('submit', function () {
+                if (navigator.vibrate) navigator.vibrate(16);
+            });
+        });
     </script>
 
     <!-- ================= 3 XIL BILDIRISHNOMA OVOZI (Web Audio API) ================= -->
@@ -239,14 +338,13 @@
             label.addEventListener('click', function () {
                 const key = label.getAttribute('data-sound-option');
                 document.querySelectorAll('#sound-options [data-sound-option]').forEach(function (l) {
-                    l.classList.remove('border-indigo-500', 'bg-indigo-50');
-                    l.classList.add('border-gray-200');
+                    l.classList.remove('selected');
                     l.querySelector('input[type=radio]').checked = false;
                 });
-                label.classList.add('border-indigo-500', 'bg-indigo-50');
-                label.classList.remove('border-gray-200');
+                label.classList.add('selected');
                 label.querySelector('input[type=radio]').checked = true;
                 playCourierSound(key);
+                if (navigator.vibrate) navigator.vibrate(12);
 
                 const fd = new FormData();
                 fd.append('notification_sound', key);
@@ -320,14 +418,20 @@
                 const myLng = parseFloat(el.dataset.myLng);
 
                 const map = L.map(el).setView([41.5504, 60.6318], 13);
+                // Qorong'i, futuristik xarita uslubi (CartoDB Dark Matter) —
+                // odatiy OSM va sputnik ko'rinishi bilan birga, qatlamlar
+                // tugmasi orqali almashtiriladi.
+                const darkLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+                    maxZoom: 20, subdomains: 'abcd', attribution: '&copy; OpenStreetMap &copy; CARTO'
+                }).addTo(map);
                 const streets = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
                     maxZoom: 19, attribution: '&copy; OpenStreetMap'
-                }).addTo(map);
+                });
                 const satellite = L.tileLayer(
                     'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
                     { maxZoom: 19, attribution: 'Tiles &copy; Esri' }
                 );
-                L.control.layers({ '🗺️': streets, '🛰️': satellite }, {}, { position: 'topright', collapsed: true }).addTo(map);
+                L.control.layers({ '🌑 Tungi': darkLayer, '🗺️ Sxema': streets, '🛰️ Sputnik': satellite }, {}, { position: 'topright', collapsed: true }).addTo(map);
 
                 const bounds = [];
                 if (!isNaN(pLat) && !isNaN(pLng)) {
@@ -386,7 +490,7 @@
                     if (!data || !data.routes || !data.routes[0]) return;
                     const coords = data.routes[0].geometry.coordinates.map(function (c) { return [c[1], c[0]]; });
                     if (map._courierRouteLine) map.removeLayer(map._courierRouteLine);
-                    map._courierRouteLine = L.polyline(coords, { color: '#4f46e5', weight: 4, opacity: 0.75 }).addTo(map);
+                    map._courierRouteLine = L.polyline(coords, { color: '#818cf8', weight: 4, opacity: 0.85 }).addTo(map);
                     const km = (data.routes[0].distance / 1000).toFixed(1);
                     const min = Math.round(data.routes[0].duration / 60);
                     map._courierRouteLine.bindTooltip(`~${km} km · ~${min} daqiqa`, { permanent: false });
@@ -397,10 +501,22 @@
         document.addEventListener('DOMContentLoaded', initCourierOrderMaps);
     </script>
 
-    <!-- ================= YANGI BUYURTMANI ANIQLASH (poll) VA OVOZ CHALISH ================= -->
+    <!-- ================= YANGI BUYURTMANI ANIQLASH (poll) VA TO'LIQ EKRAN OGOHLANTIRISH ================= -->
     <script>
         let knownAvailableIds = null;
         let knownActiveIds = null;
+
+        function showNewOrderAlertThenReload() {
+            const overlay = document.getElementById('new-order-alert-overlay');
+            const savedSound = document.querySelector('#sound-options input[type=radio]:checked');
+            playCourierSound(savedSound ? savedSound.value : 'chime1');
+            if (navigator.vibrate) navigator.vibrate([40, 60, 40, 60, 90]);
+            if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.HapticFeedback) {
+                window.Telegram.WebApp.HapticFeedback.notificationOccurred('success');
+            }
+            if (overlay) overlay.classList.remove('hidden');
+            setTimeout(function () { window.location.reload(); }, 2200);
+        }
 
         function pollForNewOrders() {
             fetch('/courier/orders/available.json', { credentials: 'same-origin' })
@@ -418,12 +534,7 @@
                     const newlyAssignedToMe = data.my_active_ids.some(function (id) { return knownActiveIds.indexOf(id) === -1; });
 
                     if (newAvailable || newlyAssignedToMe) {
-                        const savedSound = document.querySelector('#sound-options input[type=radio]:checked');
-                        playCourierSound(savedSound ? savedSound.value : 'chime1');
-                        if (window.Telegram && window.Telegram.WebApp && window.Telegram.WebApp.HapticFeedback) {
-                            window.Telegram.WebApp.HapticFeedback.notificationOccurred('success');
-                        }
-                        setTimeout(function () { window.location.reload(); }, 2500);
+                        showNewOrderAlertThenReload();
                     }
 
                     knownAvailableIds = data.available_ids.slice();
