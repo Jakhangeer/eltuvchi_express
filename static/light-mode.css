@@ -1,0 +1,273 @@
+/* ==========================================================================
+   PREMIUM LIGHT MODE — Eltuvchi Express (Admin/Operator, Hamkor, Kuryer, Mijoz)
+
+   ULASH (har bir panelning <head> qismida, o'z <style> bloklaridan KEYIN):
+       <script src="/static/js/ui-mode.js"></script>          (boshida, sinxron)
+       <link rel="stylesheet" href="/static/css/light-mode.css">
+
+   FAQAT <html data-mode="light"> bo'lganda ishlaydi — dark rejimga tegmaydi.
+
+   PALITRA
+     Fon ............ #F8FAFC      Karta ........... #FFFFFF
+     Asosiy (ko'k) .. #2563EB      Ikkilamchi (yashil) #10B981
+     Matn ........... #0F172A      Xira matn ....... #64748B
+     Chegara ........ #E2E8F0      Soya ............ 0 4px 20px rgba(0,0,0,.05)
+   ========================================================================== */
+
+/* ---------- 0. TOKENLAR ---------- */
+html[data-mode="light"],
+html[data-mode="light"][data-bg] {
+    --lm-bg: #F8FAFC;
+    --lm-card: #FFFFFF;
+    --lm-soft: #F1F5F9;
+    --lm-primary: #2563EB;
+    --lm-primary-dark: #1D4ED8;
+    --lm-accent: #10B981;
+    --lm-text: #0F172A;
+    --lm-muted: #64748B;
+    --lm-border: #E2E8F0;
+    --lm-shadow: 0 4px 20px rgba(0, 0, 0, .05);
+    --lm-shadow-hover: 0 10px 30px rgba(15, 23, 42, .09);
+
+    /* dark uslubdagi o'zgaruvchilarni light qiymatlarga yo'naltiramiz */
+    --obsidian: #F8FAFC;
+    --top-glow: rgba(37, 99, 235, .07);
+    --indigo: #2563EB;
+    --emerald: #10B981;
+    --indigo-glow: #2563EB;
+    --emerald-glow: #10B981;
+    --amber-glow: #38BDF8;
+    --accent: #2563EB;
+    --accent-dark: #1D4ED8;
+}
+
+/* ---------- 1. UMUMIY (barcha panellar) ---------- */
+html[data-mode="light"] .leaflet-popup-content-wrapper,
+html[data-mode="light"] .leaflet-popup-tip { background: #fff; color: var(--lm-text); box-shadow: var(--lm-shadow-hover); }
+html[data-mode="light"] .leaflet-control-layers { border: 1px solid var(--lm-border); border-radius: 12px; box-shadow: var(--lm-shadow); }
+html[data-mode="light"] .leaflet-container { background: #EEF2F7; }
+html[data-mode="light"] ::selection { background: rgba(37, 99, 235, .18); }
+html[data-mode="light"] ::-webkit-scrollbar { width: 8px; height: 8px; }
+html[data-mode="light"] ::-webkit-scrollbar-thumb { background: rgba(15, 23, 42, .16); border-radius: 10px; }
+html[data-mode="light"] ::-webkit-scrollbar-track { background: transparent; }
+
+/* Sarlavhadagi ☀️/🌙 almashtirgich tugmasi (ikkala rejimda ham) */
+.uim-btn {
+    display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; flex-shrink: 0;
+    border-radius: 11px; border: 1px solid rgba(255, 255, 255, .28); background: rgba(255, 255, 255, .14);
+    color: #fff; font-size: 16px; line-height: 1; cursor: pointer;
+    transition: transform .15s ease, background-color .2s ease, box-shadow .2s ease; -webkit-tap-highlight-color: transparent;
+}
+.uim-btn:hover { background: rgba(255, 255, 255, .24); }
+.uim-btn:active { transform: scale(.92); }
+html[data-mode="light"] .light-only-hide { display: none !important; }
+html[data-mode="light"] .only-dark { display: none !important; }
+
+/* ==========================================================================
+   2. GLASS-PANELLAR: KURYER va HAMKOR   (<body data-ui="glass">)
+   ========================================================================== */
+html[data-mode="light"] body[data-ui="glass"] { color: var(--lm-text); }
+
+/* Kartochkalar va sarlavhalar */
+html[data-mode="light"] body[data-ui="glass"] .glass,
+html[data-mode="light"] body[data-ui="glass"] .glass-strong {
+    background: var(--lm-card);
+    -webkit-backdrop-filter: none; backdrop-filter: none;
+    border: 1px solid var(--lm-border);
+    box-shadow: var(--lm-shadow);
+}
+html[data-mode="light"] body[data-ui="glass"] header.glass { box-shadow: 0 4px 20px rgba(15, 23, 42, .06); }
+
+/* Inputlar */
+html[data-mode="light"] body[data-ui="glass"] .glass-input {
+    background: #fff; border: 1px solid var(--lm-border); color: var(--lm-text);
+}
+html[data-mode="light"] body[data-ui="glass"] input,
+html[data-mode="light"] body[data-ui="glass"] select,
+html[data-mode="light"] body[data-ui="glass"] textarea { color: var(--lm-text); }
+html[data-mode="light"] body[data-ui="glass"] input::placeholder,
+html[data-mode="light"] body[data-ui="glass"] textarea::placeholder { color: #94A3B8; }
+html[data-mode="light"] body[data-ui="glass"] input:focus,
+html[data-mode="light"] body[data-ui="glass"] select:focus,
+html[data-mode="light"] body[data-ui="glass"] textarea:focus,
+html[data-mode="light"] body[data-ui="glass"] .glass-input:focus {
+    outline: none; border-color: var(--lm-primary) !important; background: #fff;
+    box-shadow: 0 0 0 4px rgba(37, 99, 235, .12);
+}
+
+/* Inline stilda yozilgan "shaffof oq" fonlar va chegaralar → toza kulrang-oq */
+html[data-mode="light"] body[data-ui="glass"] [style*="background:rgba(255,255,255"] { background: var(--lm-soft) !important; }
+html[data-mode="light"] body[data-ui="glass"] [style*="border:1px solid rgba(255,255,255"] { border-color: var(--lm-border) !important; }
+html[data-mode="light"] body[data-ui="glass"] [style*="border-top:1px solid rgba(255,255,255"] { border-top-color: var(--lm-border) !important; }
+html[data-mode="light"] body[data-ui="glass"] [class*="bg-white/"] { background: var(--lm-soft); }
+html[data-mode="light"] body[data-ui="glass"] [class*="border-white"] { border-color: var(--lm-border) !important; }
+html[data-mode="light"] body[data-ui="glass"] [style*="color:#c7d2fe"] { color: var(--accent-dark, #1D4ED8) !important; }
+
+/* Matn ranglari */
+html[data-mode="light"] body[data-ui="glass"] .text-white:not([class*="bg-"]):not([class*="btn-"]):not(.accent-bg) { color: var(--lm-text); }
+html[data-mode="light"] body[data-ui="glass"] .hover\:text-white:hover { color: var(--lm-text); }
+html[data-mode="light"] body[data-ui="glass"] .text-slate-100,
+html[data-mode="light"] body[data-ui="glass"] .text-slate-200,
+html[data-mode="light"] body[data-ui="glass"] .text-slate-300 { color: #334155; }
+html[data-mode="light"] body[data-ui="glass"] .text-slate-400,
+html[data-mode="light"] body[data-ui="glass"] .text-slate-500 { color: var(--lm-muted); }
+html[data-mode="light"] body[data-ui="glass"] .text-emerald-300,
+html[data-mode="light"] body[data-ui="glass"] .text-emerald-400 { color: #059669; }
+html[data-mode="light"] body[data-ui="glass"] .text-rose-300,
+html[data-mode="light"] body[data-ui="glass"] .text-rose-400 { color: #E11D48; }
+html[data-mode="light"] body[data-ui="glass"] .text-amber-300,
+html[data-mode="light"] body[data-ui="glass"] .text-amber-400 { color: #B45309; }
+html[data-mode="light"] body[data-ui="glass"] .text-grad { background-image: linear-gradient(135deg, #2563EB, #10B981); }
+
+/* Tugmalar */
+html[data-mode="light"] body[data-ui="glass"] .btn-accept { background: linear-gradient(135deg, #2563EB, #3B82F6); box-shadow: 0 8px 20px -8px rgba(37, 99, 235, .55); }
+html[data-mode="light"] body[data-ui="glass"] .btn-go,
+html[data-mode="light"] body[data-ui="glass"] .btn-toggle-off { background: linear-gradient(135deg, #059669, #10B981); box-shadow: 0 8px 20px -8px rgba(16, 185, 129, .5); }
+html[data-mode="light"] body[data-ui="glass"] .btn-toggle-on { box-shadow: 0 8px 20px -8px rgba(244, 63, 94, .45); }
+
+/* Bo'limlar (Hamkor tab) */
+html[data-mode="light"] body[data-ui="glass"] .tab-btn { color: var(--lm-muted); }
+html[data-mode="light"] body[data-ui="glass"] .tab-btn:hover { color: var(--lm-text); }
+html[data-mode="light"] body[data-ui="glass"] .tab-btn.active { color: var(--accent); }
+
+/* Tanlangan ovoz (Kuryer) */
+html[data-mode="light"] body[data-ui="glass"] .sound-pill.selected[style] {
+    background: rgba(37, 99, 235, .07) !important; border-color: rgba(37, 99, 235, .5) !important;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, .1);
+}
+
+/* Yangi buyurtma "nafas olish" nuri */
+@keyframes lmGlow {
+    0%, 100% { box-shadow: 0 0 0 1px rgba(37, 99, 235, .22), 0 4px 20px rgba(0, 0, 0, .05); }
+    50%      { box-shadow: 0 0 0 1px rgba(37, 99, 235, .5), 0 10px 30px rgba(37, 99, 235, .16); }
+}
+html[data-mode="light"] body[data-ui="glass"] .active-order-card,
+html[data-mode="light"] body[data-ui="glass"] .order-card-new { animation-name: lmGlow; }
+
+/* Yangi buyurtma to'liq ekran ogohlantirishi */
+html[data-mode="light"] body[data-ui="glass"] #new-order-alert-overlay {
+    background: radial-gradient(circle at 50% 38%, rgba(37, 99, 235, .14), rgba(248, 250, 252, .97) 70%);
+}
+html[data-mode="light"] body[data-ui="glass"] .radar-ring { border-color: rgba(37, 99, 235, .4); }
+
+/* Hamkor: kuryerni kuzatish oynasi */
+html[data-mode="light"] body[data-ui="glass"] #partner-tracking-overlay { background: rgba(248, 250, 252, .98) !important; }
+html[data-mode="light"] body[data-ui="glass"] #partner-tracking-overlay > div:first-child,
+html[data-mode="light"] body[data-ui="glass"] #partner-tracking-overlay > div:last-child { background: #fff !important; border-color: var(--lm-border) !important; }
+html[data-mode="light"] body[data-ui="glass"] #partner-tracking-overlay .text-white { color: var(--lm-text) !important; }
+html[data-mode="light"] body[data-ui="glass"] #partner-tracking-overlay button { background: var(--lm-soft) !important; color: var(--lm-text) !important; }
+
+/* Do'kon joylashuvi ko'rinishi (iframe) — dark'dagi invert filtrini olib tashlaymiz */
+html[data-mode="light"] body[data-ui="glass"] iframe#map-preview { filter: none !important; }
+
+/* Orqa fondagi bezak doiralari — juda yengil */
+html[data-mode="light"] body[data-ui="glass"] .orb { opacity: .16; }
+
+/* ==========================================================================
+   3. ADMIN / OPERATOR PANEL  (#app-body)
+   ========================================================================== */
+html[data-mode="light"] #app-body[data-theme="indigo"]  { --t1: #2563EB; --t2: #1D4ED8; --tsoft: rgba(37, 99, 235, .09);  --tink: #1D4ED8; }
+html[data-mode="light"] #app-body[data-theme="emerald"] { --t1: #10B981; --t2: #059669; --tsoft: rgba(16, 185, 129, .10); --tink: #047857; }
+html[data-mode="light"] #app-body[data-theme="sky"]     { --t1: #0EA5E9; --t2: #0284C7; --tsoft: rgba(14, 165, 233, .10); --tink: #0369A1; }
+html[data-mode="light"] #app-body[data-theme="rose"]    { --t1: #F43F5E; --t2: #E11D48; --tsoft: rgba(244, 63, 94, .09);  --tink: #BE123C; }
+html[data-mode="light"] #app-body[data-theme="amber"]   { --t1: #F59E0B; --t2: #D97706; --tsoft: rgba(245, 158, 11, .11); --tink: #B45309; }
+
+html[data-mode="light"] #app-body {
+    --t1: #2563EB; --t2: #1D4ED8; --tsoft: rgba(37, 99, 235, .09); --tink: #1D4ED8;
+    background: var(--lm-bg) !important; background-image: none !important; color: var(--lm-text);
+}
+html[data-mode="light"] #app-body #main-header {
+    background-image: linear-gradient(100deg, var(--t1), var(--t2)) !important;
+    box-shadow: 0 4px 20px rgba(15, 23, 42, .10) !important;
+    border-bottom: 0;
+}
+html[data-mode="light"] #app-body aside {
+    background: #fff !important; -webkit-backdrop-filter: none; backdrop-filter: none;
+    border-right: 1px solid var(--lm-border) !important; box-shadow: none;
+}
+html[data-mode="light"] #app-body .nav-btn { color: #334155; border-radius: 10px; }
+html[data-mode="light"] #app-body .nav-btn:hover { background: var(--tsoft); color: var(--tink); }
+html[data-mode="light"] #app-body .nav-btn.active {
+    background-image: linear-gradient(135deg, var(--t1), var(--t2)) !important; background-color: transparent !important;
+    color: #fff; box-shadow: 0 6px 16px -8px var(--t1);
+}
+
+/* Kartochkalar */
+html[data-mode="light"] #app-body .card-bg {
+    background: #fff !important; -webkit-backdrop-filter: none; backdrop-filter: none;
+    border: 1px solid var(--lm-border) !important; border-radius: 16px !important;
+    box-shadow: var(--lm-shadow) !important; transition: box-shadow .2s ease, transform .2s ease;
+}
+html[data-mode="light"] #app-body .card-bg:hover { box-shadow: var(--lm-shadow-hover) !important; }
+html[data-mode="light"] #app-body .theme-title { color: var(--tink) !important; letter-spacing: -.01em; }
+html[data-mode="light"] #app-body .theme-stat-number { color: var(--t1) !important; background: none !important; -webkit-text-fill-color: currentColor; }
+html[data-mode="light"] #app-body .theme-btn {
+    background-image: linear-gradient(135deg, var(--t1), var(--t2)) !important; background-color: transparent !important;
+    border-radius: 12px; box-shadow: 0 8px 18px -10px var(--t1); transition: transform .15s ease, filter .2s ease;
+}
+html[data-mode="light"] #app-body .theme-btn:hover { filter: brightness(1.06); }
+html[data-mode="light"] #app-body .theme-btn:active { transform: scale(.98); }
+
+/* Matn, inputlar */
+html[data-mode="light"] #app-body .text-gray-500,
+html[data-mode="light"] #app-body .text-gray-400 { color: var(--lm-muted) !important; }
+html[data-mode="light"] #app-body input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+html[data-mode="light"] #app-body select,
+html[data-mode="light"] #app-body textarea { background: #fff; border-color: var(--lm-border); color: var(--lm-text); border-radius: 10px; }
+html[data-mode="light"] #app-body input:focus,
+html[data-mode="light"] #app-body select:focus,
+html[data-mode="light"] #app-body textarea:focus { outline: none; border-color: var(--t1) !important; box-shadow: 0 0 0 3px var(--tsoft); }
+
+/* Jadvallar — toza, o'qilishi oson */
+html[data-mode="light"] #app-body table { border-collapse: separate; border-spacing: 0; }
+html[data-mode="light"] #app-body thead th {
+    background: var(--lm-soft); color: #475569; font-size: .72rem; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .05em; border-bottom: 1px solid var(--lm-border);
+}
+html[data-mode="light"] #app-body tbody td { border-color: var(--lm-border); }
+html[data-mode="light"] #app-body tbody tr:hover td { background: #F8FAFC; }
+html[data-mode="light"] #app-body .divide-y > :not([hidden]) ~ :not([hidden]) { border-color: var(--lm-border); }
+
+/* Kanban va xarita */
+html[data-mode="light"] #app-body .kanban-col { background: #F8FAFC; border-color: var(--lm-border); }
+html[data-mode="light"] #app-body .kanban-card { background: #fff; border-color: var(--lm-border); box-shadow: var(--lm-shadow); }
+html[data-mode="light"] #app-body #courier-map { border-radius: 14px; border: 1px solid var(--lm-border); overflow: hidden; }
+html[data-mode="light"] #app-body .chart-wrap { padding: 4px 2px; }
+
+/* ==========================================================================
+   4. MIJOZ PANEL (Telegram Mini App)  #main-body.theme-default
+   Boshqa ochiq mavzular (Oltin/Yashil/Okean/Atirgul) o'z rangini saqlaydi.
+   ========================================================================== */
+html[data-mode="light"] body.theme-default {
+    --a1: #2563EB; --a2: #1D4ED8; --wash1: rgba(37, 99, 235, .06); --wash2: rgba(16, 185, 129, .05); --shadow: 15, 23, 42;
+    background-color: var(--lm-bg); color: var(--lm-text);
+}
+html[data-mode="light"] body.theme-default .card-bg {
+    background-color: #fff; border-color: var(--lm-border) !important; border-radius: 18px !important;
+    box-shadow: var(--lm-shadow) !important;
+}
+html[data-mode="light"] body.theme-default #app-header {
+    background: rgba(255, 255, 255, .92) !important; border-bottom: 1px solid var(--lm-border) !important;
+    box-shadow: 0 4px 20px rgba(15, 23, 42, .04) !important; backdrop-filter: blur(14px);
+}
+html[data-mode="light"] body.theme-default #theme-menu { background: #fff !important; border-color: var(--lm-border) !important; }
+
+/* Asosiy amber urg'u → premium ko'k (faqat "Standart" mavzuda) */
+html[data-mode="light"] body.theme-default .bg-amber-500 { background-color: #2563EB !important; background-image: none !important; }
+html[data-mode="light"] body.theme-default .hover\:bg-amber-600:hover { background-color: #1D4ED8 !important; }
+html[data-mode="light"] body.theme-default .text-amber-500,
+html[data-mode="light"] body.theme-default .text-amber-600 { color: #2563EB !important; }
+html[data-mode="light"] body.theme-default .bg-amber-50 { background-color: rgba(37, 99, 235, .08) !important; }
+html[data-mode="light"] body.theme-default .bg-amber-100 { background-color: rgba(37, 99, 235, .14) !important; }
+html[data-mode="light"] body.theme-default .shadow-amber-500\/30 { --tw-shadow-color: rgba(37, 99, 235, .3); }
+html[data-mode="light"] body.theme-default .swiper-pagination-bullet-active { background: #2563EB !important; }
+html[data-mode="light"] body.theme-default .category-chip-active { box-shadow: 0 8px 20px -8px rgba(37, 99, 235, .55); }
+
+/* Savat paneli — nafis, oq "kapsula" */
+html[data-mode="light"] body.theme-default #cart-bar {
+    background: #fff !important; color: var(--lm-text) !important; border: 1px solid var(--lm-border) !important;
+    box-shadow: 0 12px 34px rgba(15, 23, 42, .14) !important;
+}
+html[data-mode="light"] body.theme-default #cart-bar #cart-summary { color: var(--lm-text); }
+html[data-mode="light"] body.theme-default #cart-bar .text-amber-400 { color: #2563EB !important; }
+html[data-mode="light"] body.theme-default #cart-bar .bg-amber-500 { background: #2563EB !important; box-shadow: 0 6px 16px -6px rgba(37, 99, 235, .6) !important; }

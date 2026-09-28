@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Kuryer Kabineti</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="/static/js/ui-mode.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Leaflet — faol buyurtmada do'kon (olib ketish) va mijoz (yetkazish) nuqtalarini xaritada ko'rsatish uchun -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -87,9 +88,18 @@
 
         ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-thumb { background: rgba(255,255,255,.15); border-radius: 10px; }
+
+        /* ---- MOBILE-FIRST: katta, qulay bosiladigan tugmalar (ikkala rejimda) ---- */
+        body .btn-go, body .btn-accept, body .btn-toggle-on, body .btn-toggle-off { min-height: 50px; font-size: 15px; border-radius: 14px; }
+        @media (max-width: 640px) {
+            input, select, textarea { font-size: 16px; }   /* iOS'da avtomatik zoom bo'lmasligi uchun */
+            body .btn-go, body .btn-accept { min-height: 54px; }
+        }
+        body { padding-bottom: max(24px, env(safe-area-inset-bottom)); }
     </style>
+    <link rel="stylesheet" href="/static/css/light-mode.css">
 </head>
-<body class="min-h-screen relative text-white" data-courier-online="{{ 'true' if (courier_profile and courier_profile.is_online) else 'false' }}">
+<body class="min-h-screen relative text-white" data-ui="glass" data-panel="courier" data-courier-online="{{ 'true' if (courier_profile and courier_profile.is_online) else 'false' }}">
     <script>
         const tg = window.Telegram?.WebApp;
         if (tg) { tg.ready(); tg.expand(); }
@@ -119,7 +129,8 @@
         </div>
         <div class="flex items-center gap-3">
             <div id="live-clock" class="text-[11px] font-mono text-slate-400 glass rounded-full px-2.5 py-1"></div>
-            <div class="relative">
+            <button type="button" data-mode-toggle class="glass btn-press rounded-lg w-9 h-9 flex items-center justify-center text-sm" aria-label="Rejim"></button>
+            <div class="relative only-dark">
                 <button type="button" onclick="document.getElementById('bg-menu').classList.toggle('hidden')" class="glass rounded-lg w-8 h-8 flex items-center justify-center text-sm">🎨</button>
                 <div id="bg-menu" class="hidden absolute right-0 mt-2 glass-strong rounded-xl p-2.5 flex gap-2 z-30">
                     <button type="button" onclick="setPanelBg('obsidian')" title="Obsidian" class="w-6 h-6 rounded-full border-2 border-white/50" style="background:linear-gradient(135deg,#6366f1,#05060a)"></button>
@@ -447,7 +458,10 @@
                 // tugmasi orqali almashtiriladi.
                 const darkLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
                     maxZoom: 20, subdomains: 'abcd', attribution: '&copy; OpenStreetMap &copy; CARTO'
-                }).addTo(map);
+                });
+                const lightLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+                    maxZoom: 20, subdomains: 'abcd', attribution: '&copy; OpenStreetMap &copy; CARTO'
+                });
                 const streets = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
                     maxZoom: 19, attribution: '&copy; OpenStreetMap'
                 });
@@ -455,7 +469,8 @@
                     'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
                     { maxZoom: 19, attribution: 'Tiles &copy; Esri' }
                 );
-                L.control.layers({ '🌑 Tungi': darkLayer, '🗺️ Sxema': streets, '🛰️ Sputnik': satellite }, {}, { position: 'topright', collapsed: true }).addTo(map);
+                L.control.layers({ '🌑 Tungi': darkLayer, '☀️ Yorug‘': lightLayer, '🗺️ Sxema': streets, '🛰️ Sputnik': satellite }, {}, { position: 'topright', collapsed: true }).addTo(map);
+                if (window.UIMode) { UIMode.attachMapTheme(map, darkLayer, lightLayer); } else { darkLayer.addTo(map); }
 
                 const bounds = [];
                 if (!isNaN(pLat) && !isNaN(pLng)) {

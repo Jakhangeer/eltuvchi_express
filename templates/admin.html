@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Eltuvchi Express — Admin Panel</title>
+    <script src="/static/js/ui-mode.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -160,74 +161,6 @@
 
 
 
-        /* ============================================================
-           OCHIQ (LIGHT) MAVZULAR — Indigo / Zumrad / Osmon / Atirgul / Oltin
-           Har biri o'z rang juftligi bilan: yumshoq gradient fon, oq
-           "shisha" kartochkalar, gradient header va tugmalar.
-           ============================================================ */
-        body[data-theme="indigo"]  { --t1:#4f46e5; --t2:#7c3aed; --tsoft:rgba(99,102,241,.16);  --tsoft2:rgba(167,139,250,.14); --tink:#4338ca; }
-        body[data-theme="emerald"] { --t1:#059669; --t2:#0d9488; --tsoft:rgba(16,185,129,.16);  --tsoft2:rgba(45,212,191,.14);  --tink:#047857; }
-        body[data-theme="sky"]     { --t1:#0284c7; --t2:#2563eb; --tsoft:rgba(14,165,233,.16);  --tsoft2:rgba(99,102,241,.12);  --tink:#0369a1; }
-        body[data-theme="rose"]    { --t1:#e11d48; --t2:#db2777; --tsoft:rgba(244,63,94,.15);   --tsoft2:rgba(251,146,60,.13);  --tink:#be123c; }
-        body[data-theme="amber"]   { --t1:#d97706; --t2:#ea580c; --tsoft:rgba(245,158,11,.18);  --tsoft2:rgba(244,63,94,.10);   --tink:#b45309; }
-
-        body:not(.dark) {
-            background:
-                radial-gradient(ellipse 900px 520px at 8% -8%, var(--tsoft, rgba(99,102,241,.14)), transparent 60%),
-                radial-gradient(ellipse 800px 500px at 105% 8%, var(--tsoft2, rgba(167,139,250,.12)), transparent 60%),
-                linear-gradient(180deg, #f6f7fb, #eef1f8) !important;
-            background-attachment: fixed !important;
-        }
-        body:not(.dark) #main-header {
-            background-image: linear-gradient(100deg, var(--t1, #4f46e5), var(--t2, #7c3aed)) !important;
-            box-shadow: 0 12px 30px -14px var(--t1, #4f46e5) !important;
-            border-bottom: 1px solid rgba(255,255,255,.25);
-        }
-        body:not(.dark) .card-bg {
-            background: rgba(255,255,255,.82) !important;
-            backdrop-filter: blur(14px);
-            -webkit-backdrop-filter: blur(14px);
-            border: 1px solid rgba(255,255,255,.9) !important;
-            border-radius: 1.15rem !important;
-            box-shadow: 0 18px 40px -22px rgba(30,41,90,.35), 0 2px 6px -2px rgba(30,41,90,.08) !important;
-            transition: transform .18s ease, box-shadow .18s ease;
-        }
-        body:not(.dark) .card-bg:hover { box-shadow: 0 24px 50px -22px rgba(30,41,90,.42), 0 2px 8px -2px rgba(30,41,90,.1) !important; }
-        body:not(.dark) .theme-title { color: var(--tink, #4338ca) !important; letter-spacing: -.01em; }
-        body:not(.dark) .theme-stat-number {
-            background-image: linear-gradient(135deg, var(--t1, #4f46e5), var(--t2, #7c3aed));
-            -webkit-background-clip: text; background-clip: text; color: transparent !important;
-        }
-        body:not(.dark) .theme-btn {
-            background-image: linear-gradient(135deg, var(--t1, #4f46e5), var(--t2, #7c3aed)) !important;
-            background-color: transparent !important;
-            box-shadow: 0 10px 22px -10px var(--t1, #4f46e5);
-            transition: transform .15s ease, box-shadow .2s ease, filter .2s ease;
-        }
-        body:not(.dark) .theme-btn:hover { filter: brightness(1.06); }
-        body:not(.dark) .theme-btn:active { transform: scale(.98); }
-        body:not(.dark) aside {
-            background: rgba(255,255,255,.7) !important;
-            backdrop-filter: blur(16px);
-            border-right: 1px solid rgba(255,255,255,.9) !important;
-            box-shadow: 8px 0 30px -24px rgba(30,41,90,.35);
-        }
-        body:not(.dark) .nav-btn { border-radius: .8rem; }
-        body:not(.dark) .nav-btn:hover { background: var(--tsoft, #eef2ff); }
-        body:not(.dark) .nav-btn.active {
-            background-image: linear-gradient(135deg, var(--t1, #4f46e5), var(--t2, #7c3aed)) !important;
-            background-color: transparent !important;
-            box-shadow: 0 10px 22px -10px var(--t1, #4f46e5);
-        }
-        body:not(.dark) input:focus, body:not(.dark) select:focus, body:not(.dark) textarea:focus {
-            outline: none; border-color: var(--t1, #4f46e5) !important; box-shadow: 0 0 0 3px var(--tsoft, rgba(99,102,241,.2));
-        }
-        body:not(.dark) thead th { background: var(--tsoft, rgba(99,102,241,.1)); }
-        body:not(.dark) tbody tr:hover td { background: rgba(99,102,241,.04); }
-        body:not(.dark) .kanban-col { background: rgba(255,255,255,.6); }
-        body:not(.dark) ::-webkit-scrollbar { width: 8px; height: 8px; }
-        body:not(.dark) ::-webkit-scrollbar-thumb { background: var(--tsoft, rgba(99,102,241,.3)); border-radius: 10px; }
-
         /* ---- TRANZAKSIYALAR: katta va aniq ko'rinadigan ---- */
         .tx-count-pill { font-size: .75rem; font-weight: 700; padding: .3rem .8rem; border-radius: 9999px; background: rgba(99,102,241,.12); color: #6366f1; }
         .tx-summary { border-radius: 1rem; padding: 1rem 1.15rem; border: 1px solid rgba(0,0,0,.06); }
@@ -264,6 +197,7 @@
         /* ---- Dashboard'dagi jonli grafik kartasi ---- */
         .chart-wrap { position: relative; height: 240px; }
     </style>
+    <link rel="stylesheet" href="/static/css/light-mode.css">
 </head>
 <body id="app-body" class="bg-gray-100 text-gray-800 transition-colors duration-300"
       data-active-city-id="{{ active_city_id if active_city_id is not none else '' }}"
@@ -292,9 +226,10 @@
                 <button type="button" onclick="openAddCityModal()" class="px-2 py-1 rounded bg-green-500 hover:bg-green-600 font-bold text-white" title="Yangi shahar qo'shish">+</button>
             </div>
             {% endif %}
+            <button type="button" data-mode-toggle class="uim-btn" aria-label="Rejim"></button>
             <div class="flex items-center gap-2 bg-white/10 p-1.5 rounded-lg border border-white/20">
                 <span class="text-xs font-semibold px-1">Mavzu:</span>
-                <button onclick="setTheme('indigo')" class="w-5 h-5 rounded-full bg-indigo-600 border-2 border-white"></button>
+                <button onclick="setTheme('indigo')" class="w-5 h-5 rounded-full bg-blue-600 border-2 border-white"></button>
                 <button onclick="setTheme('emerald')" class="w-5 h-5 rounded-full bg-emerald-600 border-2 border-white"></button>
                 <button onclick="setTheme('sky')" class="w-5 h-5 rounded-full bg-sky-600 border-2 border-white"></button>
                 <button onclick="setTheme('rose')" class="w-5 h-5 rounded-full bg-rose-600 border-2 border-white"></button>
@@ -1783,6 +1718,10 @@
             if (!themes[themeName]) themeName = 'dark';
             body.dataset.theme = themeName;  // CSS shu atribut bo'yicha har bir mavzuni bezaydi
 
+            // Light/Dark rejim bilan sinxronlash (ui-mode.js). __themeSync — qayta-qayta chaqirilib ketmasligi uchun.
+            if (themeName !== 'dark') localStorage.setItem('admin_light_theme', themeName);
+            if (window.UIMode) { window.__themeSync = true; UIMode.set(themeName === 'dark' ? 'dark' : 'light'); window.__themeSync = false; }
+
             if (themeName === 'dark') {
                 body.classList.add('dark', 'bg-gray-950', 'text-gray-100');
                 body.classList.remove('bg-gray-100', 'text-gray-800');
@@ -1888,7 +1827,10 @@
             // ko'rinishi), ODATIY SXEMA va SPUTNIK ----
             const darkLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
                 maxZoom: 20, subdomains: 'abcd', attribution: '&copy; OpenStreetMap &copy; CARTO'
-            }).addTo(courierMap);
+            });
+                const lightLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+                    maxZoom: 20, subdomains: 'abcd', attribution: '&copy; OpenStreetMap &copy; CARTO'
+                });
             const streetsLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
                 maxZoom: 19, attribution: '&copy; OpenStreetMap'
             });
@@ -1897,9 +1839,10 @@
                 { maxZoom: 19, attribution: 'Tiles &copy; Esri' }
             );
             L.control.layers(
-                { '🌑 Tungi': darkLayer, '🗺️ Sxema': streetsLayer, '🛰️ Sputnik': satelliteLayer },
+                { '🌑 Tungi': darkLayer, '☀️ Yorug‘': lightLayer, '🗺️ Sxema': streetsLayer, '🛰️ Sputnik': satelliteLayer },
                 {}, { position: 'topright', collapsed: true }
             ).addTo(courierMap);
+            if (window.UIMode) { UIMode.attachMapTheme(courierMap, darkLayer, lightLayer); } else { darkLayer.addTo(courierMap); }
         }
 
         function courierDivIcon(transport, busy) {
@@ -2304,11 +2247,11 @@
                             datasets: [
                                 {
                                     type: 'bar', label: 'Buyurtmalar soni', data: data.order_counts,
-                                    backgroundColor: 'rgba(99,102,241,.55)', borderRadius: 4, yAxisID: 'y',
+                                    backgroundColor: isDark ? 'rgba(99,102,241,.55)' : 'rgba(37,99,235,.55)', borderRadius: 4, yAxisID: 'y',
                                 },
                                 {
                                     type: 'line', label: "Tushum (so'm)", data: data.revenue_by_hour,
-                                    borderColor: '#34d399', backgroundColor: 'rgba(52,211,153,.15)',
+                                    borderColor: isDark ? '#34d399' : '#10B981', backgroundColor: isDark ? 'rgba(52,211,153,.15)' : 'rgba(16,185,129,.12)',
                                     tension: .35, fill: true, yAxisID: 'y1', pointRadius: 2,
                                 },
                             ],
@@ -2357,8 +2300,25 @@
         }
 
         document.addEventListener('DOMContentLoaded', () => {
-            const savedTheme = localStorage.getItem('admin_theme') || 'dark';
+            // Boshlang'ich mavzu: umumiy Light/Dark rejimga (ui-mode.js) mos tanlanadi
+            let savedTheme;
+            const _mode = window.UIMode ? UIMode.get() : 'dark';
+            if (_mode === 'dark') {
+                savedTheme = 'dark';
+            } else {
+                savedTheme = localStorage.getItem('admin_light_theme') || localStorage.getItem('admin_theme');
+                if (!savedTheme || savedTheme === 'dark' || !themes[savedTheme]) savedTheme = 'indigo';
+            }
             setTheme(savedTheme);
+
+            // Rejim tugmasi bosilganda: mavzu, grafik va xarita yangilanadi
+            document.addEventListener('uimodechange', function (e) {
+                if (window.__themeSync) return;
+                const isDark = document.getElementById('app-body').classList.contains('dark');
+                if (e.detail.mode === 'dark' && !isDark) setTheme('dark');
+                else if (e.detail.mode === 'light' && isDark) setTheme(localStorage.getItem('admin_light_theme') || 'indigo');
+                if (hourlyChartInstance) { hourlyChartInstance.destroy(); hourlyChartInstance = null; renderHourlyChart(); }
+            });
             applyWeatherMultiplier();
             showPage(localStorage.getItem('admin_active_page') || 'bosh');
             updateLiveClock();

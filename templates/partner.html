@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ partner.brand_name }} — Hamkor Kabineti</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="/static/js/ui-mode.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Leaflet — buyurtmani olib ketgan kuryerni jonli kuzatish uchun -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -91,8 +92,9 @@
         ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-thumb { background: rgba(255,255,255,.15); border-radius: 10px; }
     </style>
+    <link rel="stylesheet" href="/static/css/light-mode.css">
 </head>
-<body class="min-h-screen relative text-white">
+<body class="min-h-screen relative text-white" data-ui="glass" data-panel="partner">
     <script>
         const tg = window.Telegram?.WebApp;
         if (tg) { tg.ready(); tg.expand(); }
@@ -123,6 +125,7 @@
             </div>
             <div id="live-clock" class="text-[11px] font-mono text-slate-400 hidden sm:block glass rounded-full px-2.5 py-1"></div>
             <div class="flex items-center gap-2">
+                <button type="button" data-mode-toggle class="glass btn-press rounded-lg w-8 h-8 flex items-center justify-center text-sm" aria-label="Rejim"></button>
                 <div class="relative">
                     <button onclick="document.getElementById('theme-menu').classList.toggle('hidden')" class="text-xs bg-white/8 border border-white/10 px-2.5 py-1.5 rounded-lg">🎨</button>
                     <div id="theme-menu" class="hidden absolute right-0 mt-2 glass-strong rounded-xl shadow-lg p-2.5 flex gap-2 z-20">
@@ -131,11 +134,11 @@
                         <button onclick="setTheme('#f43f5e','#be123c')" class="w-6 h-6 rounded-full bg-rose-500 border-2 border-white/50 shadow"></button>
                         <button onclick="setTheme('#f59e0b','#b45309')" class="w-6 h-6 rounded-full bg-amber-500 border-2 border-white/50 shadow"></button>
                         <button onclick="setTheme('#38bdf8','#0369a1')" class="w-6 h-6 rounded-full bg-sky-500 border-2 border-white/50 shadow"></button>
-                        <span class="w-px bg-white/20 mx-1"></span>
-                        <button onclick="setPanelBg('obsidian')" title="Obsidian" class="w-6 h-6 rounded-md border-2 border-white/50" style="background:linear-gradient(135deg,#6366f1,#05060a)"></button>
-                        <button onclick="setPanelBg('aurora')" title="Aurora" class="w-6 h-6 rounded-md border-2 border-white/50" style="background:linear-gradient(135deg,#14b8a6,#03110f)"></button>
-                        <button onclick="setPanelBg('sunset')" title="Sunset" class="w-6 h-6 rounded-md border-2 border-white/50" style="background:linear-gradient(135deg,#f43f5e,#0e0610)"></button>
-                        <button onclick="setPanelBg('midnight')" title="Midnight" class="w-6 h-6 rounded-md border-2 border-white/50" style="background:linear-gradient(135deg,#3b82f6,#040816)"></button>
+                        <span class="w-px bg-white/20 mx-1 only-dark"></span>
+                        <button onclick="setPanelBg('obsidian')" title="Obsidian" class="only-dark w-6 h-6 rounded-md border-2 border-white/50" style="background:linear-gradient(135deg,#6366f1,#05060a)"></button>
+                        <button onclick="setPanelBg('aurora')" title="Aurora" class="only-dark w-6 h-6 rounded-md border-2 border-white/50" style="background:linear-gradient(135deg,#14b8a6,#03110f)"></button>
+                        <button onclick="setPanelBg('sunset')" title="Sunset" class="only-dark w-6 h-6 rounded-md border-2 border-white/50" style="background:linear-gradient(135deg,#f43f5e,#0e0610)"></button>
+                        <button onclick="setPanelBg('midnight')" title="Midnight" class="only-dark w-6 h-6 rounded-md border-2 border-white/50" style="background:linear-gradient(135deg,#3b82f6,#040816)"></button>
                     </div>
                 </div>
                 <a href="/logout" class="text-[11px] text-slate-400 hover:text-white transition-colors underline underline-offset-2">Chiqish</a>
@@ -591,7 +594,10 @@
                 partnerTrackMap = L.map('partner-tracking-map').setView([41.5504, 60.6318], 13);
                 const darkLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
                     maxZoom: 20, subdomains: 'abcd', attribution: '&copy; OpenStreetMap &copy; CARTO'
-                }).addTo(partnerTrackMap);
+                });
+                const lightLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+                    maxZoom: 20, subdomains: 'abcd', attribution: '&copy; OpenStreetMap &copy; CARTO'
+                });
                 const streets = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
                     maxZoom: 19, attribution: '&copy; OpenStreetMap'
                 });
@@ -599,7 +605,8 @@
                     'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
                     { maxZoom: 19, attribution: 'Tiles &copy; Esri' }
                 );
-                L.control.layers({ '🌑 Tungi': darkLayer, '🗺️ Sxema': streets, '🛰️ Sputnik': satellite }, {}, { position: 'topright', collapsed: true }).addTo(partnerTrackMap);
+                L.control.layers({ '🌑 Tungi': darkLayer, '☀️ Yorug‘': lightLayer, '🗺️ Sxema': streets, '🛰️ Sputnik': satellite }, {}, { position: 'topright', collapsed: true }).addTo(partnerTrackMap);
+                if (window.UIMode) { UIMode.attachMapTheme(partnerTrackMap, darkLayer, lightLayer); } else { darkLayer.addTo(partnerTrackMap); }
             }
             setTimeout(() => { if (partnerTrackMap) partnerTrackMap.invalidateSize(); }, 100);
 

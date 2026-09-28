@@ -19,6 +19,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <script src="/static/js/ui-mode.js"></script>
     <style>
         body.theme-default { background-color: #f8fafc; color: #0f172a; }
         body.theme-dark { background-color: #05060a; color: #f8fafc; }
@@ -176,6 +177,7 @@
         body.theme-dark .text-amber-600 { color: #fbbf24 !important; }
         body.theme-dark .bg-slate-500\/10 { background-color: rgba(255,255,255,.06) !important; }
     </style>
+    <link rel="stylesheet" href="/static/css/light-mode.css">
 </head>
 <body id="main-body" class="theme-default min-h-screen antialiased selection:bg-amber-500 selection:text-white pb-32 transition-colors duration-300">
 
@@ -209,6 +211,7 @@
                     <i class="fa-solid fa-heart text-rose-500 text-sm"></i>
                     <span id="fav-badge" class="hidden absolute -top-1 -right-1 bg-rose-500 text-white text-[9px] font-bold w-4 h-4 rounded-full flex items-center justify-center">0</span>
                 </button>
+                <button type="button" data-mode-toggle class="bg-slate-100 hover:bg-slate-200 text-slate-700 w-9 h-9 rounded-2xl flex items-center justify-center transition-all active:scale-95 text-sm" aria-label="Rejim"></button>
                 <button onclick="toggleThemeMenu()" class="bg-slate-100 hover:bg-slate-200 text-slate-700 w-9 h-9 rounded-2xl flex items-center justify-center transition-all active:scale-95">
                     <i class="fa-solid fa-palette text-sm"></i>
                 </button>
@@ -315,6 +318,9 @@
         function setTheme(themeName) {
             document.getElementById("main-body").className = `${themeName} min-h-screen antialiased selection:bg-amber-500 selection:text-white pb-32 transition-colors duration-300`;
             localStorage.setItem("app_theme", themeName);
+            if (themeName !== "theme-dark") localStorage.setItem("app_light_theme", themeName);
+            // Light/Dark rejim bilan sinxronlash (ui-mode.js)
+            if (window.UIMode) { window.__themeSync = true; UIMode.set(themeName === "theme-dark" ? "dark" : "light"); window.__themeSync = false; }
             document.getElementById("theme-menu").classList.add("hidden");
         }
 
@@ -322,8 +328,21 @@
             document.getElementById("theme-menu").classList.toggle("hidden");
         }
 
-        const savedTheme = localStorage.getItem("app_theme") || "theme-dark";
+        // Boshlang'ich mavzu umumiy Light/Dark rejimga (ui-mode.js) mos tanlanadi
+        let savedTheme;
+        if (window.UIMode && UIMode.get() === "dark") {
+            savedTheme = "theme-dark";
+        } else {
+            savedTheme = localStorage.getItem("app_light_theme") || localStorage.getItem("app_theme");
+            if (!savedTheme || savedTheme === "theme-dark") savedTheme = "theme-default";
+        }
         setTheme(savedTheme);
+        document.addEventListener("uimodechange", function (e) {
+            if (window.__themeSync) return;
+            const isDark = document.getElementById("main-body").classList.contains("theme-dark");
+            if (e.detail.mode === "dark" && !isDark) setTheme("theme-dark");
+            else if (e.detail.mode === "light" && isDark) setTheme(localStorage.getItem("app_light_theme") || "theme-default");
+        });
 
         async function api(path, body) {
             const res = await fetch(`/api/shop${path}`, {
@@ -366,7 +385,10 @@
                 trackingMap = L.map('tracking-map').setView([41.5504, 60.6318], 13);
                 const darkLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
                     maxZoom: 20, subdomains: 'abcd', attribution: '&copy; OpenStreetMap &copy; CARTO'
-                }).addTo(trackingMap);
+                });
+                const lightLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+                    maxZoom: 20, subdomains: 'abcd', attribution: '&copy; OpenStreetMap &copy; CARTO'
+                });
                 const streetsLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
                     maxZoom: 19, attribution: '&copy; OpenStreetMap'
                 });
@@ -374,7 +396,8 @@
                     'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
                     { maxZoom: 19, attribution: 'Tiles &copy; Esri' }
                 );
-                L.control.layers({ '🌑 Tungi': darkLayer, '🗺️ Sxema': streetsLayer, '🛰️ Sputnik': satelliteLayer }, {}, { position: 'topright', collapsed: true }).addTo(trackingMap);
+                L.control.layers({ '🌑 Tungi': darkLayer, '☀️ Yorug‘': lightLayer, '🗺️ Sxema': streetsLayer, '🛰️ Sputnik': satelliteLayer }, {}, { position: 'topright', collapsed: true }).addTo(trackingMap);
+                if (window.UIMode) { UIMode.attachMapTheme(trackingMap, darkLayer, lightLayer); } else { darkLayer.addTo(trackingMap); }
             }
             setTimeout(() => { if (trackingMap) trackingMap.invalidateSize(); }, 100);
 
