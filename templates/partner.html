@@ -12,16 +12,25 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <script>try{var __bg=localStorage.getItem('panel_bg');if(__bg)document.documentElement.setAttribute('data-bg',__bg);}catch(e){}</script>
     <style>
         :root {
             --accent: #6366f1;
             --accent-dark: #4338ca;
             --obsidian: #05060a;
         }
+
+        /* ============================================================
+           FON MAVZULARI — Obsidian (standart) / Aurora / Sunset / Midnight
+           <html data-bg="..."> orqali almashadi, tanlov brauzerda eslab qolinadi.
+           ============================================================ */
+        html[data-bg="aurora"]   { --obsidian:#03110f; --top-glow:#0b2a2480; --indigo:#14b8a6; --emerald:#a3e635; --indigo-glow:#14b8a6; --emerald-glow:#a3e635; --amber-glow:#22d3ee; }
+        html[data-bg="sunset"]   { --obsidian:#0e0610; --top-glow:#2a103080; --indigo:#f43f5e; --emerald:#fb923c; --indigo-glow:#f43f5e; --emerald-glow:#fb923c; --amber-glow:#facc15; }
+        html[data-bg="midnight"] { --obsidian:#040816; --top-glow:#0a1a4080; --indigo:#3b82f6; --emerald:#22d3ee; --indigo-glow:#3b82f6; --emerald-glow:#22d3ee; --amber-glow:#a78bfa; }
         * { font-family: 'Plus Jakarta Sans', 'Inter', -apple-system, sans-serif; }
         html, body { background: var(--obsidian); }
         body {
-            background: radial-gradient(ellipse at top, #12142080 0%, #05060a 55%), var(--obsidian);
+            background: radial-gradient(ellipse at top, var(--top-glow, #12142080) 0%, var(--obsidian) 55%), var(--obsidian);
             overscroll-behavior-y: contain;
         }
 
@@ -35,7 +44,7 @@
 
         .orb { position: fixed; border-radius: 50%; filter: blur(85px); opacity: .3; pointer-events: none; z-index: 0; }
         .orb-1 { width: 320px; height: 320px; background: radial-gradient(circle, var(--accent), transparent 70%); top: -90px; right: -80px; animation: float1 18s ease-in-out infinite; }
-        .orb-2 { width: 260px; height: 260px; background: radial-gradient(circle, #34d399, transparent 70%); bottom: 5%; left: -100px; animation: float2 22s ease-in-out infinite; }
+        .orb-2 { width: 260px; height: 260px; background: radial-gradient(circle, var(--emerald, #34d399), transparent 70%); bottom: 5%; left: -100px; animation: float2 22s ease-in-out infinite; }
         @keyframes float1 { 0%,100% { transform: translate(0,0); } 50% { transform: translate(-40px,50px); } }
         @keyframes float2 { 0%,100% { transform: translate(0,0); } 50% { transform: translate(40px,-40px); } }
 
@@ -122,6 +131,11 @@
                         <button onclick="setTheme('#f43f5e','#be123c')" class="w-6 h-6 rounded-full bg-rose-500 border-2 border-white/50 shadow"></button>
                         <button onclick="setTheme('#f59e0b','#b45309')" class="w-6 h-6 rounded-full bg-amber-500 border-2 border-white/50 shadow"></button>
                         <button onclick="setTheme('#38bdf8','#0369a1')" class="w-6 h-6 rounded-full bg-sky-500 border-2 border-white/50 shadow"></button>
+                        <span class="w-px bg-white/20 mx-1"></span>
+                        <button onclick="setPanelBg('obsidian')" title="Obsidian" class="w-6 h-6 rounded-md border-2 border-white/50" style="background:linear-gradient(135deg,#6366f1,#05060a)"></button>
+                        <button onclick="setPanelBg('aurora')" title="Aurora" class="w-6 h-6 rounded-md border-2 border-white/50" style="background:linear-gradient(135deg,#14b8a6,#03110f)"></button>
+                        <button onclick="setPanelBg('sunset')" title="Sunset" class="w-6 h-6 rounded-md border-2 border-white/50" style="background:linear-gradient(135deg,#f43f5e,#0e0610)"></button>
+                        <button onclick="setPanelBg('midnight')" title="Midnight" class="w-6 h-6 rounded-md border-2 border-white/50" style="background:linear-gradient(135deg,#3b82f6,#040816)"></button>
                     </div>
                 </div>
                 <a href="/logout" class="text-[11px] text-slate-400 hover:text-white transition-colors underline underline-offset-2">Chiqish</a>
@@ -372,7 +386,7 @@
                     <label class="block text-xs font-semibold text-slate-400 mb-2">Yangi buyurtma signali</label>
                     <div class="grid grid-cols-3 gap-2">
                         {% for sound_id, sound_label in [("chime1", "🔔 Signal 1"), ("chime2", "🔔🔔 Signal 2"), ("chime3", "🎵 Signal 3")] %}
-                        <label class="flex flex-col items-center gap-1 p-2.5 rounded-lg cursor-pointer glass-input {% if partner.notification_sound == sound_id or (not partner.notification_sound and sound_id == 'chime1') %}accent-border{% endif %}" style= "{% if partner.notification_sound == sound_id or (not partner.notification_sound and sound_id == 'chime1') %}background:color-mix(in srgb, var(--accent) 15%, transparent);{% endif %}">
+                        <label class="flex flex-col items-center gap-1 p-2.5 rounded-lg cursor-pointer glass-input {% if partner.notification_sound == sound_id or (not partner.notification_sound and sound_id == 'chime1') %}accent-border{% endif %}" style="{% if partner.notification_sound == sound_id or (not partner.notification_sound and sound_id == 'chime1') %}background:color-mix(in srgb, var(--accent) 15%, transparent);{% endif %}">
                             <input type="radio" name="notification_sound" value="{{ sound_id }}" class="hidden sound-radio" {% if partner.notification_sound == sound_id or (not partner.notification_sound and sound_id == 'chime1') %}checked{% endif %}>
                             <span class="text-xs font-semibold">{{ sound_label }}</span>
                             <button type="button" onclick="playSound('{{ sound_id }}')" class="text-[10px] accent-text underline">Eshitib ko'rish</button>
@@ -388,6 +402,14 @@
     </div>
 
     <script>
+
+        // ---- FON MAVZUSI (Obsidian / Aurora / Sunset / Midnight) ----
+        function setPanelBg(name) {
+            document.documentElement.setAttribute('data-bg', name === 'obsidian' ? '' : name);
+            if (name === 'obsidian') document.documentElement.removeAttribute('data-bg');
+            try { localStorage.setItem('panel_bg', name === 'obsidian' ? '' : name); } catch (e) {}
+        }
+
         // ---- BO'LIMLAR (tab) ----
         function showTab(tabName) {
             document.querySelectorAll('.tab-page').forEach(el => el.classList.add('hidden'));

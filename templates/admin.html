@@ -158,6 +158,109 @@
         body.dark .kanban-card-sum { color: #a5b4fc; }
         .kanban-empty { font-size: .68rem; text-align: center; opacity: .45; padding: 1rem 0; }
 
+
+
+        /* ============================================================
+           OCHIQ (LIGHT) MAVZULAR — Indigo / Zumrad / Osmon / Atirgul / Oltin
+           Har biri o'z rang juftligi bilan: yumshoq gradient fon, oq
+           "shisha" kartochkalar, gradient header va tugmalar.
+           ============================================================ */
+        body[data-theme="indigo"]  { --t1:#4f46e5; --t2:#7c3aed; --tsoft:rgba(99,102,241,.16);  --tsoft2:rgba(167,139,250,.14); --tink:#4338ca; }
+        body[data-theme="emerald"] { --t1:#059669; --t2:#0d9488; --tsoft:rgba(16,185,129,.16);  --tsoft2:rgba(45,212,191,.14);  --tink:#047857; }
+        body[data-theme="sky"]     { --t1:#0284c7; --t2:#2563eb; --tsoft:rgba(14,165,233,.16);  --tsoft2:rgba(99,102,241,.12);  --tink:#0369a1; }
+        body[data-theme="rose"]    { --t1:#e11d48; --t2:#db2777; --tsoft:rgba(244,63,94,.15);   --tsoft2:rgba(251,146,60,.13);  --tink:#be123c; }
+        body[data-theme="amber"]   { --t1:#d97706; --t2:#ea580c; --tsoft:rgba(245,158,11,.18);  --tsoft2:rgba(244,63,94,.10);   --tink:#b45309; }
+
+        body:not(.dark) {
+            background:
+                radial-gradient(ellipse 900px 520px at 8% -8%, var(--tsoft, rgba(99,102,241,.14)), transparent 60%),
+                radial-gradient(ellipse 800px 500px at 105% 8%, var(--tsoft2, rgba(167,139,250,.12)), transparent 60%),
+                linear-gradient(180deg, #f6f7fb, #eef1f8) !important;
+            background-attachment: fixed !important;
+        }
+        body:not(.dark) #main-header {
+            background-image: linear-gradient(100deg, var(--t1, #4f46e5), var(--t2, #7c3aed)) !important;
+            box-shadow: 0 12px 30px -14px var(--t1, #4f46e5) !important;
+            border-bottom: 1px solid rgba(255,255,255,.25);
+        }
+        body:not(.dark) .card-bg {
+            background: rgba(255,255,255,.82) !important;
+            backdrop-filter: blur(14px);
+            -webkit-backdrop-filter: blur(14px);
+            border: 1px solid rgba(255,255,255,.9) !important;
+            border-radius: 1.15rem !important;
+            box-shadow: 0 18px 40px -22px rgba(30,41,90,.35), 0 2px 6px -2px rgba(30,41,90,.08) !important;
+            transition: transform .18s ease, box-shadow .18s ease;
+        }
+        body:not(.dark) .card-bg:hover { box-shadow: 0 24px 50px -22px rgba(30,41,90,.42), 0 2px 8px -2px rgba(30,41,90,.1) !important; }
+        body:not(.dark) .theme-title { color: var(--tink, #4338ca) !important; letter-spacing: -.01em; }
+        body:not(.dark) .theme-stat-number {
+            background-image: linear-gradient(135deg, var(--t1, #4f46e5), var(--t2, #7c3aed));
+            -webkit-background-clip: text; background-clip: text; color: transparent !important;
+        }
+        body:not(.dark) .theme-btn {
+            background-image: linear-gradient(135deg, var(--t1, #4f46e5), var(--t2, #7c3aed)) !important;
+            background-color: transparent !important;
+            box-shadow: 0 10px 22px -10px var(--t1, #4f46e5);
+            transition: transform .15s ease, box-shadow .2s ease, filter .2s ease;
+        }
+        body:not(.dark) .theme-btn:hover { filter: brightness(1.06); }
+        body:not(.dark) .theme-btn:active { transform: scale(.98); }
+        body:not(.dark) aside {
+            background: rgba(255,255,255,.7) !important;
+            backdrop-filter: blur(16px);
+            border-right: 1px solid rgba(255,255,255,.9) !important;
+            box-shadow: 8px 0 30px -24px rgba(30,41,90,.35);
+        }
+        body:not(.dark) .nav-btn { border-radius: .8rem; }
+        body:not(.dark) .nav-btn:hover { background: var(--tsoft, #eef2ff); }
+        body:not(.dark) .nav-btn.active {
+            background-image: linear-gradient(135deg, var(--t1, #4f46e5), var(--t2, #7c3aed)) !important;
+            background-color: transparent !important;
+            box-shadow: 0 10px 22px -10px var(--t1, #4f46e5);
+        }
+        body:not(.dark) input:focus, body:not(.dark) select:focus, body:not(.dark) textarea:focus {
+            outline: none; border-color: var(--t1, #4f46e5) !important; box-shadow: 0 0 0 3px var(--tsoft, rgba(99,102,241,.2));
+        }
+        body:not(.dark) thead th { background: var(--tsoft, rgba(99,102,241,.1)); }
+        body:not(.dark) tbody tr:hover td { background: rgba(99,102,241,.04); }
+        body:not(.dark) .kanban-col { background: rgba(255,255,255,.6); }
+        body:not(.dark) ::-webkit-scrollbar { width: 8px; height: 8px; }
+        body:not(.dark) ::-webkit-scrollbar-thumb { background: var(--tsoft, rgba(99,102,241,.3)); border-radius: 10px; }
+
+        /* ---- TRANZAKSIYALAR: katta va aniq ko'rinadigan ---- */
+        .tx-count-pill { font-size: .75rem; font-weight: 700; padding: .3rem .8rem; border-radius: 9999px; background: rgba(99,102,241,.12); color: #6366f1; }
+        .tx-summary { border-radius: 1rem; padding: 1rem 1.15rem; border: 1px solid rgba(0,0,0,.06); }
+        .tx-summary-label { font-size: .75rem; font-weight: 700; opacity: .75; margin-bottom: .2rem; }
+        .tx-summary-value { font-size: 1.6rem; font-weight: 900; line-height: 1.1; letter-spacing: -.02em; }
+        .tx-summary-value span { font-size: .8rem; font-weight: 700; opacity: .7; }
+        .tx-summary-in { background: linear-gradient(135deg, rgba(34,197,94,.14), rgba(34,197,94,.04)); color: #16a34a; border-color: rgba(34,197,94,.3); }
+        .tx-summary-out { background: linear-gradient(135deg, rgba(239,68,68,.14), rgba(239,68,68,.04)); color: #dc2626; border-color: rgba(239,68,68,.3); }
+        .tx-summary-net { background: linear-gradient(135deg, rgba(99,102,241,.14), rgba(99,102,241,.04)); color: #6366f1; border-color: rgba(99,102,241,.3); }
+        .tx-row { display: flex; align-items: center; gap: .9rem; padding: .95rem 1.1rem; border-radius: 1rem; border: 1px solid rgba(0,0,0,.07); border-left-width: 5px; transition: transform .15s ease, box-shadow .15s ease; }
+        .tx-row:hover { transform: translateX(3px); box-shadow: 0 10px 24px -14px rgba(0,0,0,.4); }
+        .tx-row-in { border-left-color: #22c55e; background: linear-gradient(90deg, rgba(34,197,94,.09), transparent 60%); }
+        .tx-row-out { border-left-color: #ef4444; background: linear-gradient(90deg, rgba(239,68,68,.09), transparent 60%); }
+        .tx-icon { width: 2.6rem; height: 2.6rem; border-radius: .85rem; display: flex; align-items: center; justify-content: center; font-size: 1.15rem; font-weight: 900; flex-shrink: 0; }
+        .tx-row-in .tx-icon { background: rgba(34,197,94,.18); color: #16a34a; }
+        .tx-row-out .tx-icon { background: rgba(239,68,68,.18); color: #dc2626; }
+        .tx-who { font-size: 1rem; font-weight: 800; display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+        .tx-badge { font-size: .65rem; font-weight: 800; padding: .12rem .55rem; border-radius: 9999px; text-transform: uppercase; letter-spacing: .04em; }
+        .tx-row-in .tx-badge { background: rgba(34,197,94,.2); color: #15803d; }
+        .tx-row-out .tx-badge { background: rgba(239,68,68,.2); color: #b91c1c; }
+        .tx-meta { font-size: .78rem; opacity: .6; margin-top: .15rem; }
+        .tx-amount { font-size: 1.45rem; font-weight: 900; white-space: nowrap; letter-spacing: -.02em; }
+        .tx-amount span { font-size: .75rem; font-weight: 700; opacity: .65; }
+        .tx-row-in .tx-amount { color: #16a34a; }
+        .tx-row-out .tx-amount { color: #dc2626; }
+        body.dark .tx-summary { border-color: rgba(255,255,255,.1); }
+        body.dark .tx-summary-in { color: #4ade80; } body.dark .tx-summary-out { color: #f87171; } body.dark .tx-summary-net { color: #a5b4fc; }
+        body.dark .tx-row { border-color: rgba(255,255,255,.09); }
+        body.dark .tx-row-in .tx-amount, body.dark .tx-row-in .tx-icon { color: #4ade80; }
+        body.dark .tx-row-out .tx-amount, body.dark .tx-row-out .tx-icon { color: #f87171; }
+        body.dark .tx-row-in .tx-badge { color: #86efac; } body.dark .tx-row-out .tx-badge { color: #fca5a5; }
+        @media (max-width: 640px) { .tx-amount { font-size: 1.15rem; } .tx-summary-value { font-size: 1.3rem; } }
+
         /* ---- Dashboard'dagi jonli grafik kartasi ---- */
         .chart-wrap { position: relative; height: 240px; }
     </style>
@@ -194,6 +297,8 @@
                 <button onclick="setTheme('indigo')" class="w-5 h-5 rounded-full bg-indigo-600 border-2 border-white"></button>
                 <button onclick="setTheme('emerald')" class="w-5 h-5 rounded-full bg-emerald-600 border-2 border-white"></button>
                 <button onclick="setTheme('sky')" class="w-5 h-5 rounded-full bg-sky-600 border-2 border-white"></button>
+                <button onclick="setTheme('rose')" class="w-5 h-5 rounded-full bg-rose-600 border-2 border-white"></button>
+                <button onclick="setTheme('amber')" class="w-5 h-5 rounded-full bg-amber-500 border-2 border-white"></button>
                 <button onclick="setTheme('dark')" class="w-5 h-5 rounded-full bg-gray-900 border-2 border-white"></button>
             </div>
             <span class="bg-green-500 text-xs font-bold px-3 py-1 rounded-full">Tizim Faol</span>
@@ -868,23 +973,53 @@
                 </form>
             </div>
 
-            <div class="card-bg bg-white p-6 rounded-xl shadow-md col-span-1">
-                <h2 class="theme-title text-lg font-bold mb-4 text-indigo-700">📜 Tranzaksiyalar Tarixi</h2>
-                <div class="overflow-y-auto max-h-80 space-y-2">
+            <!-- TRANZAKSIYALAR TARIXI — katta, aniq ko'rinadigan, butun kenglikda -->
+            <div class="card-bg bg-white p-6 rounded-2xl shadow-md col-span-1 md:col-span-2" id="transactions-panel">
+                {% set ns = namespace(dep=0, wd=0) %}
+                {% for tx in recent_transactions %}
+                    {% if tx.type.value == 'deposit' %}{% set ns.dep = ns.dep + tx.amount %}{% else %}{% set ns.wd = ns.wd + tx.amount %}{% endif %}
+                {% endfor %}
+
+                <div class="flex flex-wrap items-center justify-between gap-3 mb-5">
+                    <h2 class="theme-title text-2xl font-extrabold text-indigo-700">📜 Tranzaksiyalar Tarixi</h2>
+                    <span class="tx-count-pill">Oxirgi {{ recent_transactions|length }} ta amal</span>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
+                    <div class="tx-summary tx-summary-in">
+                        <p class="tx-summary-label">⬆ Jami to'ldirilgan</p>
+                        <p class="tx-summary-value">+{{ "{:,.0f}".format(ns.dep).replace(',', ' ') }} <span>so'm</span></p>
+                    </div>
+                    <div class="tx-summary tx-summary-out">
+                        <p class="tx-summary-label">⬇ Jami yechilgan</p>
+                        <p class="tx-summary-value">−{{ "{:,.0f}".format(ns.wd).replace(',', ' ') }} <span>so'm</span></p>
+                    </div>
+                    <div class="tx-summary tx-summary-net">
+                        <p class="tx-summary-label">⚖ Farq (sof)</p>
+                        <p class="tx-summary-value">{% if ns.dep - ns.wd >= 0 %}+{% else %}−{% endif %}{{ "{:,.0f}".format((ns.dep - ns.wd)|abs).replace(',', ' ') }} <span>so'm</span></p>
+                    </div>
+                </div>
+
+                <div class="overflow-y-auto max-h-[34rem] space-y-2.5 pr-1">
                     {% for tx in recent_transactions %}
-                    <div class="text-xs border-b pb-2 dark:border-gray-700">
-                        <div class="flex justify-between">
-                            <span class="font-semibold">
+                    <div class="tx-row {% if tx.type.value == 'deposit' %}tx-row-in{% else %}tx-row-out{% endif %}">
+                        <div class="tx-icon">{% if tx.type.value == 'deposit' %}⬆{% else %}⬇{% endif %}</div>
+                        <div class="min-w-0 flex-1">
+                            <p class="tx-who">
                                 {% if tx.user %}🛵 {{ tx.user.full_name }}{% elif tx.partner %}🏪 {{ tx.partner.brand_name }}{% else %}—{% endif %}
-                            </span>
-                            <span class="font-bold {% if tx.type.value == 'deposit' %}text-green-600{% else %}text-red-600{% endif %}">
-                                {% if tx.type.value == 'deposit' %}+{% else %}−{% endif %}{{ "%.0f"|format(tx.amount) }}
-                            </span>
+                                <span class="tx-badge">{% if tx.type.value == 'deposit' %}To'ldirildi{% else %}Yechildi{% endif %}</span>
+                            </p>
+                            <p class="tx-meta">
+                                {{ tx.note or 'Izohsiz' }} · 👤 {{ tx.created_by.full_name if tx.created_by else '—' }} · 🕐 {{ tx.created_at|uzb_time('%d.%m.%Y %H:%M') }}
+                            </p>
                         </div>
-                        <p class="text-gray-400">{{ tx.note or '—' }} · {{ tx.created_by.full_name if tx.created_by else '—' }} · {{ tx.created_at|uzb_time('%d.%m %H:%M') }}</p>
+                        <div class="tx-amount">
+                            {% if tx.type.value == 'deposit' %}+{% else %}−{% endif %}{{ "{:,.0f}".format(tx.amount).replace(',', ' ') }}
+                            <span>so'm</span>
+                        </div>
                     </div>
                     {% else %}
-                    <p class="text-xs text-gray-400 text-center">Hozircha tranzaksiya yo'q</p>
+                    <p class="text-sm text-gray-400 text-center py-10">Hozircha tranzaksiya yo'q</p>
                     {% endfor %}
                 </div>
             </div>
@@ -1632,6 +1767,8 @@
             indigo: { header: 'bg-indigo-700', text: 'text-indigo-700', btn: 'bg-indigo-600 hover:bg-indigo-700' },
             emerald: { header: 'bg-emerald-700', text: 'text-emerald-700', btn: 'bg-emerald-600 hover:bg-emerald-700' },
             sky: { header: 'bg-sky-700', text: 'text-sky-700', btn: 'bg-sky-600 hover:bg-sky-700' },
+            rose: { header: 'bg-rose-700', text: 'text-rose-700', btn: 'bg-rose-600 hover:bg-rose-700' },
+            amber: { header: 'bg-amber-700', text: 'text-amber-700', btn: 'bg-amber-600 hover:bg-amber-700' },
             dark: { header: 'bg-gray-900', text: 'text-indigo-400', btn: 'bg-indigo-600 hover:bg-indigo-500' }
         };
 
@@ -1643,6 +1780,8 @@
             const themeTexts = document.querySelectorAll('.theme-text');
             const statNumbers = document.querySelectorAll('.theme-stat-number');
             const cards = document.querySelectorAll('.card-bg');
+            if (!themes[themeName]) themeName = 'dark';
+            body.dataset.theme = themeName;  // CSS shu atribut bo'yicha har bir mavzuni bezaydi
 
             if (themeName === 'dark') {
                 body.classList.add('dark', 'bg-gray-950', 'text-gray-100');

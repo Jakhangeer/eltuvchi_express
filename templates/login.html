@@ -9,6 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <script>try{var __bg=localStorage.getItem('panel_bg');if(__bg)document.documentElement.setAttribute('data-bg',__bg);}catch(e){}</script>
     <style>
         :root {
             --obsidian: #05060a;
@@ -16,10 +17,18 @@
             --emerald-glow: #34d399;
             --amber-glow: #fbbf24;
         }
+
+        /* ============================================================
+           FON MAVZULARI — Obsidian (standart) / Aurora / Sunset / Midnight
+           <html data-bg="..."> orqali almashadi, tanlov brauzerda eslab qolinadi.
+           ============================================================ */
+        html[data-bg="aurora"]   { --obsidian:#03110f; --top-glow:#0b2a2480; --indigo:#14b8a6; --emerald:#a3e635; --indigo-glow:#14b8a6; --emerald-glow:#a3e635; --amber-glow:#22d3ee; }
+        html[data-bg="sunset"]   { --obsidian:#0e0610; --top-glow:#2a103080; --indigo:#f43f5e; --emerald:#fb923c; --indigo-glow:#f43f5e; --emerald-glow:#fb923c; --amber-glow:#facc15; }
+        html[data-bg="midnight"] { --obsidian:#040816; --top-glow:#0a1a4080; --indigo:#3b82f6; --emerald:#22d3ee; --indigo-glow:#3b82f6; --emerald-glow:#22d3ee; --amber-glow:#a78bfa; }
         * { font-family: 'Plus Jakarta Sans', 'Inter', -apple-system, sans-serif; }
 
         body {
-            background: radial-gradient(ellipse at top, #12142080 0%, #05060a 60%), var(--obsidian);
+            background: radial-gradient(ellipse at top, var(--top-glow, #12142080) 0%, var(--obsidian) 60%), var(--obsidian);
             overscroll-behavior: none;
         }
 

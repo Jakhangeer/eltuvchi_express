@@ -24,6 +24,15 @@
         body.theme-dark { background-color: #05060a; color: #f8fafc; }
         body.theme-gold { background-color: #fefce8; color: #422006; }
         body.theme-green { background-color: #f0fdf4; color: #052e16; }
+        body.theme-ocean { background-color: #f0f9ff; color: #0c4a6e; }
+        body.theme-rose { background-color: #fff1f2; color: #4c0519; }
+
+        body.theme-ocean .card-bg { background-color: #ffffff; border-color: #bae6fd; }
+        body.theme-ocean .text-title { color: #0c4a6e; }
+        body.theme-ocean .text-sub { color: #0369a1; }
+        body.theme-rose .card-bg { background-color: #ffffff; border-color: #fecdd3; }
+        body.theme-rose .text-title { color: #881337; }
+        body.theme-rose .text-sub { color: #be123c; }
 
         body.theme-dark .card-bg { background-color: #1e293b; border-color: #334155; }
         body.theme-dark .text-title { color: #f8fafc; }
@@ -100,6 +109,62 @@
         .leaflet-marker-icon { transition: transform 1.1s linear; }
         .leaflet-popup-content-wrapper, .leaflet-popup-tip { background: #12131e; color: #e5e7eb; }
 
+
+        /* ============================================================
+           OCHIQ MAVZULAR — Standart / Oltin / Yashil / Okean / Atirgul
+           Yumshoq gradient fon, "shisha" kartochkalar, rangli header,
+           savat paneli va tugmalar — har bir mavzu o'z jozibasi bilan.
+           ============================================================ */
+        body.theme-default { --a1:#6366f1; --a2:#8b5cf6; --wash1:rgba(99,102,241,.13);  --wash2:rgba(245,158,11,.10);  --shadow:30,41,90; }
+        body.theme-gold    { --a1:#f59e0b; --a2:#ea580c; --wash1:rgba(245,158,11,.20);  --wash2:rgba(234,179,8,.14);   --shadow:120,72,10; }
+        body.theme-green   { --a1:#10b981; --a2:#0d9488; --wash1:rgba(16,185,129,.18);  --wash2:rgba(132,204,22,.12);  --shadow:10,80,50; }
+        body.theme-ocean   { --a1:#0ea5e9; --a2:#2563eb; --wash1:rgba(14,165,233,.18);  --wash2:rgba(99,102,241,.12);  --shadow:10,60,110; }
+        body.theme-rose    { --a1:#f43f5e; --a2:#db2777; --wash1:rgba(244,63,94,.16);   --wash2:rgba(251,146,60,.12);  --shadow:120,20,50; }
+
+        body.theme-default, body.theme-gold, body.theme-green, body.theme-ocean, body.theme-rose {
+            background-image:
+                radial-gradient(ellipse 700px 420px at 0% -6%, var(--wash1), transparent 62%),
+                radial-gradient(ellipse 640px 420px at 100% 4%, var(--wash2), transparent 62%);
+            background-attachment: fixed;
+        }
+        body.theme-default .card-bg, body.theme-gold .card-bg, body.theme-green .card-bg,
+        body.theme-ocean .card-bg, body.theme-rose .card-bg {
+            border-radius: 1.25rem !important;
+            box-shadow: 0 18px 40px -24px rgba(var(--shadow), .35), 0 2px 6px -2px rgba(var(--shadow), .08) !important;
+            transition: transform .18s ease, box-shadow .18s ease;
+        }
+        body.theme-default #app-header, body.theme-gold #app-header, body.theme-green #app-header,
+        body.theme-ocean #app-header, body.theme-rose #app-header {
+            background: linear-gradient(100deg, color-mix(in srgb, var(--a1) 14%, white), color-mix(in srgb, var(--a2) 10%, white)) !important;
+            border-bottom: 1px solid color-mix(in srgb, var(--a1) 22%, transparent) !important;
+            box-shadow: 0 10px 30px -18px rgba(var(--shadow), .5) !important;
+        }
+        body.theme-default #theme-menu, body.theme-gold #theme-menu, body.theme-green #theme-menu,
+        body.theme-ocean #theme-menu, body.theme-rose #theme-menu { background: rgba(255,255,255,.95) !important; backdrop-filter: blur(12px); }
+        body.theme-default #cart-bar, body.theme-gold #cart-bar, body.theme-green #cart-bar,
+        body.theme-ocean #cart-bar, body.theme-rose #cart-bar {
+            background: linear-gradient(135deg, var(--a1), var(--a2)) !important;
+            border-color: rgba(255,255,255,.35) !important;
+            box-shadow: 0 20px 40px -14px color-mix(in srgb, var(--a1) 70%, transparent) !important;
+        }
+        body.theme-default #cart-bar .text-amber-400, body.theme-gold #cart-bar .text-amber-400, body.theme-green #cart-bar .text-amber-400,
+        body.theme-ocean #cart-bar .text-amber-400, body.theme-rose #cart-bar .text-amber-400 { color: rgba(255,255,255,.85) !important; }
+        body.theme-default #cart-bar .bg-amber-500, body.theme-gold #cart-bar .bg-amber-500, body.theme-green #cart-bar .bg-amber-500,
+        body.theme-ocean #cart-bar .bg-amber-500, body.theme-rose #cart-bar .bg-amber-500 { background: rgba(255,255,255,.22) !important; box-shadow: none !important; }
+        /* Asosiy tugmalar (amber) — mavzu rangiga moslashadi */
+        body.theme-green .bg-amber-500, body.theme-ocean .bg-amber-500, body.theme-rose .bg-amber-500 { background-image: linear-gradient(135deg, var(--a1), var(--a2)); background-color: transparent !important; }
+        body.theme-green .hover\:bg-amber-600:hover, body.theme-ocean .hover\:bg-amber-600:hover, body.theme-rose .hover\:bg-amber-600:hover { filter: brightness(1.08); }
+        body.theme-green .text-amber-600, body.theme-green .text-amber-500 { color: #059669 !important; }
+        body.theme-ocean .text-amber-600, body.theme-ocean .text-amber-500 { color: #0284c7 !important; }
+        body.theme-rose .text-amber-600, body.theme-rose .text-amber-500 { color: #e11d48 !important; }
+        body.theme-green .bg-amber-50 { background-color: rgba(16,185,129,.12) !important; }
+        body.theme-ocean .bg-amber-50 { background-color: rgba(14,165,233,.12) !important; }
+        body.theme-rose .bg-amber-50 { background-color: rgba(244,63,94,.1) !important; }
+        body.theme-gold .bg-amber-500 { background-image: linear-gradient(135deg, #f59e0b, #ea580c); background-color: transparent !important; }
+        body.theme-default .swiper, body.theme-gold .swiper, body.theme-green .swiper, body.theme-ocean .swiper, body.theme-rose .swiper {
+            box-shadow: 0 22px 44px -24px rgba(var(--shadow), .55);
+        }
+
         /* Kategoriya belgilarining tanlangan holati (amber) — glass fonda ham yaxshi ko'rinishi uchun */
         body.theme-dark .category-chip-active { box-shadow: 0 8px 20px -6px rgba(245,158,11,.55); }
 
@@ -153,7 +218,7 @@
             </div>
         </div>
 
-        <div id="theme-menu" class="hidden bg-white border-t border-slate-100 px-4 py-3 flex justify-around items-center text-xs font-bold shadow-inner">
+        <div id="theme-menu" class="hidden bg-white border-t border-slate-100 px-4 py-3 flex flex-wrap justify-around items-center gap-2 text-xs font-bold shadow-inner">
             <button onclick="setTheme('theme-default')" class="flex items-center space-x-1 px-2.5 py-1.5 rounded-xl bg-slate-100 text-slate-700">
                 <span class="w-3 h-3 rounded-full bg-slate-200 border"></span>
                 <span>Standart</span>
@@ -169,6 +234,14 @@
             <button onclick="setTheme('theme-green')" class="flex items-center space-x-1 px-2.5 py-1.5 rounded-xl bg-emerald-100 text-emerald-900">
                 <span class="w-3 h-3 rounded-full bg-emerald-500"></span>
                 <span>Yashil</span>
+            </button>
+            <button onclick="setTheme('theme-ocean')" class="flex items-center space-x-1 px-2.5 py-1.5 rounded-xl bg-sky-100 text-sky-900">
+                <span class="w-3 h-3 rounded-full bg-sky-500"></span>
+                <span>Okean</span>
+            </button>
+            <button onclick="setTheme('theme-rose')" class="flex items-center space-x-1 px-2.5 py-1.5 rounded-xl bg-rose-100 text-rose-900">
+                <span class="w-3 h-3 rounded-full bg-rose-500"></span>
+                <span>Atirgul</span>
             </button>
         </div>
     </header>

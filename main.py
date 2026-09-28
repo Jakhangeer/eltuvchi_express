@@ -3,6 +3,7 @@ import os
 import html
 import uuid
 import math
+import traceback
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
 from typing import List, Optional
@@ -23,6 +24,7 @@ from telegram_bot import (
     send_telegram_message,
     contact_request_keyboard,
     normalize_phone,
+    phone_tail,
     set_telegram_webhook,
     get_telegram_webhook_info,
     validate_telegram_init_data,
@@ -129,6 +131,29 @@ async def seed_default_data():
 
 
 # ==================== STARTUP / SHUTDOWN ====================
+def _relax_legacy_not_null_columns(sync_conn):
+    """Modelda ENDI yo'q, lekin bazada eski "NOT NULL" ustun bo'lib qolgan
+    bo'lsa (masalan banners.image_url), yangi qator qo'shishda Postgres
+    xato beradi — bu "Internal Server Error"ning keng tarqalgan sababi
+    (masalan rasm bilan banner qo'shganda). Bunday ustunlarni NULL
+    qabul qiladigan qilamiz. Hech narsa o'chirilmaydi."""
+    inspector = sa_inspect(sync_conn)
+    for table in Base.metadata.sorted_tables:
+        if table.name not in inspector.get_table_names():
+            continue
+        model_columns = {c.name for c in table.columns}
+        for col in inspector.get_columns(table.name):
+            if col["name"] in model_columns or col.get("nullable", True):
+                continue
+            if col.get("default") is not None or col.get("autoincrement"):
+                continue
+            try:
+                sync_conn.execute(text(f'ALTER TABLE "{table.name}" ALTER COLUMN "{col["name"]}" DROP NOT NULL'))
+                print(f"[AUTO-MIGRATE] NOT NULL olib tashlandi (eski ustun): {table.name}.{col['name']}")
+            except Exception as e:
+                print(f"[AUTO-MIGRATE OGOHLANTIRISH] {table.name}.{col['name']}: {e}")
+
+
 async def auto_sync_missing_columns(conn):
     """
     Modeldagi (models.py) har bir ustunni bazadagi haqiqiy holat bilan
@@ -190,6 +215,7 @@ async def auto_sync_missing_columns(conn):
                     print(f"[AUTO-MIGRATE OGOHLANTIRISH] {table.name}.{column.name} qo'shilmadi: {e}")
 
     await conn.run_sync(_sync_columns)
+    await conn.run_sync(_relax_legacy_not_null_columns)
 
 
 @asynccontextmanager
@@ -202,6 +228,26 @@ async def lifespan(app: FastAPI):
 
     print("PostgreSQL jadvallari tayyor va sinxronlashtirildi.")
     await seed_default_data()
+
+    # ---- TELEGRAM WEBHOOK'NI AVTOMATIK ULASH ----
+    # Avval buni har safar qo'lda (/telegram/set-webhook) qilish kerak edi —
+    # deploy'dan keyin (yoki manzil o'zgarganda) unutilsa, "/start bosilganda
+    # javob kelmaydi". Endi server ishga tushganda o'zi ulaydi.
+    # Render'da RENDER_EXTERNAL_URL avtomatik beriladi; boshqa hostingda
+    # PUBLIC_BASE_URL=https://sizning-domen.uz deb qo'shing.
+    try:
+        public_url = get_public_base_url(None)
+        if os.getenv("TELEGRAM_BOT_TOKEN") and public_url.startswith("https://"):
+            wh = await set_telegram_webhook(public_url + "/telegram/webhook")
+            print(f"[TELEGRAM WEBHOOK] {public_url}/telegram/webhook -> {wh}")
+        elif os.getenv("TELEGRAM_BOT_TOKEN"):
+            print("[TELEGRAM WEBHOOK] O'TKAZIB YUBORILDI: PUBLIC_BASE_URL (https) topilmadi. "
+                  "Render'da RENDER_EXTERNAL_URL avtomatik bo'ladi; boshqa joyda PUBLIC_BASE_URL kiriting "
+                  "yoki brauzerda /telegram/set-webhook ni oching.")
+        else:
+            print("[TELEGRAM WEBHOOK] TELEGRAM_BOT_TOKEN topilmadi — bot ishlamaydi.")
+    except Exception as e:
+        print(f"[TELEGRAM WEBHOOK XATOSI] {e!r}")
     yield
     # Server to'xtatilganda Telegram uchun ochilgan HTTP ulanishlarni yopamiz
     await close_telegram_bot_client()
@@ -269,6 +315,22 @@ async def csrf_origin_check_middleware(request: Request, call_next):
             # — buni ham rad etish, real foydalanuvchilarni bexosdan
             # tizimdan chiqarib qo'yish xavfini oshiradi.
     return await call_next(request)
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    """Kutilmagan xatolik yuz berganda "Internal Server Error" o'rniga
+    NIMA bo'lganini ko'rsatadi (va server logiga to'liq izini yozadi) —
+    shunda "banner yuklansa xato beradi" kabi muammolarni topish oson bo'ladi."""
+    print(f"[500 XATO] {request.method} {request.url.path}: {exc!r}")
+    traceback.print_exc()
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": f"Server xatosi: {type(exc).__name__}: {str(exc)[:300]}",
+            "path": request.url.path,
+        },
+    )
 
 
 @app.exception_handler(RedirectToLogin)
@@ -410,12 +472,10 @@ async def login_submit(
     # kelsa, kirish beriladi. Qaysi panel(lar)ga kira olishi keyin
     # PROFIL MAVJUDLIGI (courier_profile / partner_profile) orqali
     # aniqlanadi — bitta odam bir nechtasiga ega bo'lishi mumkin.
-    result = await db.execute(
-        select(User)
-        .where(User.phone_number == phone_number)
-        .options(selectinload(User.courier_profile), selectinload(User.partner_profile))
+    user = await find_user_by_phone(
+        db, phone_number,
+        options=(selectinload(User.courier_profile), selectinload(User.partner_profile)),
     )
-    user = result.scalars().first()
 
     if not user or not user.is_active or not user.password_hash or not verify_password(password, user.password_hash):
         return templates.TemplateResponse(
@@ -525,7 +585,14 @@ async def admin_dashboard(
     products = products_query.scalars().all()
 
     # ---- KURYERLAR (shahar bo'yicha filtrlanadi) ----
-    couriers_stmt = select(User).where(User.role == UserRole.COURIER, User.is_active == True)
+    # DIQQAT: ko'p-rolli tizimda User.role har doim "client" bo'lib qoladi
+    # (qarang auth.py) — kimning kuryer ekanini FAQAT CourierProfile
+    # mavjudligi orqali (join) aniqlaymiz, User.role orqali EMAS.
+    couriers_stmt = (
+        select(User)
+        .join(CourierProfile, CourierProfile.user_id == User.id)
+        .where(User.is_active == True)
+    )
     if active_city_id is not None:
         couriers_stmt = couriers_stmt.where(User.city_id == active_city_id)
     couriers_query = await db.execute(couriers_stmt)
@@ -534,7 +601,7 @@ async def admin_dashboard(
 
     all_couriers_stmt = (
         select(User)
-        .where(User.role == UserRole.COURIER)
+        .join(CourierProfile, CourierProfile.user_id == User.id)
         .options(selectinload(User.courier_profile), selectinload(User.city))
         .order_by(User.created_at.desc())
     )
@@ -555,7 +622,19 @@ async def admin_dashboard(
             func.coalesce(func.sum(Order.total_price), 0).label("total_spent"),
         )
         .outerjoin(Order, Order.client_id == User.id)
-        .where(User.role == UserRole.CLIENT)
+        .where(
+            User.role == UserRole.CLIENT,
+            # Ko'p-rolli tizimda kuryer/hamkorlarning ham User.role'i
+            # "client" bo'lib qoladi — shu ro'yxatga ular ARALASHIB
+            # KETMASLIGI uchun CourierProfile/PartnerProfile'ga ega
+            # foydalanuvchilarni bu yerdan chetlatamiz (ular allaqachon
+            # o'z alohida — Kuryerlar / Do'konlar — bo'limlarida ko'rinadi).
+            # DIQQAT: subquery'da NULL bo'lsa, "NOT IN" BUTUN natijani bo'shatib
+            # yuboradi (SQL'ning mashhur tuzog'i). user_id'si bo'sh do'konlar
+            # (login berilmagan) bor — shuning uchun NULL'larni chiqarib tashlaymiz.
+            ~User.id.in_(select(CourierProfile.user_id).where(CourierProfile.user_id.isnot(None))),
+            ~User.id.in_(select(PartnerProfile.user_id).where(PartnerProfile.user_id.isnot(None))),
+        )
     )
     if active_city_id is not None:
         clients_stmt = clients_stmt.where(User.city_id == active_city_id)
@@ -1016,6 +1095,54 @@ def validate_pin(pin: str) -> None:
         raise HTTPException(status_code=400, detail="PIN aynan 4 ta raqamdan iborat bo'lishi kerak")
 
 
+async def find_user_by_phone(db: AsyncSession, raw_phone: str, *, options=None) -> Optional[User]:
+    """Telefon bo'yicha foydalanuvchini topadi: avval aniq (+998...) mos
+    kelish, bo'lmasa — eski/noto'g'ri formatda saqlangan yozuvlarni ham
+    oxirgi 9 raqam bo'yicha qidiradi (masalan '90 123 45 67')."""
+    normalized = normalize_phone(raw_phone)
+    if not normalized and not raw_phone:
+        return None
+
+    stmt = select(User).where(User.phone_number.in_([p for p in {normalized, raw_phone} if p]))
+    if options:
+        stmt = stmt.options(*options)
+    user = (await db.execute(stmt)).scalars().first()
+    if user:
+        return user
+
+    tail = phone_tail(raw_phone)
+    if len(tail) < 9:
+        return None
+    stmt = select(User).where(User.phone_number.like(f"%{tail[-4:]}"))
+    if options:
+        stmt = stmt.options(*options)
+    for candidate in (await db.execute(stmt)).scalars().all():
+        if phone_tail(candidate.phone_number) == tail:
+            return candidate
+    return None
+
+
+def get_public_base_url(request: Optional[Request] = None) -> str:
+    """Serverning tashqi (https) manzili. Render kabi proxy ortida
+    request.base_url ko'pincha 'http://' bo'lib qoladi — Telegram esa
+    webhook va Mini App tugmalari uchun FAQAT https talab qiladi, shuning
+    uchun (1) PUBLIC_BASE_URL / RENDER_EXTERNAL_URL muhit o'zgaruvchisi,
+    (2) X-Forwarded-Proto sarlavhasi ishlatiladi va http avtomatik
+    https'ga almashtiriladi (localhost bundan mustasno)."""
+    env_url = os.getenv("PUBLIC_BASE_URL") or os.getenv("RENDER_EXTERNAL_URL")
+    if env_url:
+        return env_url.rstrip("/")
+    if request is None:
+        return ""
+    base = str(request.base_url).rstrip("/")
+    forwarded_proto = request.headers.get("x-forwarded-proto")
+    if forwarded_proto == "https" and base.startswith("http://"):
+        base = "https://" + base[len("http://"):]
+    elif base.startswith("http://") and "localhost" not in base and "127.0.0.1" not in base:
+        base = "https://" + base[len("http://"):]
+    return base
+
+
 async def find_or_create_login_user(
     db: AsyncSession,
     phone_number: str,
@@ -1029,8 +1156,13 @@ async def find_or_create_login_user(
     operator (ADMIN) ga tegishli bo'lsa — xavfsizlik uchun rad etamiz."""
     validate_pin(password)
 
-    result = await db.execute(select(User).where(User.phone_number == phone_number))
-    user = result.scalars().first()
+    # DIQQAT: telefon HAR DOIM yagona formatga (+998XXXXXXXXX) keltiriladi.
+    # Aks holda admin paneldan "90 123 45 67" deb kiritilgan kuryer/hamkor,
+    # keyin botda kontakt ulashganda ("+998901234567") BOSHQA odam deb
+    # hisoblanib, alohida MIJOZ akkaunti yaratilib ketardi — aynan shu
+    # "kuryer/hamkor mijozlarga qo'shilib ketyapti" xatosining sababi edi.
+    phone_number = normalize_phone(phone_number) or phone_number
+    user = await find_user_by_phone(db, phone_number)
 
     if user:
         if user.role in (UserRole.OWNER, UserRole.ADMIN):
@@ -1039,6 +1171,7 @@ async def find_or_create_login_user(
                 detail="Bu telefon raqami admin/operator akkauntiga tegishli — uni kuryer/hamkor qilib bo'lmaydi",
             )
         user.password_hash = hash_password(password)
+        user.phone_number = phone_number  # eski, noto'g'ri formatni ham tuzatib qo'yamiz
         if city_id is not None and user.city_id is None:
             user.city_id = city_id
         return user
@@ -1223,7 +1356,6 @@ async def auto_assign_nearest_courier(db: AsyncSession, order: Order) -> Optiona
         .join(CourierProfile, CourierProfile.user_id == User.id)
         .options(selectinload(User.courier_profile))
         .where(
-            User.role == UserRole.COURIER,
             User.is_active == True,
             CourierProfile.is_approved == True,
             CourierProfile.is_online == True,
@@ -1323,16 +1455,35 @@ async def create_banner(
     if not image_data and not text_content.strip():
         raise HTTPException(status_code=400, detail="Banner uchun rasm yoki matn kiritilishi shart")
 
-    db.add(Banner(
-        title=title or None,
-        text_content=text_content or None,
-        link_url=link_url or None,
-        display_order=display_order,
-        image_data=image_data,
-        image_mime=image_mime,
-        is_active=True,
-    ))
-    await db.commit()
+    try:
+        db.add(Banner(
+            title=title or None,
+            text_content=text_content or None,
+            link_url=link_url or None,
+            display_order=display_order,
+            image_data=image_data,
+            image_mime=image_mime,
+            is_active=True,
+        ))
+        await db.commit()
+    except Exception as e:
+        await db.rollback()
+        # DIQQAT: agar bu yerda "column ... does not exist" degan xato
+        # chiqsa — bu bazada "banners" jadvali image_data/image_mime
+        # ustunlarisiz, ESKI holatda qolib ketgan degani (avtomatik
+        # migratsiya ALTER TABLE'ni startup paytida logda ko'rinmas holda
+        # o'tkazib yuborgan bo'lishi mumkin — qarang auto_sync_missing_columns
+        # va server ishga tushgandagi "[AUTO-MIGRATE OGOHLANTIRISH]" satrlari).
+        print(f"[BANNER YARATISH XATOSI] {e!r}")
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Bannerni saqlab bo'lmadi. Agar bu birinchi marta rasm bilan banner "
+                "qo'shishga urinish bo'lsa — serverni qayta ishga tushirib (Render'da "
+                "'Manual Deploy' yoki 'Restart') qayta urinib ko'ring, avtomatik "
+                "migratsiya bazani sozlab qo'yishi kerak."
+            ),
+        )
     return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -1657,7 +1808,7 @@ async def create_partner(
     # shunda u qayta PIN kiritmasdan, Mini App orqali kirib ketaveradi.
     if partner_user and partner_user.telegram_id:
         try:
-            partner_url = str(request.base_url).rstrip("/") + "/login?next=/partner"
+            partner_url = get_public_base_url(request) + "/login?next=/partner"
             await send_telegram_message(
                 partner_user.telegram_id,
                 f"🎉 <b>{brand_name}</b> do'koningiz tizimga to'liq qo'shildi!\n\n"
@@ -1735,7 +1886,7 @@ async def set_partner_login(
     if partner.user_id:
         # Allaqachon akkaunti bor — parol/telefonni yangilaymiz
         validate_pin(login_password)
-        partner.user.phone_number = login_phone
+        partner.user.phone_number = normalize_phone(login_phone) or login_phone
         partner.user.password_hash = hash_password(login_password)
         partner.user.is_active = True
     else:
@@ -1888,7 +2039,6 @@ async def couriers_live_locations(
         .join(CourierProfile, CourierProfile.user_id == User.id)
         .options(selectinload(User.courier_profile))
         .where(
-            User.role == UserRole.COURIER,
             User.is_active == True,
             CourierProfile.is_online == True,
             CourierProfile.latitude.is_not(None),
@@ -2024,7 +2174,8 @@ async def update_courier(
 ):
     user_query = await db.execute(
         select(User)
-        .where(User.id == user_id, User.role == UserRole.COURIER)
+        .join(CourierProfile, CourierProfile.user_id == User.id)
+        .where(User.id == user_id)
         .options(selectinload(User.courier_profile))
     )
     courier_user = user_query.scalars().first()
@@ -2039,7 +2190,7 @@ async def update_courier(
             raise HTTPException(status_code=400, detail="Bu telefon raqami boshqa foydalanuvchiga tegishli")
 
     courier_user.full_name = full_name
-    courier_user.phone_number = phone_number
+    courier_user.phone_number = normalize_phone(phone_number) or phone_number
     if courier_user.courier_profile:
         courier_user.courier_profile.transport_type = transport_type
 
@@ -2057,7 +2208,9 @@ async def update_courier(
 
 @couriers_router.post("/{user_id}/toggle")
 async def toggle_courier(user_id: int, db: AsyncSession = Depends(get_db)):
-    user_query = await db.execute(select(User).where(User.id == user_id, User.role == UserRole.COURIER))
+    user_query = await db.execute(
+        select(User).join(CourierProfile, CourierProfile.user_id == User.id).where(User.id == user_id)
+    )
     courier_user = user_query.scalars().first()
     if not courier_user:
         raise HTTPException(status_code=404, detail="Kuryer topilmadi")
@@ -2069,7 +2222,9 @@ async def toggle_courier(user_id: int, db: AsyncSession = Depends(get_db)):
 
 @couriers_router.post("/{user_id}/delete")
 async def delete_courier(user_id: int, db: AsyncSession = Depends(get_db)):
-    user_query = await db.execute(select(User).where(User.id == user_id, User.role == UserRole.COURIER))
+    user_query = await db.execute(
+        select(User).join(CourierProfile, CourierProfile.user_id == User.id).where(User.id == user_id)
+    )
     courier_user = user_query.scalars().first()
     if not courier_user:
         raise HTTPException(status_code=404, detail="Kuryer topilmadi")
@@ -2128,8 +2283,8 @@ async def create_operator(
     city_id: int = Form(...),
     db: AsyncSession = Depends(get_db),
 ):
-    existing = await db.execute(select(User).where(User.phone_number == phone_number))
-    if existing.scalars().first():
+    phone_number = normalize_phone(phone_number) or phone_number
+    if await find_user_by_phone(db, phone_number):
         raise HTTPException(status_code=400, detail="Bu telefon raqami allaqachon band")
 
     new_operator = User(
@@ -2184,7 +2339,8 @@ async def update_courier_balance(
 
     result = await db.execute(
         select(User)
-        .where(User.id == user_id, User.role == UserRole.COURIER)
+        .join(CourierProfile, CourierProfile.user_id == User.id)
+        .where(User.id == user_id)
         .options(selectinload(User.courier_profile))
     )
     courier = result.scalars().first()
@@ -2523,6 +2679,23 @@ async def telegram_webhook(request: Request, db: AsyncSession = Depends(get_db))
     text = message.get("text", "")
     contact = message.get("contact")
 
+    # DIQQAT: pastdagi butun blok endi try/except ICHIDA — sabab: agar biror
+    # kutilmagan xato (masalan bazaga vaqtincha ulanib bo'lmasa) yuz bersa-yu,
+    # bu yerda ushlanmasa, FastAPI Telegram'ga 500 qaytaradi. Telegram esa
+    # bir nechta ketma-ket 500'dan keyin webhook'ni AVTOMATIK to'xtatib
+    # qo'yishi mumkin — shundan keyin "/start bosilganda hech qanday javob
+    # kelmaydi" degan holat butunlay, hamma uchun boshlanadi, garchi asl
+    # sabab bitta vaqtinchalik xato bo'lgan bo'lsa ham. Shu sababli bu yerda
+    # xatoni albatta ushlaymiz, logga yozamiz va baribir Telegram'ga
+    # "ok" qaytaramiz — webhook doim tirik qolishi uchun.
+    try:
+        await _handle_telegram_text_message(chat_id, text, contact, message, request, db)
+    except Exception as e:
+        print(f"[TELEGRAM XABAR XATOSI] chat_id={chat_id} text={text!r} xato={e!r}")
+    return {"ok": True}
+
+
+async def _handle_telegram_text_message(chat_id, text, contact, message, request, db):
     if text.startswith("/start"):
         parts = text.split(maxsplit=1)
         referral_code_payload = parts[1].strip() if len(parts) > 1 else None
@@ -2565,7 +2738,7 @@ async def telegram_webhook(request: Request, db: AsyncSession = Depends(get_db))
                 terms_accepted_at=datetime.utcnow(),
             ))
             await db.commit()
-            courier_login_url = str(request.base_url).rstrip("/") + "/login?next=/courier"
+            courier_login_url = get_public_base_url(request) + "/login?next=/courier"
             await send_telegram_message(
                 chat_id,
                 "🎉 Tabriklaymiz — endi siz kuryersiz!\n\n"
@@ -2609,10 +2782,11 @@ async def telegram_webhook(request: Request, db: AsyncSession = Depends(get_db))
 
     if contact:
         phone = normalize_phone(contact.get("phone_number", ""))
-        result = await db.execute(select(User).where(User.phone_number == phone))
-        user = result.scalars().first()
+        # Admin paneldan boshqa formatda ("90 123 45 67") kiritilgan kuryer/hamkor
+        # ham topilishi uchun — tolerant qidiruv (oxirgi 9 raqam bo'yicha).
+        user = await find_user_by_phone(db, phone)
 
-        shop_url = str(request.base_url).rstrip("/") + "/shop"
+        shop_url = get_public_base_url(request) + "/shop"
         role_choice_keyboard = {
             "inline_keyboard": [
                 [{"text": "🛍 Menyuni ochish (mijoz)", "web_app": {"url": shop_url}}],
@@ -2623,6 +2797,7 @@ async def telegram_webhook(request: Request, db: AsyncSession = Depends(get_db))
 
         if user:
             user.telegram_id = str(chat_id)
+            user.phone_number = phone  # yagona standart formatga keltiramiz
             await db.commit()
             await send_telegram_message(
                 chat_id,
@@ -2664,7 +2839,7 @@ async def telegram_set_webhook(request: Request, owner: User = Depends(require_o
     """Buni FAQAT BIR MARTA, brauzerda ochish orqali ishga tushirasiz —
     shundan keyin Telegram xabarlarni avtomatik shu serverga yubora boshlaydi.
     Masalan: https://eltuvchi-express.onrender.com/telegram/set-webhook"""
-    webhook_url = str(request.base_url).rstrip("/") + "/telegram/webhook"
+    webhook_url = get_public_base_url(request) + "/telegram/webhook"
     result = await set_telegram_webhook(webhook_url)
     return {"webhook_url": webhook_url, "telegram_response": result}
 

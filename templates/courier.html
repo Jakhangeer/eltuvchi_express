@@ -12,6 +12,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <script>try{var __bg=localStorage.getItem('panel_bg');if(__bg)document.documentElement.setAttribute('data-bg',__bg);}catch(e){}</script>
     <style>
         :root {
             --obsidian: #05060a;
@@ -20,10 +21,18 @@
             --amber: #fbbf24;
             --rose: #f43f5e;
         }
+
+        /* ============================================================
+           FON MAVZULARI — Obsidian (standart) / Aurora / Sunset / Midnight
+           <html data-bg="..."> orqali almashadi, tanlov brauzerda eslab qolinadi.
+           ============================================================ */
+        html[data-bg="aurora"]   { --obsidian:#03110f; --top-glow:#0b2a2480; --indigo:#14b8a6; --emerald:#a3e635; --indigo-glow:#14b8a6; --emerald-glow:#a3e635; --amber-glow:#22d3ee; }
+        html[data-bg="sunset"]   { --obsidian:#0e0610; --top-glow:#2a103080; --indigo:#f43f5e; --emerald:#fb923c; --indigo-glow:#f43f5e; --emerald-glow:#fb923c; --amber-glow:#facc15; }
+        html[data-bg="midnight"] { --obsidian:#040816; --top-glow:#0a1a4080; --indigo:#3b82f6; --emerald:#22d3ee; --indigo-glow:#3b82f6; --emerald-glow:#22d3ee; --amber-glow:#a78bfa; }
         * { font-family: 'Plus Jakarta Sans', 'Inter', -apple-system, sans-serif; }
         html, body { background: var(--obsidian); }
         body {
-            background: radial-gradient(ellipse at top, #12142080 0%, #05060a 55%), var(--obsidian);
+            background: radial-gradient(ellipse at top, var(--top-glow, #12142080) 0%, var(--obsidian) 55%), var(--obsidian);
             overscroll-behavior-y: contain;
         }
 
@@ -110,6 +119,15 @@
         </div>
         <div class="flex items-center gap-3">
             <div id="live-clock" class="text-[11px] font-mono text-slate-400 glass rounded-full px-2.5 py-1"></div>
+            <div class="relative">
+                <button type="button" onclick="document.getElementById('bg-menu').classList.toggle('hidden')" class="glass rounded-lg w-8 h-8 flex items-center justify-center text-sm">🎨</button>
+                <div id="bg-menu" class="hidden absolute right-0 mt-2 glass-strong rounded-xl p-2.5 flex gap-2 z-30">
+                    <button type="button" onclick="setPanelBg('obsidian')" title="Obsidian" class="w-6 h-6 rounded-full border-2 border-white/50" style="background:linear-gradient(135deg,#6366f1,#05060a)"></button>
+                    <button type="button" onclick="setPanelBg('aurora')" title="Aurora" class="w-6 h-6 rounded-full border-2 border-white/50" style="background:linear-gradient(135deg,#14b8a6,#03110f)"></button>
+                    <button type="button" onclick="setPanelBg('sunset')" title="Sunset" class="w-6 h-6 rounded-full border-2 border-white/50" style="background:linear-gradient(135deg,#f43f5e,#0e0610)"></button>
+                    <button type="button" onclick="setPanelBg('midnight')" title="Midnight" class="w-6 h-6 rounded-full border-2 border-white/50" style="background:linear-gradient(135deg,#3b82f6,#040816)"></button>
+                </div>
+            </div>
             <a href="/logout" class="text-[11px] text-slate-400 hover:text-white transition-colors underline underline-offset-2">Chiqish</a>
         </div>
     </header>
@@ -260,6 +278,12 @@
     </div>
 
     <script>
+        // ---- FON MAVZUSI (Obsidian / Aurora / Sunset / Midnight) ----
+        function setPanelBg(name) {
+            document.documentElement.setAttribute('data-bg', name === 'obsidian' ? '' : name);
+            if (name === 'obsidian') document.documentElement.removeAttribute('data-bg');
+            try { localStorage.setItem('panel_bg', name === 'obsidian' ? '' : name); } catch (e) {}
+        }
         function updateLiveClock() {
             const el = document.getElementById('live-clock');
             if (!el) return;

@@ -117,24 +117,37 @@ def contact_request_keyboard() -> dict:
 
 def normalize_phone(raw_phone: str) -> str:
     """
-    Kiritilgan har qanday formatdagi telefon raqamini tozalaydi va
-    yagona standart (+998XXXXXXXXX) ko'rinishiga keltirib beradi.
-    
-    Masalan: '8 (90) 123-45-67' -> '+998901234567' (agar 9 xonali bo'lsa +998 ulanadi)
+    Har qanday formatdagi telefon raqamini yagona standart
+    (+998XXXXXXXXX) ko'rinishiga keltiradi.
+
+    Masalan: '90 123-45-67' -> '+998901234567', '998901234567' -> '+998901234567',
+    '8 90 123 45 67' -> '+998901234567', '+998 (90) 123-45-67' -> '+998901234567'.
+    Bu funksiya admin paneldan kiritilganda ham, Telegram kontakti
+    kelganda ham ISHLATILADI — shunda bir odam ikki xil formatda
+    yozilib, ikkita alohida akkaunt (dublikat mijoz) bo'lib qolmaydi.
     """
     if not raw_phone:
         return ""
-    
-    # Faqat raqamli belgilarni ajratib olish
-    digits = re.sub(r"\D", "", raw_phone)
-    
-    # O'zbekiston raqamlari standarti uchun
-    if len(digits) == 9:
+
+    digits = re.sub(r"\D", "", str(raw_phone))
+    if not digits:
+        return ""
+
+    if len(digits) == 9:                                   # 901234567
         digits = "998" + digits
-    elif len(digits) == 12 and digits.startswith("8"):
-        digits = "998" + digits[3:]
-        
+    elif len(digits) == 10 and digits.startswith("0"):     # 0901234567
+        digits = "998" + digits[1:]
+    elif len(digits) in (10, 11) and digits.startswith("8"):  # 8 90 123 45 67
+        digits = "998" + digits[-9:]
+
     return f"+{digits}"
+
+
+def phone_tail(raw_phone: str, n: int = 9) -> str:
+    """Raqamning oxirgi n ta raqami — turli formatda saqlangan eski
+    yozuvlarni ham topish uchun (masalan '90 123 45 67' va '+998901234567')."""
+    digits = re.sub(r"\D", "", str(raw_phone or ""))
+    return digits[-n:] if len(digits) >= n else digits
 
 
 async def get_telegram_webhook_info() -> dict:
