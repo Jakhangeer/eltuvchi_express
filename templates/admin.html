@@ -161,7 +161,28 @@
 
 
 
+
+        /* ---- KUTILAYOTGAN PUL YECHISH: P2P o'tkazma uchun TO'LIQ karta ko'rinishi ---- */
+        .wd-pending-row { border: 1px solid rgba(245,158,11,.35); border-radius: .9rem; padding: .9rem 1rem; background: rgba(245,158,11,.05); }
+        body.dark .wd-pending-row { background: rgba(245,158,11,.07); border-color: rgba(245,158,11,.3); }
+        .wd-card-box { margin-top: .6rem; padding: .7rem .85rem; border-radius: .7rem; background: rgba(15,23,42,.04); border: 1px dashed rgba(15,23,42,.15); }
+        body.dark .wd-card-box { background: rgba(255,255,255,.04); border-color: rgba(255,255,255,.14); }
+        .wd-card-row { display: flex; justify-content: space-between; align-items: center; gap: .75rem; padding: .18rem 0; font-size: .78rem; }
+        .wd-card-label { opacity: .65; font-weight: 600; flex-shrink: 0; }
+        .wd-card-number { font-family: 'SFMono-Regular', Consolas, monospace; font-weight: 800; letter-spacing: .06em; font-size: .92rem; cursor: pointer; padding: .15rem .5rem; border-radius: .4rem; transition: background-color .15s ease; }
+        .wd-card-number:hover { background: rgba(99,102,241,.12); }
+        .wd-card-number.copied::after { content: ' ✓ nusxalandi'; font-size: .65rem; font-weight: 700; color: #16a34a; }
+        .wd-card-sub { font-weight: 600; text-align: right; }
+
         /* ---- TRANZAKSIYALAR: katta va aniq ko'rinadigan ---- */
+
+        .tx-filter-bar { display: flex; gap: .5rem; flex-wrap: wrap; }
+        .tx-filter-btn { font-size: .78rem; font-weight: 700; padding: .4rem 1rem; border-radius: 9999px; border: 1px solid rgba(0,0,0,.08); background: transparent; color: #64748b; cursor: pointer; transition: all .15s ease; }
+        .tx-filter-btn:hover { background: rgba(99,102,241,.08); }
+        .tx-filter-btn.active { background: #6366f1; border-color: #6366f1; color: #fff; box-shadow: 0 6px 16px -8px rgba(99,102,241,.6); }
+        body.dark .tx-filter-btn { border-color: rgba(255,255,255,.12); color: #94a3b8; }
+        body.dark .tx-filter-btn:hover { background: rgba(255,255,255,.07); }
+
         .tx-count-pill { font-size: .75rem; font-weight: 700; padding: .3rem .8rem; border-radius: 9999px; background: rgba(99,102,241,.12); color: #6366f1; }
         .tx-summary { border-radius: 1rem; padding: 1rem 1.15rem; border: 1px solid rgba(0,0,0,.06); }
         .tx-summary-label { font-size: .75rem; font-weight: 700; opacity: .75; margin-bottom: .2rem; }
@@ -248,19 +269,43 @@
         <aside class="w-60 bg-white dark:bg-gray-900 border-r dark:border-gray-700 shrink-0 py-4 hidden md:block">
             <nav class="flex flex-col gap-1 px-3">
                 <button onclick="showPage('bosh')" data-page-btn="bosh" class="nav-btn">🏠 Bosh sahifa</button>
+                {% if is_owner or operator_perms.get('buyurtmalar') %}
                 <button onclick="showPage('buyurtmalar')" data-page-btn="buyurtmalar" class="nav-btn">📦 Buyurtmalar</button>
+                {% endif %}
+                {% if is_owner or operator_perms.get('kuryerlar') %}
                 <button onclick="showPage('kuryerlar')" data-page-btn="kuryerlar" class="nav-btn">🛵 Kuryerlar</button>
+                {% endif %}
+                {% if is_owner or operator_perms.get('mijozlar') %}
                 <button onclick="showPage('mijozlar')" data-page-btn="mijozlar" class="nav-btn">👥 Mijozlar</button>
+                {% endif %}
+                {% if is_owner or operator_perms.get('tugilgankun') %}
                 <button onclick="showPage('tugilgankun')" data-page-btn="tugilgankun" class="nav-btn">🎂 Tug'ilgan kunlar</button>
+                {% endif %}
+                {% if is_owner or operator_perms.get('referal') %}
                 <button onclick="showPage('referal')" data-page-btn="referal" class="nav-btn">🎁 Referal</button>
+                {% endif %}
+                {% if is_owner or operator_perms.get('bonuscashback') %}
                 <button onclick="showPage('bonuscashback')" data-page-btn="bonuscashback" class="nav-btn">💸 Bonus/Cashback</button>
+                {% endif %}
+                {% if is_owner or operator_perms.get('dokonlar') %}
                 <button onclick="showPage('dokonlar')" data-page-btn="dokonlar" class="nav-btn">🏪 Do'konlar</button>
-                {% if is_owner %}
+                {% endif %}
+                {% if is_owner or operator_perms.get('operatorlar') or operator_perms.get('shartlar') or operator_perms.get('banner') or operator_perms.get('moliya') %}
                 <div class="border-t my-2 dark:border-gray-700"></div>
+                {% endif %}
+                {% if is_owner or operator_perms.get('operatorlar') %}
                 <button onclick="showPage('operatorlar')" data-page-btn="operatorlar" class="nav-btn">🧑‍💼 Operatorlar</button>
+                {% endif %}
+                {% if is_owner or operator_perms.get('shartlar') %}
                 <button onclick="showPage('shartlar')" data-page-btn="shartlar" class="nav-btn">📄 Shartlar</button>
+                {% endif %}
+                {% if is_owner or operator_perms.get('banner') %}
                 <button onclick="showPage('banner')" data-page-btn="banner" class="nav-btn">🖼️ Banner</button>
+                {% endif %}
+                {% if is_owner or operator_perms.get('moliya') %}
                 <button onclick="showPage('moliya')" data-page-btn="moliya" class="nav-btn">💰 Moliya</button>
+                {% endif %}
+                {% if is_owner %}
                 <button onclick="showPage('xavfzone')" data-page-btn="xavfzone" class="nav-btn !text-red-600">⚠️ Reset</button>
                 {% endif %}
             </nav>
@@ -322,6 +367,27 @@
                         <p class="text-[11px] text-gray-500 mt-1">Tanlangan ob-havoga qarab avtomatik hisoblanadi, qo'lda o'zgartirilmaydi.</p>
                     </div>
                     <button type="submit" class="theme-btn w-full bg-indigo-600 text-white py-2 rounded-lg font-bold">Saqlash</button>
+                </form>
+            </div>
+
+            <!-- OPERATOR KO'RISH HUQUQLARI — har bir bo'limni operatorga
+                 ko'rsatish/yashirishni FAQAT OWNER shu yerdan belgilaydi.
+                 Backend tarafida ham himoyalangan (qarang require_section) —
+                 shuning uchun operator hatto to'g'ridan-to'g'ri manzilni
+                 chaqirsa ham, yopiq bo'limga kira olmaydi. -->
+            <div class="card-bg bg-white p-6 rounded-xl shadow-md col-span-1 md:col-span-3">
+                <h2 class="theme-title text-lg font-bold mb-1 text-indigo-700">🔐 Operator Ko'rish Huquqlari</h2>
+                <p class="text-xs text-gray-500 mb-4">Belgilangan bo'limlarni operatorlar (ADMIN roli) ko'ra oladi va o'zgartira oladi. Belgilanmagan bo'limlar ularga butunlay yashirin bo'ladi — hatto manzilni to'g'ridan-to'g'ri kiritishga urinishsa ham, ruxsat berilmaydi.</p>
+                <form action="/admin/finance/operator-permissions/update" method="POST" class="space-y-2">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                        {% for key, label in section_labels.items() %}
+                        <label class="flex items-center gap-2.5 p-3 rounded-lg border cursor-pointer dark:border-gray-700 hover:bg-indigo-50 dark:hover:bg-gray-800 transition-colors">
+                            <input type="checkbox" name="section_{{ key }}" {% if operator_perms.get(key) %}checked{% endif %} class="w-4 h-4 accent-indigo-600 rounded">
+                            <span class="text-sm font-medium">{{ label }}</span>
+                        </label>
+                        {% endfor %}
+                    </div>
+                    <button type="submit" class="theme-btn px-5 py-2 rounded-lg font-bold text-sm mt-2">Huquqlarni saqlash</button>
                 </form>
             </div>
             {% endif %}
@@ -739,6 +805,7 @@
         {% if is_owner %}
 </section>
 
+        {% if is_owner or operator_perms.get('operatorlar') %}
         <section class="app-page" data-page="operatorlar" style="display:none;">
         <!-- OPERATORLAR (faqat OWNER) -->
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -822,31 +889,60 @@
 
         {% if is_owner %}
 </section>
+        {% endif %}
 
+        {% if is_owner or operator_perms.get('moliya') %}
         <section class="app-page" data-page="moliya" style="display:none;">
         <!-- MOLIYAVIY BOSHQARUV (faqat OWNER) -->
 
         {% if pending_withdrawals %}
         <div class="card-bg bg-white p-6 rounded-xl shadow-md border-2 border-amber-400 mb-6">
             <h2 class="theme-title text-lg font-bold mb-4 text-amber-700">⏳ Kutilayotgan Pul Yechish So'rovlari ({{ pending_withdrawals|length }})</h2>
-            <div class="space-y-2">
+            <div class="space-y-3">
                 {% for wd in pending_withdrawals %}
-                <div class="flex justify-between items-center border rounded-lg p-3">
-                    <div>
-                        <p class="text-sm font-semibold">
-                            {% if wd.user %}🛵 {{ wd.user.full_name }}{% elif wd.partner %}🏪 {{ wd.partner.brand_name }}{% endif %}
-                        </p>
-                        <p class="text-xs text-gray-400">{{ wd.requested_at|uzb_time('%d.%m.%Y %H:%M') }}</p>
+                <div class="wd-pending-row">
+                    <div class="flex justify-between items-start gap-3 flex-wrap">
+                        <div>
+                            <p class="text-sm font-bold">
+                                {% if wd.user %}🛵 {{ wd.user.full_name }}{% elif wd.partner %}🏪 {{ wd.partner.brand_name }}{% endif %}
+                            </p>
+                            <p class="text-xs text-gray-400">{{ wd.requested_at|uzb_time('%d.%m.%Y %H:%M') }}</p>
+                        </div>
+                        <span class="font-extrabold text-amber-700 text-lg">{{ "%.0f"|format(wd.amount) }} so'm</span>
                     </div>
-                    <div class="flex items-center gap-3">
-                        <span class="font-bold text-indigo-700">{{ "%.0f"|format(wd.amount) }} so'm</span>
-                        <form action="/admin/finance/withdrawals/{{ wd.id }}/approve" method="POST" onsubmit="return confirm('Pulni real hayotda (Click/Payme/naqd) ALLAQACHON o\'tkazdingizmi? Faqat shundan keyin tasdiqlang.');">
-                            <button type="submit" class="text-xs bg-green-600 hover:bg-green-700 text-white px-2 py-1 rounded font-semibold">✅ To'landi</button>
-                        </form>
-                        <form action="/admin/finance/withdrawals/{{ wd.id }}/reject" method="POST">
-                            <button type="submit" class="text-xs bg-red-100 text-red-700 px-2 py-1 rounded font-semibold">✕ Rad etish</button>
-                        </form>
+
+                    <!-- P2P O'TKAZMA UCHUN — karta raqami TO'LIQ (maskalanmagan), bank va egasi bilan -->
+                    {% if wd.card and wd.decrypted_card %}
+                    <div class="wd-card-box">
+                        <div class="wd-card-row">
+                            <span class="wd-card-label">💳 Karta raqami</span>
+                            <span class="wd-card-number" onclick="copyCardNumber(this)" data-raw="{{ wd.decrypted_card }}" title="Nusxalash uchun bosing">
+                                {{ wd.decrypted_card[0:4] }} {{ wd.decrypted_card[4:8] }} {{ wd.decrypted_card[8:12] }} {{ wd.decrypted_card[12:16] }}
+                            </span>
+                        </div>
+                        <div class="wd-card-row">
+                            <span class="wd-card-label">🏦 Bank</span>
+                            <span class="wd-card-sub">{{ wd.card.bank_name }} ({{ wd.card.card_type|upper }}) · amal muddati {{ "%02d"|format(wd.card.expire_month) }}/{{ (wd.card.expire_year|string)[-2:] }}</span>
+                        </div>
+                        <div class="wd-card-row">
+                            <span class="wd-card-label">👤 Karta egasi</span>
+                            <span class="wd-card-sub">{{ wd.card.card_holder_name }}</span>
+                        </div>
                     </div>
+                    {% else %}
+                    <p class="text-xs text-rose-500 mt-2">⚠️ Karta ma'lumoti topilmadi — foydalanuvchi bilan bog'laning.</p>
+                    {% endif %}
+
+                    <div class="flex items-center gap-2 mt-3">
+                        <form action="/admin/finance/withdrawals/{{ wd.id }}/approve" method="POST" onsubmit="return confirm('Pulni real hayotda (Click/Payme/naqd) ALLAQACHON yuqoridagi kartaga o\'tkazdingizmi? Faqat shundan keyin tasdiqlang.');" class="flex-1">
+                            <button type="submit" class="w-full text-xs bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-lg font-bold">✅ To'landi — tasdiqlash</button>
+                        </form>
+                        <button type="button" onclick="document.getElementById('reject-form-{{ wd.id }}').classList.toggle('hidden')" class="text-xs bg-red-100 text-red-700 hover:bg-red-200 px-3 py-2 rounded-lg font-semibold">✕ Rad etish</button>
+                    </div>
+                    <form id="reject-form-{{ wd.id }}" action="/admin/finance/withdrawals/{{ wd.id }}/reject" method="POST" class="hidden mt-2 flex gap-2">
+                        <input type="text" name="reject_reason" placeholder="Rad etish sababi (foydalanuvchiga ko'rinadi)" class="flex-1 p-2 border rounded-lg text-xs dark:bg-gray-800">
+                        <button type="submit" class="text-xs bg-red-600 hover:bg-red-700 text-white px-3 py-2 rounded-lg font-bold whitespace-nowrap">Tasdiqlash</button>
+                    </form>
                 </div>
                 {% endfor %}
             </div>
@@ -915,29 +1011,38 @@
                     {% if tx.type.value == 'deposit' %}{% set ns.dep = ns.dep + tx.amount %}{% else %}{% set ns.wd = ns.wd + tx.amount %}{% endif %}
                 {% endfor %}
 
-                <div class="flex flex-wrap items-center justify-between gap-3 mb-5">
+                <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
                     <h2 class="theme-title text-2xl font-extrabold text-indigo-700">📜 Tranzaksiyalar Tarixi</h2>
-                    <span class="tx-count-pill">Oxirgi {{ recent_transactions|length }} ta amal</span>
+                    <span class="tx-count-pill" id="tx-count-pill">Oxirgi {{ recent_transactions|length }} ta amal</span>
+                </div>
+
+                <!-- KURYER / HAMKOR bo'yicha filtr -->
+                <div class="tx-filter-bar mb-4">
+                    <button type="button" class="tx-filter-btn active" data-tx-filter="all">Hammasi</button>
+                    <button type="button" class="tx-filter-btn" data-tx-filter="courier">🛵 Kuryerlar</button>
+                    <button type="button" class="tx-filter-btn" data-tx-filter="partner">🏪 Hamkorlar</button>
                 </div>
 
                 <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
                     <div class="tx-summary tx-summary-in">
                         <p class="tx-summary-label">⬆ Jami to'ldirilgan</p>
-                        <p class="tx-summary-value">+{{ "{:,.0f}".format(ns.dep).replace(',', ' ') }} <span>so'm</span></p>
+                        <p class="tx-summary-value" id="tx-sum-in">+{{ "{:,.0f}".format(ns.dep).replace(',', ' ') }} <span>so'm</span></p>
                     </div>
                     <div class="tx-summary tx-summary-out">
                         <p class="tx-summary-label">⬇ Jami yechilgan</p>
-                        <p class="tx-summary-value">−{{ "{:,.0f}".format(ns.wd).replace(',', ' ') }} <span>so'm</span></p>
+                        <p class="tx-summary-value" id="tx-sum-out">−{{ "{:,.0f}".format(ns.wd).replace(',', ' ') }} <span>so'm</span></p>
                     </div>
                     <div class="tx-summary tx-summary-net">
                         <p class="tx-summary-label">⚖ Farq (sof)</p>
-                        <p class="tx-summary-value">{% if ns.dep - ns.wd >= 0 %}+{% else %}−{% endif %}{{ "{:,.0f}".format((ns.dep - ns.wd)|abs).replace(',', ' ') }} <span>so'm</span></p>
+                        <p class="tx-summary-value" id="tx-sum-net">{% if ns.dep - ns.wd >= 0 %}+{% else %}−{% endif %}{{ "{:,.0f}".format((ns.dep - ns.wd)|abs).replace(',', ' ') }} <span>so'm</span></p>
                     </div>
                 </div>
 
-                <div class="overflow-y-auto max-h-[34rem] space-y-2.5 pr-1">
+                <div class="overflow-y-auto max-h-[34rem] space-y-2.5 pr-1" id="tx-list">
                     {% for tx in recent_transactions %}
-                    <div class="tx-row {% if tx.type.value == 'deposit' %}tx-row-in{% else %}tx-row-out{% endif %}">
+                    <div class="tx-row {% if tx.type.value == 'deposit' %}tx-row-in{% else %}tx-row-out{% endif %}"
+                         data-tx-kind="{% if tx.user %}courier{% elif tx.partner %}partner{% else %}other{% endif %}"
+                         data-tx-type="{{ tx.type.value }}" data-tx-amount="{{ tx.amount }}">
                         <div class="tx-icon">{% if tx.type.value == 'deposit' %}⬆{% else %}⬇{% endif %}</div>
                         <div class="min-w-0 flex-1">
                             <p class="tx-who">
@@ -962,6 +1067,7 @@
         {% endif %}
 
 </section>
+        {% endif %}
 
         <section class="app-page" data-page="dokonlar" style="display:none;">
         <!-- PARTNERS & PRODUCTS -->
@@ -1184,6 +1290,7 @@
 </section>
 
         <!-- TUG'ILGAN KUNLAR -->
+        {% if is_owner or operator_perms.get('tugilgankun') %}
         <section class="app-page" data-page="tugilgankun" style="display:none;">
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div class="card-bg bg-white p-6 rounded-xl shadow-md col-span-1 md:col-span-2">
@@ -1238,8 +1345,10 @@
             {% endif %}
         </div>
         </section>
+        {% endif %}
 
         <!-- REFERAL DASTURI -->
+        {% if is_owner or operator_perms.get('referal') %}
         <section class="app-page" data-page="referal" style="display:none;">
         <div class="card-bg bg-white p-6 rounded-xl shadow-md">
             <h2 class="theme-title text-lg font-bold mb-4 text-indigo-700">🎁 Referal Dasturi</h2>
@@ -1264,8 +1373,10 @@
             {% endif %}
         </div>
         </section>
+        {% endif %}
 
         <!-- BONUS VA CASHBACK -->
+        {% if is_owner or operator_perms.get('bonuscashback') %}
         <section class="app-page" data-page="bonuscashback" style="display:none;">
         <div class="card-bg bg-white p-6 rounded-xl shadow-md">
             <h2 class="theme-title text-lg font-bold mb-4 text-indigo-700">💸 Bonus va Cashback</h2>
@@ -1290,9 +1401,11 @@
             {% endif %}
         </div>
         </section>
+        {% endif %}
 
         {% if is_owner %}
         <!-- MINI APP BANNERLARI (faqat OWNER) -->
+        {% if is_owner or operator_perms.get('banner') %}
         <section class="app-page" data-page="banner" style="display:none;">
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div class="card-bg bg-white p-6 rounded-xl shadow-md col-span-1">
@@ -1353,9 +1466,11 @@
         </div>
         </section>
         {% endif %}
+        {% endif %}
 
         {% if is_owner %}
         <!-- SHARTLAR (faqat OWNER) -->
+        {% if is_owner or operator_perms.get('shartlar') %}
         <section class="app-page" data-page="shartlar" style="display:none;">
         <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div class="card-bg bg-white p-6 rounded-xl shadow-md">
@@ -1388,6 +1503,7 @@
         </div>
         <p class="text-xs text-gray-400 mt-3">Kuryer/hamkor botda shu rolni tanlaganda, avval shu matnni ko'radi va "Roziman" bosishi shart — aks holda davom etolmaydi.</p>
         </section>
+        {% endif %}
         {% endif %}
 
         </main>
@@ -1799,6 +1915,25 @@
             NEXT_STATUS_MAP = JSON.parse((_appBody && _appBody.dataset.nextStatusMap) || '{}');
         } catch (e) {
             console.error('Jonli yangilanish uchun sozlamalarni o\'qishda xatolik:', e);
+        }
+
+        // P2P o'tkazma qilayotganda karta raqamini bir bosishda nusxalash
+        function copyCardNumber(el) {
+            const raw = el.getAttribute('data-raw');
+            if (!raw) return;
+            const done = () => {
+                el.classList.add('copied');
+                setTimeout(() => el.classList.remove('copied'), 1500);
+            };
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(raw).then(done).catch(() => {});
+            } else {
+                const ta = document.createElement('textarea');
+                ta.value = raw; ta.style.position = 'fixed'; ta.style.opacity = '0';
+                document.body.appendChild(ta); ta.select();
+                try { document.execCommand('copy'); done(); } catch (e) {}
+                document.body.removeChild(ta);
+            }
         }
 
         function esc(v) {
@@ -2270,6 +2405,41 @@
                 })
                 .catch(e => console.error('Grafikni yuklashda xatolik', e));
         }
+
+
+        // ---- TRANZAKSIYALAR: Kuryer/Hamkor bo'yicha filtr ----
+        function formatSom(n) {
+            const sign = n < 0 ? '−' : '+';
+            return sign + Math.abs(Math.round(n)).toLocaleString('uz-UZ').replace(/,/g, ' ') + ' <span>so\'m</span>';
+        }
+        function applyTxFilter(kind) {
+            const rows = document.querySelectorAll('#tx-list .tx-row');
+            let dep = 0, wd = 0, count = 0;
+            rows.forEach(row => {
+                const match = kind === 'all' || row.dataset.txKind === kind;
+                row.style.display = match ? '' : 'none';
+                if (match) {
+                    count++;
+                    const amt = parseFloat(row.dataset.txAmount) || 0;
+                    if (row.dataset.txType === 'deposit') dep += amt; else wd += amt;
+                }
+            });
+            const pill = document.getElementById('tx-count-pill');
+            if (pill) pill.textContent = `${count} ta amal`;
+            const inEl = document.getElementById('tx-sum-in');
+            const outEl = document.getElementById('tx-sum-out');
+            const netEl = document.getElementById('tx-sum-net');
+            if (inEl) inEl.innerHTML = formatSom(dep);
+            if (outEl) outEl.innerHTML = formatSom(-wd);
+            if (netEl) netEl.innerHTML = formatSom(dep - wd);
+        }
+        document.querySelectorAll('.tx-filter-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.tx-filter-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                applyTxFilter(btn.dataset.txFilter);
+            });
+        });
 
         // Dashboard'dagi statistik raqamlar 0'dan haqiqiy qiymatgacha
         // "hisoblanib chiqadi" — faqat vizual, qiymatning o'zi hech

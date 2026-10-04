@@ -52,7 +52,10 @@ from models import (
     PromoCode,
     PromoCodeUsage,
     FavoriteProduct,
+    Card,
+    OperatorPermission,
 )
+import card_security
 from auth import (
     hash_password,
     verify_password,
@@ -367,24 +370,110 @@ templates.env.filters["uzb_time"] = uzb_time_filter
 # Routerlar. DIQQAT: `dependencies=[Depends(get_current_admin_user)]` — bu router
 # ostidagi BARCHA route'lar uchun "login qilingan bo'lishi shart" tekshiruvini
 # avtomatik qo'shadi. `require_owner` esa qo'shimcha — faqat OWNER'ga.
+# ==================== OPERATOR KO'RISH HUQUQLARI (admin.html bo'limlari) ====================
+# OWNER /admin/settings/operator-permissions sahifasidan har bir bo'limni
+# operatorga ko'rsatish/yashirishni boshqaradi. Bu yerdagi qiymatlar — hali
+# bazada qator yo'q bo'lsa ishlatiladigan STANDART (xavfsiz) holat: moliyaviy
+# va tizim darajasidagi bo'limlar standart holda YOPIQ, operativ ishlash
+# uchun kerakli bo'limlar OCHIQ.
+SECTION_LABELS_UZ = {
+    "buyurtmalar": "📦 Buyurtmalar boshqaruvi",
+    "kuryerlar": "🛵 Kuryerlar ro'yxati",
+    "mijozlar": "👥 Mijozlar ro'yxati",
+    "dokonlar": "🏪 Do'konlar (hamkorlar) boshqaruvi",
+    "moliya": "💰 Moliya (pul yechish so'rovlari, tranzaksiyalar)",
+    "operatorlar": "🧑‍💼 Operatorlar ro'yxati",
+    "banner": "🖼️ Banner boshqaruvi",
+    "shartlar": "📄 Kuryer/Hamkor shartlari matni",
+    "referal": "🎁 Referal dasturi sozlamalari",
+    "bonuscashback": "💸 Bonus/Cashback sozlamalari",
+    "tugilgankun": "🎂 Tug'ilgan kunlar ro'yxati",
+}
+DEFAULT_OPERATOR_SECTION_VISIBILITY = {
+    # Kundalik operativ ish uchun shart bo'lgan bo'limlar — standart OCHIQ
+    # (operator buyurtma/kuryer/mijoz/do'kon bilan ishlay olishi kerak,
+    # aks holda ishi falaj bo'lib qoladi). OWNER istasa keyin yopadi.
+    "buyurtmalar": True,
+    "kuryerlar": True,
+    "mijozlar": True,
+    "dokonlar": True,
+    # Moliyaviy va tizim darajasidagi bo'limlar — standart YOPIQ (nozik,
+    # OWNER ataylab ochishi kerak).
+    "moliya": False,
+    "operatorlar": False,
+    "banner": False,
+    "shartlar": False,
+    "referal": True,
+    "bonuscashback": True,
+    "tugilgankun": True,
+}
+# "xavfzone" (tizimni butunlay tozalash) — BU YERDA ATAYLAB YO'Q: shu bo'lim
+# har doim, hech qanday sozlamadan qat'i nazar, FAQAT OWNER'ga ko'rinadi va
+# ishlaydi — bu amal qaytarib bo'lmaydigan bo'lgani uchun delegatsiya
+# qilinmaydi (qarang reset_system).
+
+
+async def get_operator_permissions(db: AsyncSession) -> dict:
+    """Barcha bo'limlar uchun {section_key: True/False} lug'atini qaytaradi
+    — bazadagi qiymat bilan standart qiymatni birlashtirib. Admin panelining
+    bitta GET so'rovida bir marta chaqiriladi (arzon — kamida qatordan kam)."""
+    result = await db.execute(select(OperatorPermission))
+    saved = {row.section_key: row.enabled for row in result.scalars().all()}
+    merged = dict(DEFAULT_OPERATOR_SECTION_VISIBILITY)
+    merged.update(saved)
+    return merged
+
+
+async def operator_can_see(db: AsyncSession, current_user: User, section_key: str) -> bool:
+    """OWNER — har doim True. Operator (ADMIN) — faqat shu bo'lim OWNER
+    tomonidan yoqilgan bo'lsa True."""
+    if current_user.role == UserRole.OWNER:
+        return True
+    perms = await get_operator_permissions(db)
+    return perms.get(section_key, DEFAULT_OPERATOR_SECTION_VISIBILITY.get(section_key, False))
+
+
+def require_section(section_key: str):
+    """FastAPI dependency generatori: `/admin/...` routerlaridagi bo'limni
+    OWNER doim ko'radi; operator esa FAQAT shu bo'lim OWNER tomonidan
+    yoqilgan bo'lsa kira oladi — aks holda 403. Bu FRONTENDDAGI (admin.html)
+    yashirishning backend tarafidagi "haqiqiy" himoyasi: operator hatto
+    to'g'ridan-to'g'ri URL chaqirsa ham, ruxsatsiz bo'limga kira olmaydi."""
+
+    async def _dep(
+        db: AsyncSession = Depends(get_db),
+        current_user: User = Depends(get_current_admin_user),
+    ) -> User:
+        if not await operator_can_see(db, current_user, section_key):
+            raise HTTPException(
+                status_code=403,
+                detail="Bu bo'limni ko'rish huquqingiz yo'q — administrator bilan bog'laning.",
+            )
+        return current_user
+
+    return _dep
+
+
+
+
 admin_router = APIRouter(tags=["Admin Dashboard"])
 settings_router = APIRouter(
     prefix="/admin/settings", tags=["Tizim Sozlamalari"], dependencies=[Depends(require_owner)]
 )
 orders_router = APIRouter(
-    prefix="/admin/orders", tags=["Buyurtmalar Boshqaruvi"], dependencies=[Depends(get_current_admin_user)]
+    prefix="/admin/orders", tags=["Buyurtmalar Boshqaruvi"], dependencies=[Depends(require_section("buyurtmalar"))]
 )
 partners_router = APIRouter(
-    prefix="/admin/partners", tags=["Do'konlar Boshqaruvi"], dependencies=[Depends(get_current_admin_user)]
+    prefix="/admin/partners", tags=["Do'konlar Boshqaruvi"], dependencies=[Depends(require_section("dokonlar"))]
 )
 products_router = APIRouter(
-    prefix="/admin/products", tags=["Mahsulotlar (Menu) Boshqaruvi"], dependencies=[Depends(get_current_admin_user)]
+    prefix="/admin/products", tags=["Mahsulotlar (Menu) Boshqaruvi"], dependencies=[Depends(require_section("dokonlar"))]
 )
 couriers_router = APIRouter(
-    prefix="/admin/couriers", tags=["Kuryerlar Boshqaruvi"], dependencies=[Depends(get_current_admin_user)]
+    prefix="/admin/couriers", tags=["Kuryerlar Boshqaruvi"], dependencies=[Depends(require_section("kuryerlar"))]
 )
 clients_router = APIRouter(
-    prefix="/admin/clients", tags=["Mijozlar Boshqaruvi"], dependencies=[Depends(get_current_admin_user)]
+    prefix="/admin/clients", tags=["Mijozlar Boshqaruvi"], dependencies=[Depends(require_section("mijozlar"))]
 )
 operators_router = APIRouter(
     prefix="/admin/operators", tags=["Operatorlar Boshqaruvi"], dependencies=[Depends(require_owner)]
@@ -393,8 +482,16 @@ cities_router = APIRouter(
     prefix="/admin/cities", tags=["Shaharlar Boshqaruvi"], dependencies=[Depends(require_owner)]
 )
 finance_router = APIRouter(
-    prefix="/admin/finance", tags=["Moliyaviy Boshqaruv"], dependencies=[Depends(require_owner)]
+    prefix="/admin/finance", tags=["Moliyaviy Boshqaruv"], dependencies=[Depends(get_current_admin_user)]
 )
+# DIQQAT: router darajasida endi faqat "login qilingan admin/operator"
+# tekshiriladi (require_owner EMAS) — chunki operatorga "moliya" bo'limi
+# OWNER tomonidan yoqilgan bo'lishi mumkin (qarang require_section va
+# OperatorPermission). Har bir alohida endpoint o'z darajasidagi aniqroq
+# tekshiruvni o'zi belgilaydi: moliyaviy so'rovlarni ko'rib chiqish —
+# require_section("moliya") (operator ham kirishi MUMKIN bo'lgan amal);
+# qo'lda balans tuzatish va ruxsatlarni boshqarish — require_owner (hech
+# qachon delegatsiya qilinmaydigan amallar).
 
 
 # ==================== 0. LOGIN / LOGOUT ====================
@@ -752,11 +849,29 @@ async def admin_dashboard(
     if is_owner:
         wd_query = await db.execute(
             select(WithdrawalRequest)
-            .options(selectinload(WithdrawalRequest.user), selectinload(WithdrawalRequest.partner))
+            .options(
+                selectinload(WithdrawalRequest.user),
+                selectinload(WithdrawalRequest.partner),
+                selectinload(WithdrawalRequest.card),
+            )
             .where(WithdrawalRequest.status == WithdrawalStatus.PENDING)
             .order_by(WithdrawalRequest.requested_at)
         )
         pending_withdrawals = wd_query.scalars().all()
+        # P2P o'tkazma qilish uchun OWNER/operatorga karta raqami TO'LIQ
+        # (deshifrlangan) holda ko'rinishi shart — shuning uchun shu yerda,
+        # faqat shu so'rov doirasida, bir martalik deshifrlab, har bir
+        # so'rov obyektiga vaqtinchalik `decrypted_card` biriktiramiz
+        # (bazaga yozilmaydi, faqat shu HTML javobda ko'rsatish uchun).
+        for wd in pending_withdrawals:
+            wd.decrypted_card = (
+                card_security.decrypt_card_number(wd.card.encrypted_card_number) if wd.card else None
+            )
+
+    # ---- OPERATOR KO'RISH HUQUQLARI — admin.html shu bo'yicha nav va
+    # bo'limlarni ko'rsatadi/yashiradi (frontend tarafidagi yashirish;
+    # backend tarafidagi "haqiqiy" himoya — qarang require_section) ----
+    operator_perms = await get_operator_permissions(db)
 
     # ---- ANALITIKA (faqat OWNER) ----
     # DIQQAT: komissiya foizi har bir do'kon uchun boshqacha bo'lishi mumkin
@@ -856,6 +971,8 @@ async def admin_dashboard(
             "birthday_clients_today": birthday_clients_today,
             "banners": banners,
             "analytics": analytics,
+            "operator_perms": operator_perms,
+            "section_labels": SECTION_LABELS_UZ,
         },
     )
 
@@ -1243,6 +1360,12 @@ async def apply_cod_delivery_financials(db: AsyncSession, order: Order) -> None:
                 note=f"Naqd pul yig'ildi — buyurtma #{order.id} (sizga topshirilishi kerak)",
                 created_by_id=None,
             ))
+            # KREDIT LIMITI: qarz belgilangan chegaradan oshsa, kuryer
+            # avtomatik bloklanadi — yangi buyurtma qabul qila olmaydi,
+            # to'plagan naqd pulini egasiga topshirgunga (yoki admin
+            # balansni qo'lda kamaytirgunga) qadar.
+            if courier.courier_profile.balance > courier.courier_profile.credit_limit:
+                courier.courier_profile.is_blocked = True
 
     if order.partner_id:
         partner_result = await db.execute(select(PartnerProfile).where(PartnerProfile.id == order.partner_id))
@@ -1317,6 +1440,74 @@ def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 # hisoblanadi — bu qiymat AVTOMATIK BIRIKTIRISH (auto_assign_nearest_courier)
 # uchun ishlatiladi va ataylab bir oz "kechikishga toqatli" (mobil brauzerlar
 # fon rejimida GPS'ni sekinlashtirishi mumkin).
+# ==================== PUL YECHISH (WITHDRAWAL) CHEGARALARI ====================
+MIN_WITHDRAWAL_AMOUNT = 10_000.0
+MAX_WITHDRAWAL_AMOUNT = 5_000_000.0
+
+
+# ==================== PLASTIK KARTA — QO'SHISH / RO'YXAT / O'CHIRISH ====================
+# Kuryer va hamkor uchun BIR XIL mantiq (Card.user_id — ikkalasida ham
+# users.id), shuning uchun umumiy yordamchi funksiyalarga chiqarilgan;
+# pastda ikkala router (courier_router_app, partner_router) shularni chaqiradi.
+
+def _card_to_dict(card: Card) -> dict:
+    """Frontendga yuboriladigan, XAVFSIZ (maskalangan) karta ma'lumoti —
+    to'liq raqam HECH QACHON bu orqali chiqmaydi."""
+    return {
+        "id": card.id,
+        "masked_number": card_security.mask_card_number(card.encrypted_card_number, already_encrypted=True),
+        "card_holder_name": card.card_holder_name,
+        "expire": f"{card.expire_month:02d}/{str(card.expire_year)[-2:]}",
+        "bank_name": card.bank_name,
+        "card_type": card.card_type,
+        "is_active": card.is_active,
+    }
+
+
+async def _add_card_for_user(
+    db: AsyncSession, user_id: int, card_number: str, card_holder_name: str, expire_month: int, expire_year: int
+) -> Card:
+    try:
+        clean_number = card_security.validate_card_number(card_number)
+        card_security.validate_expiry(expire_month, expire_year)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    if not card_holder_name or not card_holder_name.strip():
+        raise HTTPException(status_code=400, detail="Karta egasining ismini kiriting")
+
+    bank_name, card_type = card_security.detect_card_bin(clean_number)
+    full_year = expire_year if expire_year > 99 else 2000 + expire_year
+
+    new_card = Card(
+        user_id=user_id,
+        encrypted_card_number=card_security.encrypt_card_number(clean_number),
+        card_holder_name=card_holder_name.strip(),
+        expire_month=expire_month,
+        expire_year=full_year,
+        bank_name=bank_name,
+        card_type=card_type,
+        is_active=True,
+    )
+    db.add(new_card)
+    await db.commit()
+    await db.refresh(new_card)
+    return new_card
+
+
+async def _delete_card_for_user(db: AsyncSession, user_id: int, card_id: int) -> None:
+    result = await db.execute(select(Card).where(Card.id == card_id, Card.user_id == user_id))
+    card = result.scalars().first()
+    if not card:
+        raise HTTPException(status_code=404, detail="Karta topilmadi")
+
+    # DIQQAT: hard-delete emas — agar bu kartaga bog'langan eski
+    # WithdrawalRequest bo'lsa (tarix uchun), uni "yo'qotib qo'ymaslik"
+    # uchun faqat is_active=False qilamiz (ro'yxatda, tanlashda ko'rinmaydi).
+    card.is_active = False
+    await db.commit()
+
+
 COURIER_LOCATION_FRESHNESS_MINUTES = 15
 
 # Admin/operator JONLI XARITASI uchun alohida, ANCHA QATTIQROQ chegara:
@@ -1363,6 +1554,7 @@ async def auto_assign_nearest_courier(db: AsyncSession, order: Order) -> Optiona
             CourierProfile.longitude.is_not(None),
             CourierProfile.location_updated_at.is_not(None),
             CourierProfile.location_updated_at >= freshness_cutoff,
+            CourierProfile.is_blocked == False,  # qarzi limitdan oshgan kuryerga avtomatik biriktirilmaydi
         )
     )
     if partner.city_id is not None:
@@ -1397,10 +1589,11 @@ async def auto_assign_nearest_courier(db: AsyncSession, order: Order) -> Optiona
     return nearest
 
 
-@settings_router.post("/birthday")
+@admin_router.post("/admin/settings/birthday")
 async def update_birthday_setting(
     birthday_bonus_amount: float = Form(...),
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_section("tugilgankun")),
 ):
     setting = await _get_or_create_setting(db)
     setting.birthday_bonus_amount = birthday_bonus_amount
@@ -1408,12 +1601,13 @@ async def update_birthday_setting(
     return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
 
 
-@settings_router.post("/referral")
+@admin_router.post("/admin/settings/referral")
 async def update_referral_setting(
     referral_program_text: str = Form(""),
     referral_visible: bool = Form(False),
     referral_bonus_amount: float = Form(0.0),
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_section("referal")),
 ):
     setting = await _get_or_create_setting(db)
     setting.referral_program_text = referral_program_text
@@ -1423,12 +1617,13 @@ async def update_referral_setting(
     return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
 
 
-@settings_router.post("/cashback")
+@admin_router.post("/admin/settings/cashback")
 async def update_cashback_setting(
     bonus_cashback_text: str = Form(""),
     cashback_visible: bool = Form(False),
     cashback_earn_percent: float = Form(0.0),
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_section("bonuscashback")),
 ):
     setting = await _get_or_create_setting(db)
     setting.bonus_cashback_text = bonus_cashback_text
@@ -1446,7 +1641,7 @@ async def create_banner(
     display_order: int = Form(0),
     banner_image: Optional[UploadFile] = File(None),
     db: AsyncSession = Depends(get_db),
-    owner: User = Depends(require_owner),
+    current_user: User = Depends(require_section("banner")),
 ):
     image_data, image_mime = None, None
     if banner_image and banner_image.filename:
@@ -1488,7 +1683,7 @@ async def create_banner(
 
 
 @app.post("/admin/banners/{banner_id}/toggle")
-async def toggle_banner(banner_id: int, db: AsyncSession = Depends(get_db), owner: User = Depends(require_owner)):
+async def toggle_banner(banner_id: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_section("banner"))):
     result = await db.execute(select(Banner).where(Banner.id == banner_id))
     banner = result.scalars().first()
     if not banner:
@@ -1499,7 +1694,7 @@ async def toggle_banner(banner_id: int, db: AsyncSession = Depends(get_db), owne
 
 
 @app.post("/admin/banners/{banner_id}/delete")
-async def delete_banner(banner_id: int, db: AsyncSession = Depends(get_db), owner: User = Depends(require_owner)):
+async def delete_banner(banner_id: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_section("banner"))):
     result = await db.execute(select(Banner).where(Banner.id == banner_id))
     banner = result.scalars().first()
     if not banner:
@@ -1509,12 +1704,13 @@ async def delete_banner(banner_id: int, db: AsyncSession = Depends(get_db), owne
     return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
 
 
-@settings_router.post("/terms")
+@admin_router.post("/admin/settings/terms")
 async def update_terms_settings(
     courier_terms: str = Form(""),
     partner_terms: str = Form(""),
     client_terms: str = Form(""),
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_section("shartlar")),
 ):
     setting = await _get_or_create_setting(db)
     setting.courier_terms = courier_terms
@@ -2220,6 +2416,22 @@ async def toggle_courier(user_id: int, db: AsyncSession = Depends(get_db)):
     return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
 
 
+@couriers_router.post("/{user_id}/toggle-block")
+async def toggle_courier_block(user_id: int, db: AsyncSession = Depends(get_db)):
+    """OWNER/operatorning QO'LDA bloklash/blokdan chiqarish tugmasi — avtomatik
+    kredit-limit blokidan farqli, bu yerda inson qaror qabul qiladi (masalan,
+    kuryer qarzi hali to'lanmagan bo'lsa ham, vaqtincha ishlashga ruxsat berish)."""
+    profile_query = await db.execute(
+        select(CourierProfile).join(User, User.id == CourierProfile.user_id).where(User.id == user_id)
+    )
+    profile = profile_query.scalars().first()
+    if not profile:
+        raise HTTPException(status_code=404, detail="Kuryer topilmadi")
+    profile.is_blocked = not profile.is_blocked
+    await db.commit()
+    return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
+
+
 @couriers_router.post("/{user_id}/delete")
 async def delete_courier(user_id: int, db: AsyncSession = Depends(get_db)):
     user_query = await db.execute(
@@ -2332,7 +2544,7 @@ async def update_courier_balance(
     amount: float = Form(...),
     note: Optional[str] = Form(None),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(require_owner),
 ):
     if amount <= 0:
         raise HTTPException(status_code=400, detail="Summa musbat bo'lishi kerak")
@@ -2356,6 +2568,14 @@ async def update_courier_balance(
     else:
         raise HTTPException(status_code=400, detail="Noto'g'ri amal turi")
 
+    # Bu yerda odatda "− Yechish" tugmasi — kuryer naqd pulni egasiga
+    # jismonan topshirganda bosiladi (qarz kamayadi). Agar shu tufayli
+    # qarz endi kredit limitidan past bo'lsa — bloklash AVTOMATIK yechiladi.
+    if courier.courier_profile.balance <= courier.courier_profile.credit_limit:
+        courier.courier_profile.is_blocked = False
+    elif courier.courier_profile.balance > courier.courier_profile.credit_limit:
+        courier.courier_profile.is_blocked = True
+
     db.add(Transaction(
         user_id=courier.id,
         type=tx_type,
@@ -2374,7 +2594,7 @@ async def update_partner_balance(
     amount: float = Form(...),
     note: Optional[str] = Form(None),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(require_owner),
 ):
     if amount <= 0:
         raise HTTPException(status_code=400, detail="Summa musbat bo'lishi kerak")
@@ -2408,13 +2628,13 @@ async def update_partner_balance(
 async def approve_withdrawal(
     request_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(require_section("moliya")),
 ):
     """DIQQAT: bu tugmani bosishdan oldin, pulni real hayotda (Click/Payme
-    yoki naqd) kuryer/hamkorga siz ALLAQACHON o'tkazgan bo'lishingiz kerak —
-    bu tugma faqat tizimdagi balansni shunga mos ravishda kamaytiradi va
-    tarixga yozadi, pulni o'zi jismonan yubormaydi (buning uchun hozircha
-    haqiqiy to'lov integratsiyasi yo'q)."""
+    yoki naqd) kuryer/hamkorning kartasiga siz ALLAQACHON o'tkazgan
+    bo'lishingiz kerak — bu tugma faqat tizimdagi balansni shunga mos
+    ravishda yakunlaydi (frozen_balance'dan chiqaradi) va tarixga yozadi,
+    pulni o'zi jismonan yubormaydi (haqiqiy to'lov integratsiyasi yo'q)."""
     result = await db.execute(select(WithdrawalRequest).where(WithdrawalRequest.id == request_id))
     wd = result.scalars().first()
     if not wd:
@@ -2423,24 +2643,34 @@ async def approve_withdrawal(
         raise HTTPException(status_code=400, detail="Bu so'rov allaqachon ko'rib chiqilgan")
 
     if wd.user_id:
+        # ROW-LEVEL LOCK — qarang courier_request_withdrawal'dagi izoh.
         courier_result = await db.execute(
-            select(CourierProfile).where(CourierProfile.user_id == wd.user_id)
+            select(CourierProfile).where(CourierProfile.user_id == wd.user_id).with_for_update()
         )
         profile = courier_result.scalars().first()
         if profile:
-            profile.balance -= wd.amount
+            # So'rov paytida balance -300 bo'lib, frozen_balance=50000 edi.
+            # Endi uzil-kesil "to'landi": balance 0'ga yaqinlashadi (-300+50000),
+            # frozen_balance'dan chiqariladi.
+            profile.balance += wd.amount
+            profile.frozen_balance = max(0.0, profile.frozen_balance - wd.amount)
         db.add(Transaction(
             user_id=wd.user_id, type=TransactionType.WITHDRAWAL, amount=wd.amount,
-            note=f"Pul yechish so'rovi #{wd.id} tasdiqlandi", created_by_id=current_user.id,
+            note=f"Pul yechish so'rovi #{wd.id} tasdiqlandi (karta: {wd.card_id or '—'})",
+            created_by_id=current_user.id,
         ))
     elif wd.partner_id:
-        partner_result = await db.execute(select(PartnerProfile).where(PartnerProfile.id == wd.partner_id))
+        partner_result = await db.execute(
+            select(PartnerProfile).where(PartnerProfile.id == wd.partner_id).with_for_update()
+        )
         partner = partner_result.scalars().first()
         if partner:
             partner.balance -= wd.amount
+            partner.frozen_balance = max(0.0, partner.frozen_balance - wd.amount)
         db.add(Transaction(
             partner_id=wd.partner_id, type=TransactionType.WITHDRAWAL, amount=wd.amount,
-            note=f"Pul yechish so'rovi #{wd.id} tasdiqlandi", created_by_id=current_user.id,
+            note=f"Pul yechish so'rovi #{wd.id} tasdiqlandi (karta: {wd.card_id or '—'})",
+            created_by_id=current_user.id,
         ))
 
     wd.status = WithdrawalStatus.APPROVED
@@ -2463,8 +2693,9 @@ async def approve_withdrawal(
 @finance_router.post("/withdrawals/{request_id}/reject")
 async def reject_withdrawal(
     request_id: int,
+    reject_reason: str = Form(""),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(require_section("moliya")),
 ):
     result = await db.execute(select(WithdrawalRequest).where(WithdrawalRequest.id == request_id))
     wd = result.scalars().first()
@@ -2473,9 +2704,67 @@ async def reject_withdrawal(
     if wd.status != WithdrawalStatus.PENDING:
         raise HTTPException(status_code=400, detail="Bu so'rov allaqachon ko'rib chiqilgan")
 
+    # Rad etilganda — so'ralgan summa band qilingan (frozen_balance) joydan
+    # chiqariladi, asosiy balansga HECH NARSA qo'shilmaydi (chunki so'rov
+    # paytida asosiy balansga tegilmagan edi — faqat frozen oshgan edi),
+    # natijada "mavjud mablag'" (balance − frozen) avtomatik avvalgi holatiga qaytadi.
+    if wd.user_id:
+        courier_result = await db.execute(
+            select(CourierProfile).where(CourierProfile.user_id == wd.user_id).with_for_update()
+        )
+        profile = courier_result.scalars().first()
+        if profile:
+            profile.frozen_balance = max(0.0, profile.frozen_balance - wd.amount)
+    elif wd.partner_id:
+        partner_result = await db.execute(
+            select(PartnerProfile).where(PartnerProfile.id == wd.partner_id).with_for_update()
+        )
+        partner = partner_result.scalars().first()
+        if partner:
+            partner.frozen_balance = max(0.0, partner.frozen_balance - wd.amount)
+
     wd.status = WithdrawalStatus.REJECTED
+    wd.reject_reason = reject_reason.strip() or None
     wd.processed_at = datetime.utcnow()
     wd.processed_by_id = current_user.id
+    await db.commit()
+
+    try:
+        if wd.user_id:
+            u_result = await db.execute(select(User).where(User.id == wd.user_id))
+            u = u_result.scalars().first()
+            if u and u.telegram_id:
+                reason_text = f"\nSabab: {wd.reject_reason}" if wd.reject_reason else ""
+                await send_telegram_message(
+                    u.telegram_id,
+                    f"❌ {wd.amount:,.0f} so'm yechib olish so'rovingiz rad etildi.{reason_text}",
+                )
+    except Exception as e:
+        print(f"Bildirishnoma xatoligi: {e}")
+
+    return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@finance_router.post("/operator-permissions/update")
+async def update_operator_permissions(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    owner: User = Depends(require_owner),
+):
+    """Faqat OWNER: admin panelidagi har bir bo'limni operatorga
+    ko'rsatish/yashirishni shu yerdan belgilaydi. Checkbox belgilanmagan
+    bo'lim formadan UMUMAN kelmaydi (HTML standarti) — shuning uchun
+    SECTION_LABELS_UZ ro'yxatidagi BARCHA kalitlarni kelgan/kelmaganiga
+    qarab True/False qilib yozamiz (faqat belgilanganlarni emas)."""
+    form = await request.form()
+    for section_key in SECTION_LABELS_UZ:
+        enabled = form.get(f"section_{section_key}") == "on"
+        existing = await db.execute(select(OperatorPermission).where(OperatorPermission.section_key == section_key))
+        row = existing.scalars().first()
+        if row:
+            row.enabled = enabled
+        else:
+            db.add(OperatorPermission(section_key=section_key, enabled=enabled))
     await db.commit()
     return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
 
@@ -3399,6 +3688,11 @@ async def partner_dashboard(
     )
     withdrawal_requests = withdrawal_result.scalars().all()
 
+    cards_result = await db.execute(
+        select(Card).where(Card.user_id == current_user.id, Card.is_active == True).order_by(Card.created_at.desc())
+    )
+    cards = [_card_to_dict(c) for c in cards_result.scalars().all()]
+
     return templates.TemplateResponse(
         request=request,
         name="partner.html",
@@ -3410,6 +3704,9 @@ async def partner_dashboard(
             "status_labels": STATUS_LABELS_UZ,
             "current_user": current_user,
             "withdrawal_requests": withdrawal_requests,
+            "cards": cards,
+            "MIN_WITHDRAWAL_AMOUNT": MIN_WITHDRAWAL_AMOUNT,
+            "MAX_WITHDRAWAL_AMOUNT": MAX_WITHDRAWAL_AMOUNT,
         },
     )
 
@@ -3467,16 +3764,83 @@ async def partner_order_track(
     }
 
 
-@partner_router.post("/withdraw")
-async def partner_request_withdrawal(
-    amount: float = Form(...),
+@partner_router.get("/cards")
+async def partner_list_cards(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_partner_user),
 ):
-    if amount <= 0:
-        raise HTTPException(status_code=400, detail="Summa musbat bo'lishi kerak")
-    partner = await _get_own_partner(db, current_user)
-    db.add(WithdrawalRequest(partner_id=partner.id, amount=amount, status=WithdrawalStatus.PENDING))
+    result = await db.execute(
+        select(Card).where(Card.user_id == current_user.id, Card.is_active == True).order_by(Card.created_at.desc())
+    )
+    return {"cards": [_card_to_dict(c) for c in result.scalars().all()]}
+
+
+@partner_router.post("/cards")
+async def partner_add_card(
+    card_number: str = Form(...),
+    card_holder_name: str = Form(...),
+    expire_month: int = Form(...),
+    expire_year: int = Form(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_partner_user),
+):
+    await _add_card_for_user(db, current_user.id, card_number, card_holder_name, expire_month, expire_year)
+    return RedirectResponse(url="/partner", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@partner_router.post("/cards/{card_id}/delete")
+async def partner_delete_card(
+    card_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_partner_user),
+):
+    await _delete_card_for_user(db, current_user.id, card_id)
+    return RedirectResponse(url="/partner", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@partner_router.post("/withdraw")
+async def partner_request_withdrawal(
+    amount: float = Form(...),
+    card_id: int = Form(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_partner_user),
+):
+    """Hamkorning 'balance' maydoni — egasi hamkorga qarzdor bo'lgan summa
+    (musbat). So'ralgan summa darhol frozen_balance'ga o'tkaziladi — shunda
+    (1) hamkor bir vaqtning o'zida ikkita so'rov yuborib, bor-yo'g'idan
+    ko'p pul so'rab ketolmaydi (double-spend), (2) admin ro'yxatida "qancha
+    pul band qilingani" ko'rinib turadi."""
+    if amount < MIN_WITHDRAWAL_AMOUNT:
+        raise HTTPException(status_code=400, detail=f"Minimal summa — {MIN_WITHDRAWAL_AMOUNT:,.0f} so'm")
+    if amount > MAX_WITHDRAWAL_AMOUNT:
+        raise HTTPException(status_code=400, detail=f"Bir martalik maksimal summa — {MAX_WITHDRAWAL_AMOUNT:,.0f} so'm")
+
+    card_result = await db.execute(
+        select(Card).where(Card.id == card_id, Card.user_id == current_user.id, Card.is_active == True)
+    )
+    if not card_result.scalars().first():
+        raise HTTPException(status_code=400, detail="Karta topilmadi — avval kartangizni qo'shing")
+
+    # ROW-LEVEL LOCK: shu hamkorning qatori bazada "qulflanadi" — agar
+    # xuddi shu lahzada ikkinchi so'rov kelsa (masalan ikki marta tez-tez
+    # bosilsa), u shu SELECT yakunlanguncha KUTADI, shunda ikkalasi ham
+    # eski (yangilanmagan) balansni ko'rib, limitdan oshirib yubormaydi.
+    partner_result = await db.execute(
+        select(PartnerProfile).where(PartnerProfile.user_id == current_user.id).with_for_update()
+    )
+    partner = partner_result.scalars().first()
+    if not partner:
+        raise HTTPException(status_code=404, detail="Hamkor profili topilmadi")
+
+    available = partner.balance - partner.frozen_balance
+    if amount > available:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Yechib olish uchun mavjud mablag' yetarli emas (mavjud: {available:,.0f} so'm)",
+        )
+
+    partner.frozen_balance += amount
+    db.add(WithdrawalRequest(partner_id=partner.id, card_id=card_id, amount=amount, status=WithdrawalStatus.PENDING))
     await db.commit()
     return RedirectResponse(url="/partner", status_code=status.HTTP_303_SEE_OTHER)
 
@@ -3744,6 +4108,11 @@ async def courier_dashboard(
     )
     withdrawal_requests = withdrawal_result.scalars().all()
 
+    cards_result = await db.execute(
+        select(Card).where(Card.user_id == current_user.id, Card.is_active == True).order_by(Card.created_at.desc())
+    )
+    cards = [_card_to_dict(c) for c in cards_result.scalars().all()]
+
     return templates.TemplateResponse(
         request=request,
         name="courier.html",
@@ -3754,6 +4123,9 @@ async def courier_dashboard(
             "my_active_orders": my_active_orders,
             "history_orders": history_orders,
             "withdrawal_requests": withdrawal_requests,
+            "cards": cards,
+            "MIN_WITHDRAWAL_AMOUNT": MIN_WITHDRAWAL_AMOUNT,
+            "MAX_WITHDRAWAL_AMOUNT": MAX_WITHDRAWAL_AMOUNT,
             "COURIER_SOUND_OPTIONS": COURIER_SOUND_OPTIONS,
         },
     )
@@ -3840,15 +4212,81 @@ async def courier_available_orders_json(
     return JSONResponse({"available_ids": ids, "my_active_ids": my_ids})
 
 
-@courier_router_app.post("/withdraw")
-async def courier_request_withdrawal(
-    amount: float = Form(...),
+@courier_router_app.get("/cards")
+async def courier_list_cards(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_courier_user),
 ):
-    if amount <= 0:
-        raise HTTPException(status_code=400, detail="Summa musbat bo'lishi kerak")
-    db.add(WithdrawalRequest(user_id=current_user.id, amount=amount, status=WithdrawalStatus.PENDING))
+    result = await db.execute(
+        select(Card).where(Card.user_id == current_user.id, Card.is_active == True).order_by(Card.created_at.desc())
+    )
+    return {"cards": [_card_to_dict(c) for c in result.scalars().all()]}
+
+
+@courier_router_app.post("/cards")
+async def courier_add_card(
+    card_number: str = Form(...),
+    card_holder_name: str = Form(...),
+    expire_month: int = Form(...),
+    expire_year: int = Form(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_courier_user),
+):
+    await _add_card_for_user(db, current_user.id, card_number, card_holder_name, expire_month, expire_year)
+    return RedirectResponse(url="/courier", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@courier_router_app.post("/cards/{card_id}/delete")
+async def courier_delete_card(
+    card_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_courier_user),
+):
+    await _delete_card_for_user(db, current_user.id, card_id)
+    return RedirectResponse(url="/courier", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@courier_router_app.post("/withdraw")
+async def courier_request_withdrawal(
+    amount: float = Form(...),
+    card_id: int = Form(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_courier_user),
+):
+    """Kuryerning 'balance' maydoni — kuryerning NAQD QARZI (musbat =
+    egasiga qarzdor). Pul yechish FAQAT balance MANFIY bo'lganda mumkin
+    (ya'ni egasi kuryerga qarzdor — masalan bonus/haq). So'ralgan summa
+    darhol frozen_balance'ga o'tkaziladi (double-spend himoyasi)."""
+    if amount < MIN_WITHDRAWAL_AMOUNT:
+        raise HTTPException(status_code=400, detail=f"Minimal summa — {MIN_WITHDRAWAL_AMOUNT:,.0f} so'm")
+    if amount > MAX_WITHDRAWAL_AMOUNT:
+        raise HTTPException(status_code=400, detail=f"Bir martalik maksimal summa — {MAX_WITHDRAWAL_AMOUNT:,.0f} so'm")
+
+    card_result = await db.execute(
+        select(Card).where(Card.id == card_id, Card.user_id == current_user.id, Card.is_active == True)
+    )
+    if not card_result.scalars().first():
+        raise HTTPException(status_code=400, detail="Karta topilmadi — avval kartangizni qo'shing")
+
+    # ROW-LEVEL LOCK — qarang partner_request_withdrawal'dagi izoh.
+    courier_result = await db.execute(
+        select(CourierProfile).where(CourierProfile.user_id == current_user.id).with_for_update()
+    )
+    courier_profile = courier_result.scalars().first()
+    if not courier_profile:
+        raise HTTPException(status_code=404, detail="Kuryer profili topilmadi")
+
+    available = -courier_profile.balance - courier_profile.frozen_balance
+    if available <= 0:
+        raise HTTPException(status_code=400, detail="Hozircha yechib olish uchun mavjud mablag' yo'q")
+    if amount > available:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Yechib olish uchun mavjud mablag' yetarli emas (mavjud: {available:,.0f} so'm)",
+        )
+
+    courier_profile.frozen_balance += amount
+    db.add(WithdrawalRequest(user_id=current_user.id, card_id=card_id, amount=amount, status=WithdrawalStatus.PENDING))
     await db.commit()
     return RedirectResponse(url="/courier", status_code=status.HTTP_303_SEE_OTHER)
 
@@ -3859,6 +4297,20 @@ async def courier_accept_order(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_courier_user),
 ):
+    courier_profile_result = await db.execute(
+        select(CourierProfile).where(CourierProfile.user_id == current_user.id)
+    )
+    courier_profile = courier_profile_result.scalars().first()
+    if courier_profile and courier_profile.is_blocked:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"Sizda {courier_profile.balance:,.0f} so'm naqd pul qarzi bor — bu ruxsat etilgan "
+                f"chegaradan ({courier_profile.credit_limit:,.0f} so'm) oshib ketgan. Yangi buyurtma "
+                f"qabul qilishdan oldin, yig'gan naqd pulingizni egasiga topshiring."
+            ),
+        )
+
     order_result = await db.execute(
         select(Order).where(Order.id == order_id, Order.status == OrderStatus.LOOKING_FOR_COURIER)
     )

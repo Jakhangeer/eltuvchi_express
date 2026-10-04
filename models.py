@@ -39,8 +39,10 @@ class WithdrawalStatus(enum.Enum):
 
 
 class TransactionType(enum.Enum):
-    DEPOSIT = "deposit"      # balansga pul qo'shish (masalan, naqd pulni "hisobga olish")
+    DEPOSIT = "deposit"        # balansga pul qo'shish (masalan, naqd pulni "hisobga olish")
     WITHDRAWAL = "withdrawal"  # balansdan pul yechish (masalan, kuryerga naqd to'lab, balansdan ayirish)
+    ORDER_FEE = "order_fee"    # buyurtma orqali avtomatik hisoblangan komissiya/haq (kelajakda batafsil auditing uchun)
+    REFUND = "refund"          # bekor qilingan/xato buyurtma bo'yicha qaytarilgan pul
 
 
 class City(Base):
@@ -102,7 +104,25 @@ class CourierProfile(Base):
     transport_type = Column(String, default="walking")
     is_approved = Column(Boolean, default=False)
     is_online = Column(Boolean, default=False)
+
+    # `balance` — kuryerning NAQD PUL QARZI: mijozlardan naqd yig'ilgan, lekin
+    # hali egasiga topshirilmagan summa (musbat = qarz bor). Buyurtma
+    # yetkazilganda avtomatik oshadi (qarang apply_cod_delivery_financials),
+    # egasiga naqd topshirilganda admin panelidan kamaytiriladi.
     balance = Column(Float, default=0.0)
+
+    # Qarz shu chegaradan oshsa, kuryerga YANGI BUYURTMA berish avtomatik
+    # to'xtatiladi (blok tizimi) — qarang courier_accept_order va
+    # auto_assign_nearest_courier.
+    credit_limit = Column(Float, default=300000.0)
+    is_blocked = Column(Boolean, default=False)
+
+    # Kuryer "Pul yechish" so'rovi yuborganda (bu FAQAT egasi kuryerga
+    # qarzdor bo'lgan — balance MANFIY bo'lgan holatda mumkin, masalan bonus)
+    # so'ralgan summa shu yerga "muzlatiladi" — admin tasdiqlagunga qadar
+    # ikki marta so'ralib (double-spend) ketmasligi uchun.
+    frozen_balance = Column(Float, default=0.0)
+
     terms_accepted_at = Column(DateTime, nullable=True)
 
     # Kuryerning JONLI joylashuvi — brauzer/Telegram Mini App'dagi Geolocation
@@ -133,7 +153,16 @@ class PartnerProfile(Base):
     category = Column(String, nullable=False)
     address = Column(String, nullable=False)
     is_open = Column(Boolean, default=True)
+
+    # `balance` — egasi hamkorga QARZDOR bo'lgan summa (buyurtmalardan
+    # tushgan, komissiya chegirilgan sof daromad) — hamkor buni "Pul yechish"
+    # orqali so'rab oladi.
     balance = Column(Float, default=0.0)
+
+    # Pul yechish so'rovi yuborilganda summa shu yerga "muzlatiladi" —
+    # admin tasdiqlagunga/rad etgunga qadar balansdan allaqachon chiqarilgan,
+    # lekin hali "yakunlanmagan" holatda turadi (race-condition himoyasi).
+    frozen_balance = Column(Float, default=0.0)
 
     commission_rate = Column(Float, default=10.0)
     opening_time = Column(String, default="09:00")
@@ -304,6 +333,12 @@ class SystemSetting(Base):
     partner_terms = Column(Text, nullable=True)
     client_terms = Column(Text, nullable=True)
 
+    # Admin panelidagi qaysi bo'limlarni OPERATOR (ADMIN roli) ko'rMASLIGI
+    # kerakligi — OWNER o'zi tanlaydi. JSON massiv sifatida saqlanadi,
+    # masalan: '["moliya", "operatorlar"]'. Bo'sh/NULL bo'lsa — operator
+    # OWNER-only bo'lmagan barcha bo'limlarni ko'radi (standart holat).
+    operator_hidden_sections = Column(Text, nullable=True)
+
 
 class Transaction(Base):
     __tablename__ = "transactions"
@@ -343,14 +378,73 @@ class WithdrawalRequest(Base):
     amount = Column(Float, nullable=False)
     status = Column(Enum(WithdrawalStatus), default=WithdrawalStatus.PENDING)
 
+    # Pul qaysi kartaga o'tkazilishi kerak — P2P o'tkazma uchun OWNER'ga
+    # to'liq (deshifrlangan) raqam ko'rinishi kerak, qarang card_security.py
+    card_id = Column(Integer, ForeignKey("cards.id"), nullable=True)
+
     requested_at = Column(DateTime, default=datetime.utcnow)
     processed_at = Column(DateTime, nullable=True)
+    # DIQQAT: nomi tarixiy sabablarga ko'ra `processed_by_id`, lekin bu
+    # har doim bir ADMIN/OPERATOR akkauntiga (users.id) ishora qiladi —
+    # ya'ni aslida "processed_by_admin_id" bilan bir xil narsa.
     processed_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     note = Column(String, nullable=True)
+    # Rad etish sababi — faqat status=REJECTED bo'lganda to'ldiriladi,
+    # foydalanuvchiga ko'rsatiladi (shaffoflik uchun).
+    reject_reason = Column(String, nullable=True)
 
     user = relationship("User", foreign_keys=[user_id])
     partner = relationship("PartnerProfile", foreign_keys=[partner_id])
+    card = relationship("Card")
     processed_by = relationship("User", foreign_keys=[processed_by_id])
+
+
+class Card(Base):
+    """Kuryer/hamkorning pul yechish uchun qo'shgan plastik kartasi.
+
+    XAVFSIZLIK: `encrypted_card_number` HECH QACHON ochiq raqam emas —
+    qarang card_security.py (Fernet shifrlash). Bu yerda faqat shifrlangan
+    matn saqlanadi; ekranga chiqarishda maskalanadi, faqat OWNER/operator
+    P2P o'tkazma paytida to'liq (deshifrlangan) holda ko'radi."""
+    __tablename__ = "cards"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+
+    encrypted_card_number = Column(Text, nullable=False)
+    card_holder_name = Column(String, nullable=False)
+    expire_month = Column(Integer, nullable=False)
+    expire_year = Column(Integer, nullable=False)  # to'rt xonali, masalan 2027
+
+    # BIN (birinchi 6 raqam) orqali avtomatik aniqlanadi — qarang
+    # card_security.detect_card_bin(). Har safar qayta hisoblash shart
+    # bo'lmasligi uchun bazada ham saqlanadi.
+    bank_name = Column(String, nullable=True)
+    card_type = Column(String, nullable=True)  # uzcard / humo / visa / mastercard / mir / unknown
+
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User")
+
+
+class OperatorPermission(Base):
+    """OWNER tomonidan boshqariladigan, admin panelidagi har bir bo'lim
+    (data-page) operatorga (ADMIN roli) ko'rinadimi-yo'qmi degan global
+    kalit-qiymat ro'yxati. `section_key` — admin.html'dagi data-page bilan
+    bir xil (masalan 'moliya', 'operatorlar', 'banner'...).
+
+    DIQQAT: bu PER-OPERATOR emas, BARCHA operatorlar uchun BIR XIL
+    (foydalanuvchining so'zi bilan "barcha qismlarda operatorga ko'rinishi/
+    ko'rinmasligini admin o'zi hal qiladi"). Jadvalda qator bo'lmagan
+    bo'lim — standart (xavfsiz) qiymatni oladi, qarang
+    DEFAULT_OPERATOR_SECTION_VISIBILITY (main.py).
+    """
+    __tablename__ = "operator_permissions"
+
+    section_key = Column(String, primary_key=True)
+    enabled = Column(Boolean, default=False, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class Banner(Base):
