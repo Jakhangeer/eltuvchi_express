@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{ partner.brand_name }} — Hamkor Kabineti</title>
+    <title>{{ partner.brand_name }} — Hamkor Kabineti</title><link rel="icon" type="image/png" href="/static/images/favicon.png"><link rel="apple-touch-icon" href="/static/images/apple-touch-icon.png">
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="/static/js/ui-mode.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
@@ -120,7 +120,7 @@
     <header class="glass sticky top-0 z-20 px-4 py-3">
         <div class="flex justify-between items-center">
             <div>
-                <h1 class="text-base font-extrabold flex items-center gap-1.5">🏪 {{ partner.brand_name }}</h1>
+                <h1 class="text-base font-extrabold flex items-center gap-2"><img src="/static/images/logo-mark.png" alt="ZooMo" class="w-8 h-8 object-contain rounded-lg bg-white p-1 shrink-0"> {{ partner.brand_name }}</h1>
                 <p class="text-[11px] text-slate-400">{{ current_user.full_name }}</p>
             </div>
             <div id="live-clock" class="text-[11px] font-mono text-slate-400 hidden sm:block glass rounded-full px-2.5 py-1"></div>

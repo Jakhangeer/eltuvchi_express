@@ -296,7 +296,7 @@ async def lifespan(app: FastAPI):
     await close_telegram_bot_client()
 
 
-app = FastAPI(title="Eltuvchi Express API", lifespan=lifespan)
+app = FastAPI(title="ZooMo API", lifespan=lifespan)
 
 # Sessiya (login holatini "eslab qolish") uchun. SESSION_SECRET_KEY albatta
 # .env faylida bo'lishi kerak — aks holda server qayta ishga tushganda barcha
@@ -3361,7 +3361,7 @@ async def _handle_telegram_text_message(chat_id, text, contact, message, request
 
         await send_telegram_message(
             chat_id,
-            "Assalomu alaykum! 👋 <b>Eltuvchi Express</b> botiga xush kelibsiz.\n\n"
+            "Assalomu alaykum! 👋 <b>ZooMo</b> botiga xush kelibsiz.\n\n"
             "Tizimga ulanish uchun quyidagi tugma orqali telefon raqamingizni yuboring:",
             reply_markup=contact_request_keyboard(),
         )
@@ -4822,4 +4822,4 @@ app.include_router(finance_router)
 
 @app.get("/")
 async def root():
-    return {"status": "ok", "message": "Eltuvchi Express API is running"}
+    return {"status": "ok", "message": "ZooMo API is running"}

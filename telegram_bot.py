@@ -1,5 +1,5 @@
 """
-Eltuvchi Express & J-Global Tijorat Tizimi
+ZooMo Delivery & J-Global Tijorat Tizimi
 Telegram Bot va Mini App Integratsiyasi (Production-Ready Versiya)
 
 Ushbu modul yuqori yuklama (high-load) sharoitida buyurtmalarni uzilishlarsiz 
