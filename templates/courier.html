@@ -203,28 +203,53 @@
             </div>
             {% endif %}
 
-            {% if courier_profile and debt < 0 %}
-            {% set available = -debt %}
-            <div class="mt-3 pt-3 border-t border-white/10">
-                <p class="text-[11px] text-emerald-300 mb-2">✅ Egasi sizga {{ "%.0f"|format(available) }} so'm qarzdor — kartangizga yechib olishingiz mumkin.</p>
-                {% if cards %}
-                <form action="/courier/withdraw" method="POST" class="js-haptic-form flex flex-col sm:flex-row gap-2">
-                    <select name="card_id" class="glass-input flex-1 p-2.5 rounded-xl text-sm" required>
-                        {% for c in cards %}
-                        <option value="{{ c.id }}">{{ c.bank_name }} · {{ c.masked_number }} · {{ c.card_holder_name }}</option>
-                        {% endfor %}
-                    </select>
-                    <div class="flex gap-2">
-                        <input type="number" name="amount" placeholder="Summa" min="{{ MIN_WITHDRAWAL_AMOUNT }}" max="{{ [available, MAX_WITHDRAWAL_AMOUNT]|min }}" class="glass-input w-28 p-2.5 rounded-xl text-sm" required>
-                        <button type="submit" class="btn-press btn-accept text-white px-4 py-2 rounded-xl text-sm font-bold whitespace-nowrap">💸 Yechish</button>
-                    </div>
-                </form>
-                <p class="text-[10px] text-slate-500 mt-1.5">Minimal {{ "%.0f"|format(MIN_WITHDRAWAL_AMOUNT) }} so'm.</p>
-                {% else %}
-                <p class="text-xs text-amber-300">⚠️ Avval pastdagi "Kartalarim" bo'limidan karta qo'shing, shundan keyin yecha olasiz.</p>
-                {% endif %}
+        </div>
+
+        <!-- PUL YECHISH SO'ROVI — doim ko'rinadi (mavjud mablag' 0 bo'lsa ham) -->
+        {% set frozen = (courier_profile.frozen_balance or 0) if courier_profile else 0 %}
+        {% set available = ((-debt) - frozen) if (courier_profile and debt < 0) else 0 %}
+        {% if available < 0 %}{% set available = 0 %}{% endif %}
+        {% set can_request = available >= MIN_WITHDRAWAL_AMOUNT and cards %}
+        <div class="glass fade-up stagger-1 rounded-2xl p-4" id="withdraw-card">
+            <div class="flex items-center justify-between mb-3">
+                <h2 class="text-sm font-extrabold flex items-center gap-1.5">💸 Pul yechish so'rovi</h2>
+                <span class="text-[10px] text-slate-500">Admin tasdiqlaydi</span>
             </div>
+
+            <div class="grid grid-cols-2 gap-2 mb-3">
+                <div class="rounded-xl p-3" style="background:rgba(52,211,153,.10); border:1px solid rgba(52,211,153,.25);">
+                    <p class="text-[10px] text-emerald-300/80 font-semibold">Yechish mumkin</p>
+                    <p class="text-lg font-extrabold text-emerald-400">{{ "%.0f"|format(available) }} <span class="text-xs font-semibold">so'm</span></p>
+                </div>
+                <div class="rounded-xl p-3" style="background:rgba(251,191,36,.08); border:1px solid rgba(251,191,36,.22);">
+                    <p class="text-[10px] text-amber-300/80 font-semibold">Ko'rib chiqilmoqda</p>
+                    <p class="text-lg font-extrabold text-amber-400">{{ "%.0f"|format(frozen) }} <span class="text-xs font-semibold">so'm</span></p>
+                </div>
+            </div>
+
+            {% if not cards %}
+            <p class="text-xs text-amber-300 mb-2">⚠️ Pul yechish uchun avval pastdagi "Kartalarim" bo'limidan karta qo'shing.</p>
             {% endif %}
+
+            <form action="/courier/withdraw" method="POST" class="js-haptic-form flex flex-col sm:flex-row gap-2" {% if not can_request %}aria-disabled="true"{% endif %}>
+                <select name="card_id" class="glass-input flex-1 p-2.5 rounded-xl text-sm" {% if not can_request %}disabled{% endif %} required>
+                    {% if cards %}
+                    {% for c in cards %}
+                    <option value="{{ c.id }}">{{ c.bank_name }} · {{ c.masked_number }} · {{ c.card_holder_name }}</option>
+                    {% endfor %}
+                    {% else %}
+                    <option value="">Karta qo'shilmagan</option>
+                    {% endif %}
+                </select>
+                <div class="flex gap-2">
+                    <input type="number" name="amount" placeholder="Summa" min="{{ MIN_WITHDRAWAL_AMOUNT }}" max="{{ [available, MAX_WITHDRAWAL_AMOUNT]|min }}" class="glass-input w-28 p-2.5 rounded-xl text-sm" {% if not can_request %}disabled{% endif %} required>
+                    <button type="submit" class="btn-press btn-accept text-white px-4 py-2 rounded-xl text-sm font-bold whitespace-nowrap {% if not can_request %}opacity-50 pointer-events-none{% endif %}" {% if not can_request %}disabled{% endif %}>💸 Yechish</button>
+                </div>
+            </form>
+            <p class="text-[10px] text-slate-500 mt-1.5">
+                Minimal {{ "%.0f"|format(MIN_WITHDRAWAL_AMOUNT) }} so'm, bir martalik maksimal {{ "%.0f"|format(MAX_WITHDRAWAL_AMOUNT) }} so'm.
+                {% if available < MIN_WITHDRAWAL_AMOUNT %}Hozircha yechib olish mumkin bo'lgan mablag' yo'q — u egasi hisobingizga mablag' o'tkazganda paydo bo'ladi.{% endif %}
+            </p>
 
             {% if withdrawal_requests %}
             <div class="mt-3 pt-3 border-t border-white/10 space-y-2">

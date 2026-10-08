@@ -1097,7 +1097,7 @@
             <div class="card-bg bg-white p-6 rounded-2xl shadow-md col-span-1 md:col-span-2" id="transactions-panel">
                 {% set ns = namespace(dep=0, wd=0) %}
                 {% for tx in recent_transactions %}
-                    {% if tx.type.value == 'deposit' %}{% set ns.dep = ns.dep + tx.amount %}{% else %}{% set ns.wd = ns.wd + tx.amount %}{% endif %}
+                    {% if tx.type.value == 'deposit' %}{% set ns.dep = ns.dep + tx.amount %}{% elif tx.type.value == 'withdrawal' %}{% set ns.wd = ns.wd + tx.amount %}{% endif %}
                 {% endfor %}
 
                 <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
@@ -1129,21 +1129,21 @@
 
                 <div class="overflow-y-auto max-h-[34rem] space-y-2.5 pr-1" id="tx-list">
                     {% for tx in recent_transactions %}
-                    <div class="tx-row {% if tx.type.value == 'deposit' %}tx-row-in{% else %}tx-row-out{% endif %}"
+                    <div class="tx-row {% if tx.type.value in ('deposit', 'order_fee') %}tx-row-in{% else %}tx-row-out{% endif %}"
                          data-tx-kind="{% if tx.user %}courier{% elif tx.partner %}partner{% else %}other{% endif %}"
                          data-tx-type="{{ tx.type.value }}" data-tx-amount="{{ tx.amount }}">
-                        <div class="tx-icon">{% if tx.type.value == 'deposit' %}⬆{% else %}⬇{% endif %}</div>
+                        <div class="tx-icon">{% if tx.type.value in ('deposit', 'order_fee') %}⬆{% else %}⬇{% endif %}</div>
                         <div class="min-w-0 flex-1">
                             <p class="tx-who">
                                 {% if tx.user %}🛵 {{ tx.user.full_name }}{% elif tx.partner %}🏪 {{ tx.partner.brand_name }}{% else %}—{% endif %}
-                                <span class="tx-badge">{% if tx.type.value == 'deposit' %}To'ldirildi{% else %}Yechildi{% endif %}</span>
+                                <span class="tx-badge">{% if tx.type.value == 'deposit' %}To'ldirildi{% elif tx.type.value == 'order_fee' %}Hisoblandi{% else %}Yechildi{% endif %}</span>
                             </p>
                             <p class="tx-meta">
                                 {{ tx.note or 'Izohsiz' }} · 👤 {{ tx.created_by.full_name if tx.created_by else '—' }} · 🕐 {{ tx.created_at|uzb_time('%d.%m.%Y %H:%M') }}
                             </p>
                         </div>
                         <div class="tx-amount">
-                            {% if tx.type.value == 'deposit' %}+{% else %}−{% endif %}{{ "{:,.0f}".format(tx.amount).replace(',', ' ') }}
+                            {% if tx.type.value in ('deposit', 'order_fee') %}+{% else %}−{% endif %}{{ "{:,.0f}".format(tx.amount).replace(',', ' ') }}
                             <span>so'm</span>
                         </div>
                     </div>
@@ -2521,7 +2521,7 @@
                 if (match) {
                     count++;
                     const amt = parseFloat(row.dataset.txAmount) || 0;
-                    if (row.dataset.txType === 'deposit') dep += amt; else wd += amt;
+                    if (row.dataset.txType === 'deposit') dep += amt; else if (row.dataset.txType === 'withdrawal') wd += amt;
                 }
             });
             const pill = document.getElementById('tx-count-pill');

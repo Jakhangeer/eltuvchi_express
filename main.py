@@ -1416,26 +1416,51 @@ async def apply_cod_delivery_financials(db: AsyncSession, order: Order) -> None:
     courier_earning = order.delivery_fee * courier_pct
     courier_owes = (order.total_price + order.delivery_fee) - courier_earning
 
-    if order.courier_id and courier_owes > 0:
+    # P2P (karta orqali) TO'LANGAN buyurtma: mijoz pulni to'g'ridan-to'g'ri
+    # platformaning kartasiga o'tkazgan va admin/bot buni TASDIQLAGAN
+    # (payment_verified) — ya'ni kuryer mijozdan NAQD PUL OLMAGAN. Shuning uchun
+    # unga naqd qarz yozilmaydi; aksincha, uning yetkazish haqi (ulushi) platforma
+    # tomonidan unga qarz bo'lib, balansidan AYIRILADI (balans manfiy = egasi
+    # kuryerga qarzdor) — kuryer buni "Pul yechish" orqali kartasiga yechadi.
+    # Tasdiqlanmagan P2P buyurtma (masalan admin Kanban'da qo'lda "Yetkazildi"
+    # qilgan bo'lsa) avvalgidek naqd hisoblanadi — pul kelganiga ishonch yo'q.
+    is_prepaid_p2p = (order.payment_method == "p2p" and bool(order.payment_verified))
+
+    if order.courier_id and (courier_owes > 0 or (is_prepaid_p2p and courier_earning > 0)):
         courier_result = await db.execute(
-            select(User).where(User.id == order.courier_id).options(selectinload(User.courier_profile))
+            select(User)
+            .where(User.id == order.courier_id)
+            .options(selectinload(User.courier_profile))
         )
         courier = courier_result.scalars().first()
         if courier and courier.courier_profile:
-            courier.courier_profile.balance += courier_owes
-            db.add(Transaction(
-                user_id=courier.id,
-                type=TransactionType.DEPOSIT,
-                amount=courier_owes,
-                note=f"Naqd pul yig'ildi — buyurtma #{order.id} (sizga topshirilishi kerak)",
-                created_by_id=None,
-            ))
-            # KREDIT LIMITI: qarz belgilangan chegaradan oshsa, kuryer
-            # avtomatik bloklanadi — yangi buyurtma qabul qila olmaydi,
-            # to'plagan naqd pulini egasiga topshirgunga (yoki admin
-            # balansni qo'lda kamaytirgunga) qadar.
-            if (courier.courier_profile.balance or 0) > (courier.courier_profile.credit_limit or 0):
-                courier.courier_profile.is_blocked = True
+            if is_prepaid_p2p:
+                if courier_earning > 0:
+                    courier.courier_profile.balance = (courier.courier_profile.balance or 0) - courier_earning
+                    db.add(Transaction(
+                        user_id=courier.id,
+                        type=TransactionType.ORDER_FEE,
+                        amount=courier_earning,
+                        note=f"Yetkazish haqi — buyurtma #{order.id} (mijoz karta orqali to'lagan, yechib olishingiz mumkin)",
+                        created_by_id=None,
+                    ))
+                    # DIQQAT: bu yerda is_blocked'ga TEGILMAYDI — admin kuryerni qo'lda
+                    # bloklagan bo'lishi mumkin, avtomatik hisob buni bekor qilib yubormasin.
+            else:
+                courier.courier_profile.balance = (courier.courier_profile.balance or 0) + courier_owes
+                db.add(Transaction(
+                    user_id=courier.id,
+                    type=TransactionType.DEPOSIT,
+                    amount=courier_owes,
+                    note=f"Naqd pul yig'ildi — buyurtma #{order.id} (sizga topshirilishi kerak)",
+                    created_by_id=None,
+                ))
+                # KREDIT LIMITI: qarz belgilangan chegaradan oshsa, kuryer
+                # avtomatik bloklanadi — yangi buyurtma qabul qila olmaydi,
+                # to'plagan naqd pulini egasiga topshirgunga (yoki admin
+                # balansni qo'lda kamaytirgunga) qadar.
+                if (courier.courier_profile.balance or 0) > (courier.courier_profile.credit_limit or 0):
+                    courier.courier_profile.is_blocked = True
 
     if order.partner_id:
         partner_result = await db.execute(select(PartnerProfile).where(PartnerProfile.id == order.partner_id))
