@@ -170,7 +170,7 @@
         <div class="fade-up rounded-2xl p-4" style="background:rgba(244,63,94,.12); border:1px solid rgba(244,63,94,.35);">
             <p class="text-sm font-bold text-rose-300 flex items-center gap-2">🚫 Siz vaqtincha bloklangansiz</p>
             <p class="text-xs text-rose-200/80 mt-1">
-                Qarzingiz ruxsat etilgan chegaradan ({{ "%.0f"|format(courier_profile.credit_limit) }} so'm) oshib ketdi — yangi buyurtma qabul qila olmaysiz.
+                Qarzingiz ruxsat etilgan chegaradan ({{ "%.0f"|format(courier_profile.credit_limit or 0) }} so'm) oshib ketdi — yangi buyurtma qabul qila olmaysiz.
                 Yig'gan naqd pulingizni egasiga topshiring (yoki pastdan "Yechib olish" orqali so'rov yuboring), shundan keyin bloklash avtomatik olinadi.
             </p>
         </div>
@@ -178,8 +178,8 @@
 
         <!-- BALANS / QARZ -->
         <div class="glass fade-up stagger-1 rounded-2xl p-4" id="balance-card">
-            {% set debt = courier_profile.balance if courier_profile else 0 %}
-            {% set limit = courier_profile.credit_limit if courier_profile else 300000 %}
+            {% set debt = (courier_profile.balance or 0) if courier_profile else 0 %}
+            {% set limit = (courier_profile.credit_limit or 300000) if courier_profile else 300000 %}
             {% set used_pct = (debt / limit * 100) if (courier_profile and limit > 0 and debt > 0) else 0 %}
             <div class="flex justify-between items-center">
                 <span class="text-xs text-slate-400">💰 Sizdagi qarz (egasiga topshirilishi kerak)</span>
@@ -194,7 +194,7 @@
             {% if courier_profile and debt > 0 %}
             <div class="mt-3">
                 <div class="flex justify-between text-[10px] text-slate-500 mb-1">
-                    <span>Limit: {{ "%.0f"|format(limit) }} so'm</span>
+                    <span>Limit: {{ "%.0f"|format(limit or 0) }} so'm</span>
                     <span>{{ "%.0f"|format(used_pct) }}%</span>
                 </div>
                 <div class="w-full h-1.5 rounded-full overflow-hidden" style="background:rgba(255,255,255,.08);">

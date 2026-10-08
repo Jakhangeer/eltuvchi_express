@@ -158,6 +158,44 @@ def _relax_legacy_not_null_columns(sync_conn):
                 print(f"[AUTO-MIGRATE OGOHLANTIRISH] {table.name}.{col['name']}: {e}")
 
 
+def _backfill_null_defaults(sync_conn):
+    """SABAB: auto_sync_missing_columns yangi ustunni DEFAULT'SIZ qo'shadi, shuning
+    uchun jadvalda ALLAQACHON mavjud qatorlarda bu ustun NULL bo'lib qoladi
+    (SQLAlchemy'dagi `default=...` faqat YANGI yozuvlarga qo'llanadi). Natijada
+    eski kuryerlarda credit_limit/frozen_balance/is_blocked = None bo'lib,
+    `"%.0f"|format(None)` yoki `balance > None` kabi joylar "TypeError: must be
+    real number, not NoneType" bilan yiqilardi (admin panel ochilmay qolardi).
+
+    Bu funksiya HAR safar ishga tushganda modeldagi oddiy (son/mantiqiy) standart
+    qiymatlarni NULL turgan qatorlarga yozib chiqadi. Idempotent va xavfsiz:
+    faqat NULL qatorlarga tegadi, mavjud qiymatlarni o'zgartirmaydi."""
+    from sqlalchemy import Float as _Float, Integer as _Integer, Boolean as _Boolean
+    inspector = sa_inspect(sync_conn)
+    existing_tables = set(inspector.get_table_names())
+    for table in Base.metadata.sorted_tables:
+        if table.name not in existing_tables:
+            continue
+        db_columns = {c["name"] for c in inspector.get_columns(table.name)}
+        for column in table.columns:
+            if column.primary_key or column.name not in db_columns:
+                continue
+            default = column.default
+            if default is None or not getattr(default, "is_scalar", False):
+                continue
+            if not isinstance(column.type, (_Float, _Integer, _Boolean)):
+                continue
+            try:
+                with sync_conn.begin_nested():  # savepoint — bitta xato qolganlarni buzmasin
+                    result = sync_conn.execute(
+                        text(f'UPDATE "{table.name}" SET "{column.name}" = :v WHERE "{column.name}" IS NULL'),
+                        {"v": default.arg},
+                    )
+                    if result.rowcount:
+                        print(f"[AUTO-MIGRATE] NULL to'ldirildi: {table.name}.{column.name} = {default.arg!r} ({result.rowcount} qator)")
+            except Exception as e:
+                print(f"[AUTO-MIGRATE OGOHLANTIRISH] backfill {table.name}.{column.name}: {e}")
+
+
 async def auto_sync_missing_columns(conn):
     """
     Modeldagi (models.py) har bir ustunni bazadagi haqiqiy holat bilan
@@ -220,6 +258,7 @@ async def auto_sync_missing_columns(conn):
 
     await conn.run_sync(_sync_columns)
     await conn.run_sync(_relax_legacy_not_null_columns)
+    await conn.run_sync(_backfill_null_defaults)
 
 
 @asynccontextmanager
@@ -1395,7 +1434,7 @@ async def apply_cod_delivery_financials(db: AsyncSession, order: Order) -> None:
             # avtomatik bloklanadi — yangi buyurtma qabul qila olmaydi,
             # to'plagan naqd pulini egasiga topshirgunga (yoki admin
             # balansni qo'lda kamaytirgunga) qadar.
-            if courier.courier_profile.balance > courier.courier_profile.credit_limit:
+            if (courier.courier_profile.balance or 0) > (courier.courier_profile.credit_limit or 0):
                 courier.courier_profile.is_blocked = True
 
     if order.partner_id:
@@ -2457,7 +2496,7 @@ async def update_courier(
                 raise HTTPException(status_code=400, detail="Kredit limiti manfiy bo'la olmaydi")
             courier_user.courier_profile.credit_limit = credit_limit
             courier_user.courier_profile.is_blocked = (
-                courier_user.courier_profile.balance > courier_user.courier_profile.credit_limit
+                (courier_user.courier_profile.balance or 0) > (courier_user.courier_profile.credit_limit or 0)
             )
 
     if new_password:
@@ -2641,9 +2680,9 @@ async def update_courier_balance(
     # Bu yerda odatda "− Yechish" tugmasi — kuryer naqd pulni egasiga
     # jismonan topshirganda bosiladi (qarz kamayadi). Agar shu tufayli
     # qarz endi kredit limitidan past bo'lsa — bloklash AVTOMATIK yechiladi.
-    if courier.courier_profile.balance <= courier.courier_profile.credit_limit:
+    if (courier.courier_profile.balance or 0) <= (courier.courier_profile.credit_limit or 0):
         courier.courier_profile.is_blocked = False
-    elif courier.courier_profile.balance > courier.courier_profile.credit_limit:
+    elif (courier.courier_profile.balance or 0) > (courier.courier_profile.credit_limit or 0):
         courier.courier_profile.is_blocked = True
 
     db.add(Transaction(
@@ -2718,7 +2757,7 @@ async def _finalize_withdrawal_approval(
             # Endi uzil-kesil "to'landi": balance 0'ga yaqinlashadi (-300+50000),
             # frozen_balance'dan chiqariladi.
             profile.balance += wd.amount
-            profile.frozen_balance = max(0.0, profile.frozen_balance - wd.amount)
+            profile.frozen_balance = max(0.0, (profile.frozen_balance or 0) - wd.amount)
         db.add(Transaction(
             user_id=wd.user_id, type=TransactionType.WITHDRAWAL, amount=wd.amount,
             note=f"Pul yechish so'rovi #{wd.id} tasdiqlandi (karta: {wd.card_id or '—'})",
@@ -2731,7 +2770,7 @@ async def _finalize_withdrawal_approval(
         partner = partner_result.scalars().first()
         if partner:
             partner.balance -= wd.amount
-            partner.frozen_balance = max(0.0, partner.frozen_balance - wd.amount)
+            partner.frozen_balance = max(0.0, (partner.frozen_balance or 0) - wd.amount)
         db.add(Transaction(
             partner_id=wd.partner_id, type=TransactionType.WITHDRAWAL, amount=wd.amount,
             note=f"Pul yechish so'rovi #{wd.id} tasdiqlandi (karta: {wd.card_id or '—'})",
@@ -2802,14 +2841,14 @@ async def reject_withdrawal(
         )
         profile = courier_result.scalars().first()
         if profile:
-            profile.frozen_balance = max(0.0, profile.frozen_balance - wd.amount)
+            profile.frozen_balance = max(0.0, (profile.frozen_balance or 0) - wd.amount)
     elif wd.partner_id:
         partner_result = await db.execute(
             select(PartnerProfile).where(PartnerProfile.id == wd.partner_id).with_for_update()
         )
         partner = partner_result.scalars().first()
         if partner:
-            partner.frozen_balance = max(0.0, partner.frozen_balance - wd.amount)
+            partner.frozen_balance = max(0.0, (partner.frozen_balance or 0) - wd.amount)
 
     wd.status = WithdrawalStatus.REJECTED
     wd.reject_reason = reject_reason.strip() or None
@@ -4228,14 +4267,14 @@ async def partner_request_withdrawal(
     if not partner:
         raise HTTPException(status_code=404, detail="Hamkor profili topilmadi")
 
-    available = partner.balance - partner.frozen_balance
+    available = (partner.balance or 0) - (partner.frozen_balance or 0)
     if amount > available:
         raise HTTPException(
             status_code=400,
             detail=f"Yechib olish uchun mavjud mablag' yetarli emas (mavjud: {available:,.0f} so'm)",
         )
 
-    partner.frozen_balance += amount
+    partner.frozen_balance = (partner.frozen_balance or 0) + amount
     db.add(WithdrawalRequest(partner_id=partner.id, card_id=card_id, amount=amount, status=WithdrawalStatus.PENDING))
     await db.commit()
     return RedirectResponse(url="/partner", status_code=status.HTTP_303_SEE_OTHER)
@@ -4677,7 +4716,7 @@ async def courier_request_withdrawal(
     if not courier_profile:
         raise HTTPException(status_code=404, detail="Kuryer profili topilmadi")
 
-    available = -courier_profile.balance - courier_profile.frozen_balance
+    available = -(courier_profile.balance or 0) - (courier_profile.frozen_balance or 0)
     if available <= 0:
         raise HTTPException(status_code=400, detail="Hozircha yechib olish uchun mavjud mablag' yo'q")
     if amount > available:
@@ -4686,7 +4725,7 @@ async def courier_request_withdrawal(
             detail=f"Yechib olish uchun mavjud mablag' yetarli emas (mavjud: {available:,.0f} so'm)",
         )
 
-    courier_profile.frozen_balance += amount
+    courier_profile.frozen_balance = (courier_profile.frozen_balance or 0) + amount
     db.add(WithdrawalRequest(user_id=current_user.id, card_id=card_id, amount=amount, status=WithdrawalStatus.PENDING))
     await db.commit()
     return RedirectResponse(url="/courier", status_code=status.HTTP_303_SEE_OTHER)
@@ -4707,7 +4746,7 @@ async def courier_accept_order(
             status_code=403,
             detail=(
                 f"Sizda {courier_profile.balance:,.0f} so'm naqd pul qarzi bor — bu ruxsat etilgan "
-                f"chegaradan ({courier_profile.credit_limit:,.0f} so'm) oshib ketgan. Yangi buyurtma "
+                f"chegaradan ({(courier_profile.credit_limit or 0):,.0f} so'm) oshib ketgan. Yangi buyurtma "
                 f"qabul qilishdan oldin, yig'gan naqd pulingizni egasiga topshiring."
             ),
         )

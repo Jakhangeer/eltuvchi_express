@@ -724,8 +724,8 @@
                                 </td>
                                 {% if is_owner %}<td class="p-2 text-xs">{{ courier.city.name if courier.city else '—' }}</td>{% endif %}
                                 <td class="p-2 text-xs font-semibold {% if courier.courier_profile and courier.courier_profile.balance > 0 %}text-red-600{% else %}text-green-700{% endif %}">
-                                    {% if courier.courier_profile %}{{ "%.0f"|format(courier.courier_profile.balance) }} so'm{% endif %}
-                                    {% if is_owner and courier.courier_profile %}<span class="block text-[10px] text-gray-400 font-normal">limit: {{ "%.0f"|format(courier.courier_profile.credit_limit) }}</span>{% endif %}
+                                    {% if courier.courier_profile %}{{ "%.0f"|format(courier.courier_profile.balance or 0) }} so'm{% endif %}
+                                    {% if is_owner and courier.courier_profile %}<span class="block text-[10px] text-gray-400 font-normal">limit: {{ "%.0f"|format(courier.courier_profile.credit_limit or 0) }}</span>{% endif %}
                                 </td>
                                 <td class="p-2 text-center">
                                     <span class="px-2 py-0.5 text-[10px] font-semibold rounded-full {% if courier.courier_profile and courier.courier_profile.is_blocked %}bg-red-100 text-red-800{% elif courier.is_active %}bg-green-100 text-green-800{% else %}bg-gray-200 text-gray-700{% endif %}">
@@ -1047,7 +1047,7 @@
                         <select name="user_id" class="w-full mt-1 p-2 border rounded-lg text-sm dark:bg-gray-800" required>
                             <option value="">Kuryerni tanlang</option>
                             {% for c in all_couriers %}
-                            <option value="{{ c.id }}">{{ c.full_name }} ({{ "%.0f"|format(c.courier_profile.balance) if c.courier_profile else 0 }} so'm)</option>
+                            <option value="{{ c.id }}">{{ c.full_name }} ({{ "%.0f"|format(c.courier_profile.balance or 0) if c.courier_profile else 0 }} so'm)</option>
                             {% endfor %}
                         </select>
                     </div>
@@ -1074,7 +1074,7 @@
                         <select name="partner_id" class="w-full mt-1 p-2 border rounded-lg text-sm dark:bg-gray-800" required>
                             <option value="">Do'konni tanlang</option>
                             {% for p in partners %}
-                            <option value="{{ p.id }}">{{ p.brand_name }} ({{ "%.0f"|format(p.balance) }} so'm)</option>
+                            <option value="{{ p.id }}">{{ p.brand_name }} ({{ "%.0f"|format(p.balance or 0) }} so'm)</option>
                             {% endfor %}
                         </select>
                     </div>
@@ -1307,7 +1307,7 @@
                                 {% endif %}
                             </div>
                         </div>
-                        <p class="text-[11px] text-gray-500">📍 {{ partner.address }} {% if partner.city %}| 🏙️ {{ partner.city.name }}{% endif %} | 🕒 {{ partner.opening_time }}-{{ partner.closing_time }} | 🏷️ {{ partner.commission_rate }}%{% if is_owner %} | 💰 {{ "%.0f"|format(partner.balance) }} so'm{% endif %}</p>
+                        <p class="text-[11px] text-gray-500">📍 {{ partner.address }} {% if partner.city %}| 🏙️ {{ partner.city.name }}{% endif %} | 🕒 {{ partner.opening_time }}-{{ partner.closing_time }} | 🏷️ {{ partner.commission_rate }}%{% if is_owner %} | 💰 {{ "%.0f"|format(partner.balance or 0) }} so'm{% endif %}</p>
                         
                         <div class="divide-y dark:divide-gray-700 border-t dark:border-gray-700 pt-2 mt-2">
                             {% for product in products %}
