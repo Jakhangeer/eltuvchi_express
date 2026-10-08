@@ -106,6 +106,39 @@ async def send_telegram_message(chat_id: int | str, text: str, reply_markup: dic
         return False
 
 
+async def send_telegram_photo(
+    chat_id: int | str,
+    photo_file_id: str,
+    caption: str | None = None,
+    reply_markup: dict | None = None,
+) -> bool:
+    """Berilgan chat_id'ga, Telegram'ning o'zida saqlangan file_id orqali
+    rasm yuboradi (bizda allaqachon bor rasmni — masalan foydalanuvchi
+    yuborgan 'chek'ni — QAYTA boshqa chat'ga YO'NALTIRISH uchun; qayta
+    yuklash shart emas, Telegram file_id orqali ichki nusxalaydi)."""
+    if not TELEGRAM_API_BASE or not chat_id or not photo_file_id:
+        return False
+
+    payload = {"chat_id": chat_id, "photo": photo_file_id, "parse_mode": "HTML"}
+    if caption:
+        payload["caption"] = caption
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
+
+    try:
+        resp = await http_client.post(f"{TELEGRAM_API_BASE}/sendPhoto", json=payload)
+        if resp.status_code == 200:
+            return True
+        print(f"[Xatolar Logi] Telegram sendPhoto xatosi: Status {resp.status_code} | {resp.text}")
+        return False
+    except httpx.RequestError as exc:
+        print(f"[Tarmoq Xatosi] sendPhoto: {exc}")
+        return False
+    except Exception as e:
+        print(f"[Kutilmagan Xatolik] send_telegram_photo: {e}")
+        return False
+
+
 def contact_request_keyboard() -> dict:
     """Foydalanuvchidan telefon raqamini tasdiqlashni so'rovchi rasmiy tugma."""
     return {
