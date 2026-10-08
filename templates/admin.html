@@ -353,6 +353,17 @@
                         <input type="number" step="0.1" min="0" max="100" name="courier_share_percent" value="{{ system_setting.courier_share_percent if system_setting else 80.0 }}" class="w-full mt-1 p-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700" required>
                         <p class="text-[11px] text-gray-500 mt-1">Masalan 80% — yetkazish narxining 80%i kuryerga, qolgan 20%i sizga qoladi.</p>
                     </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-sm font-medium">Kuryer — max karta</label>
+                            <input type="number" min="1" max="20" name="max_cards_per_courier" value="{{ system_setting.max_cards_per_courier if system_setting else 3 }}" class="w-full mt-1 p-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700" required>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium">Hamkor — max karta</label>
+                            <input type="number" min="1" max="20" name="max_cards_per_partner" value="{{ system_setting.max_cards_per_partner if system_setting else 3 }}" class="w-full mt-1 p-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700" required>
+                        </div>
+                    </div>
+                    <p class="text-[11px] text-gray-500 -mt-2">Kuryer/hamkor o'z kabinetidan ko'pi bilan nechta plastik karta qo'sha olishini shu yerdan belgilaysiz. Sizning o'z (P2P) kartalaringizga bu cheklov tegmaydi.</p>
                     <div>
                         <label class="block text-sm font-medium">Ob-havo Sharoiti</label>
                         <select id="weather-select" name="weather_condition" onchange="applyWeatherMultiplier()" class="w-full mt-1 p-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700">
@@ -463,6 +474,7 @@
 
 </section>
 
+        {% if is_owner or operator_perms.get('buyurtmalar') %}
         <section class="app-page" data-page="buyurtmalar" style="display:none;">
         <!-- YANGI BUYURTMA YARATISH -->
         <div class="card-bg bg-white p-6 rounded-xl shadow-md">
@@ -622,7 +634,9 @@
         </div>
 
 </section>
+        {% endif %}
 
+        {% if is_owner or operator_perms.get('kuryerlar') %}
         <section class="app-page" data-page="kuryerlar" style="display:none;">
         <!-- COURIERS -->
 
@@ -709,12 +723,13 @@
                                     {% if courier.courier_profile %}{{ courier.courier_profile.transport_type }}{% endif %}
                                 </td>
                                 {% if is_owner %}<td class="p-2 text-xs">{{ courier.city.name if courier.city else '—' }}</td>{% endif %}
-                                <td class="p-2 text-xs font-semibold text-green-700">
+                                <td class="p-2 text-xs font-semibold {% if courier.courier_profile and courier.courier_profile.balance > 0 %}text-red-600{% else %}text-green-700{% endif %}">
                                     {% if courier.courier_profile %}{{ "%.0f"|format(courier.courier_profile.balance) }} so'm{% endif %}
+                                    {% if is_owner and courier.courier_profile %}<span class="block text-[10px] text-gray-400 font-normal">limit: {{ "%.0f"|format(courier.courier_profile.credit_limit) }}</span>{% endif %}
                                 </td>
                                 <td class="p-2 text-center">
-                                    <span class="px-2 py-0.5 text-[10px] font-semibold rounded-full {% if courier.is_active %}bg-green-100 text-green-800{% else %}bg-gray-200 text-gray-700{% endif %}">
-                                        {% if courier.is_active %}Faol{% else %}Faol emas{% endif %}
+                                    <span class="px-2 py-0.5 text-[10px] font-semibold rounded-full {% if courier.courier_profile and courier.courier_profile.is_blocked %}bg-red-100 text-red-800{% elif courier.is_active %}bg-green-100 text-green-800{% else %}bg-gray-200 text-gray-700{% endif %}">
+                                        {% if courier.courier_profile and courier.courier_profile.is_blocked %}🚫 Bloklangan{% elif courier.is_active %}Faol{% else %}Faol emas{% endif %}
                                     </span>
                                 </td>
                                 <td class="p-2 text-center">
@@ -725,6 +740,7 @@
                                                 data-phone="{{ courier.phone_number }}"
                                                 data-transport="{{ courier.courier_profile.transport_type if courier.courier_profile else 'walking' }}"
                                                 data-city-id="{{ courier.city_id or '' }}"
+                                                data-credit-limit="{{ courier.courier_profile.credit_limit if courier.courier_profile else 300000 }}"
                                                 onclick="openEditCourierModal(this)"
                                                 class="text-blue-600 text-xs font-bold px-1">✏️</button>
                                         <form action="/admin/couriers/{{ courier.id }}/toggle" method="POST" class="inline">
@@ -751,7 +767,9 @@
         </div>
 
 </section>
+        {% endif %}
 
+        {% if is_owner or operator_perms.get('mijozlar') %}
         <section class="app-page" data-page="mijozlar" style="display:none;">
         <!-- CLIENTS -->
         <div class="card-bg bg-white p-6 rounded-xl shadow-md">
@@ -804,6 +822,7 @@
 
         {% if is_owner %}
 </section>
+        {% endif %}
 
         {% if is_owner or operator_perms.get('operatorlar') %}
         <section class="app-page" data-page="operatorlar" style="display:none;">
@@ -949,6 +968,76 @@
         </div>
         {% endif %}
 
+        {% if pending_p2p_orders %}
+        <div class="card-bg bg-white p-6 rounded-xl shadow-md border-2 border-sky-400 mb-6">
+            <h2 class="theme-title text-lg font-bold mb-4 text-sky-700">💳 Tasdiqlanmagan P2P To'lovlar ({{ pending_p2p_orders|length }})</h2>
+            <p class="text-xs text-gray-500 mb-4">Mijoz "Karta orqali (P2P)" usulini tanlab, pulni kartangizga o'tkazgan — chekni/o'tkazmani tekshirib, shu yerdan tasdiqlang yoki rad eting. (Odatda bu avtomatik Telegram botdagi tugma orqali amalga oshadi — bu yer faqat zaxira yo'l.)</p>
+            <div class="space-y-2">
+                {% for o in pending_p2p_orders %}
+                <div class="flex items-center justify-between gap-3 flex-wrap p-3 rounded-lg border dark:border-gray-700">
+                    <div>
+                        <p class="text-sm font-bold">#{{ o.id }} — {{ o.client.full_name if o.client else '—' }}</p>
+                        <p class="text-xs text-gray-500">🏪 {{ o.partner.brand_name if o.partner else '—' }} · {{ "%.0f"|format(o.total_price + o.delivery_fee) }} so'm · {{ o.created_at|uzb_time('%d.%m %H:%M') }}{% if not o.payment_receipt_file_id %} · <span class="text-amber-600">chek yuborilmagan</span>{% endif %}</p>
+                    </div>
+                    <div class="flex gap-2">
+                        <form action="/admin/finance/p2p-orders/{{ o.id }}/approve" method="POST" onsubmit="return confirm('Pul kartangizga haqiqatan ham tushganiga ishonch hosil qildingizmi?');">
+                            <button type="submit" class="text-xs bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-lg font-bold">✅ Tasdiqlash</button>
+                        </form>
+                        <button type="button" onclick="document.getElementById('p2p-reject-{{ o.id }}').classList.toggle('hidden')" class="text-xs bg-red-100 text-red-700 hover:bg-red-200 px-3 py-2 rounded-lg font-semibold">✕ Rad etish</button>
+                    </div>
+                    <form id="p2p-reject-{{ o.id }}" action="/admin/finance/p2p-orders/{{ o.id }}/reject" method="POST" class="hidden w-full flex gap-2 mt-1">
+                        <input type="text" name="reason" placeholder="Rad etish sababi (mijozga yuboriladi)" class="flex-1 p-2 border rounded-lg text-xs dark:bg-gray-800">
+                        <button type="submit" class="text-xs bg-red-600 hover:bg-red-700 text-white px-3 py-2 rounded-lg font-bold whitespace-nowrap">Tasdiqlash</button>
+                    </form>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
+        {% if is_owner %}
+        <div class="card-bg bg-white p-6 rounded-xl shadow-md mb-6">
+            <h2 class="theme-title text-lg font-bold mb-1 text-indigo-700">💳 P2P To'lov Kartalari</h2>
+            <p class="text-xs text-gray-500 mb-4">Mijozlar checkout'da "Karta orqali (P2P)" usulini tanlaganda, aynan FAOL (yashil belgili) kartangiz raqami ularga ko'rsatiladi. Istalgancha karta qo'shishingiz mumkin — bir vaqtda faqat bittasi faol bo'ladi.</p>
+
+            <div class="space-y-2 mb-4">
+                {% for c in p2p_cards %}
+                <div class="flex items-center justify-between gap-3 p-3 rounded-lg border {% if c.is_p2p_active %}border-green-400 bg-green-50 dark:bg-green-900/20{% else %}dark:border-gray-700{% endif %}">
+                    <div class="min-w-0">
+                        <p class="text-sm font-bold">{{ c.bank_name }} <span class="text-gray-400 font-normal text-xs">({{ c.card_type|upper }})</span> {% if c.is_p2p_active %}<span class="text-[10px] bg-green-600 text-white px-1.5 py-0.5 rounded-full ml-1">FAOL</span>{% endif %}</p>
+                        <p class="text-xs font-mono text-gray-500">{{ c.masked_number }} · {{ c.expire }} · {{ c.card_holder_name }}</p>
+                    </div>
+                    <div class="flex gap-1.5 shrink-0">
+                        {% if not c.is_p2p_active %}
+                        <form action="/admin/finance/p2p-cards/{{ c.id }}/activate" method="POST">
+                            <button type="submit" class="text-xs bg-indigo-100 text-indigo-700 hover:bg-indigo-200 px-2.5 py-1.5 rounded-lg font-semibold">Faollashtirish</button>
+                        </form>
+                        {% endif %}
+                        <form action="/admin/finance/p2p-cards/{{ c.id }}/delete" method="POST" onsubmit="return confirm('Karta o\'chirilsinmi?');">
+                            <button type="submit" class="text-xs text-red-600 px-2 py-1.5">🗑️</button>
+                        </form>
+                    </div>
+                </div>
+                {% else %}
+                <p class="text-xs text-gray-400">Hali P2P kartangiz qo'shilmagan — mijozlar "Karta orqali" to'lovni tanlay olmaydi.</p>
+                {% endfor %}
+            </div>
+
+            <button type="button" onclick="document.getElementById('add-p2p-card-form').classList.toggle('hidden')" class="theme-btn text-xs px-4 py-2 rounded-lg font-bold">+ Yangi karta qo'shish</button>
+            <form id="add-p2p-card-form" action="/admin/finance/p2p-cards" method="POST" class="hidden mt-3 pt-3 border-t dark:border-gray-700 grid grid-cols-1 md:grid-cols-4 gap-2">
+                <input type="text" name="card_number" inputmode="numeric" maxlength="19" placeholder="8600 1234 5678 9012" class="p-2 border rounded-lg text-sm font-mono dark:bg-gray-800 md:col-span-2" oninput="this.value=this.value.replace(/\D/g,'').replace(/(.{4})/g,'$1 ').trim()" required>
+                <input type="text" name="card_holder_name" placeholder="Karta egasining F.I.O" class="p-2 border rounded-lg text-sm dark:bg-gray-800 md:col-span-2" required>
+                <select name="expire_month" class="p-2 border rounded-lg text-sm dark:bg-gray-800">
+                    {% for m in range(1, 13) %}<option value="{{ m }}">{{ "%02d"|format(m) }}</option>{% endfor %}
+                </select>
+                <select name="expire_year" class="p-2 border rounded-lg text-sm dark:bg-gray-800">
+                    {% for y in range(2025, 2036) %}<option value="{{ y }}">{{ y }}</option>{% endfor %}
+                </select>
+                <button type="submit" class="theme-btn text-sm font-bold rounded-lg md:col-span-2">Saqlash</button>
+            </form>
+        </div>
+        {% endif %}
+
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div class="card-bg bg-white p-6 rounded-xl shadow-md col-span-1">
                 <h2 class="theme-title text-lg font-bold mb-4 text-indigo-700">💰 Kuryer Balansi</h2>
@@ -1069,6 +1158,7 @@
 </section>
         {% endif %}
 
+        {% if is_owner or operator_perms.get('dokonlar') %}
         <section class="app-page" data-page="dokonlar" style="display:none;">
         <!-- PARTNERS & PRODUCTS -->
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -1268,6 +1358,7 @@
 
         {% if is_owner %}
 </section>
+        {% endif %}
 
         <section class="app-page" data-page="xavfzone" style="display:none;">
         <!-- XAVF ZONASI (faqat OWNER) -->
@@ -1620,6 +1711,11 @@
                     <option value="{{ city.id }}">{{ city.name }}</option>
                     {% endfor %}
                 </select>
+                <div>
+                    <label class="block text-xs font-medium mb-1 dark:text-gray-300">Kredit limiti (naqd qarz chegarasi, so'm)</label>
+                    <input type="number" id="edit-courier-credit-limit" name="credit_limit" min="0" step="1000" class="w-full p-2 border rounded dark:bg-gray-700 dark:text-white">
+                    <p class="text-[11px] text-gray-400 mt-1">Kuryerning qarzi shu summadan oshsa, yangi buyurtma olishi avtomatik bloklanadi.</p>
+                </div>
                 {% endif %}
                 <input type="text" name="new_password" placeholder="Yangi 4 xonali PIN (faqat o'zgartirmoqchi bo'lsangiz)" maxlength="4" pattern="[0-9]{4}" inputmode="numeric" class="w-full p-2 border rounded dark:bg-gray-700 dark:text-white">
                 <div class="flex justify-end gap-2 pt-2">
@@ -1762,14 +1858,18 @@
             const phone = btn.dataset.phone;
             const transport = btn.dataset.transport;
             const cityId = btn.dataset.cityId;
+            const creditLimit = btn.dataset.creditLimit;
 
             document.getElementById('edit-courier-form').action = `/admin/couriers/${id}/update`;
             document.getElementById('edit-courier-name').value = name;
             document.getElementById('edit-courier-phone').value = phone;
             document.getElementById('edit-courier-transport').value = transport;
-            // Shahar select faqat OWNER uchun renderlanadi, shuning uchun mavjudligini tekshiramiz
+            // Shahar va kredit-limit maydonlari faqat OWNER uchun renderlanadi,
+            // shuning uchun mavjudligini tekshiramiz (operatorda bular yo'q).
             const cityEl = document.getElementById('edit-courier-city');
             if (cityEl) cityEl.value = cityId;
+            const creditLimitEl = document.getElementById('edit-courier-credit-limit');
+            if (creditLimitEl) creditLimitEl.value = creditLimit;
             document.getElementById('edit-courier-modal').classList.remove('hidden');
         }
 

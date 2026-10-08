@@ -15,13 +15,14 @@ from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, text, extract, inspect as sa_inspect
+from sqlalchemy import select, func, text, extract, or_, inspect as sa_inspect
 from sqlalchemy.schema import CreateColumn
 from sqlalchemy.orm import selectinload
 
 from database import engine, Base, get_db, AsyncSessionLocal
 from telegram_bot import (
     send_telegram_message,
+    send_telegram_photo,
     contact_request_keyboard,
     normalize_phone,
     phone_tail,
@@ -844,9 +845,16 @@ async def admin_dashboard(
         )
         recent_transactions = tx_query.scalars().all()
 
-    # ---- KUTILAYOTGAN PUL YECHISH SO'ROVLARI (faqat OWNER) ----
+    # ---- OPERATOR KO'RISH HUQUQLARI — admin.html shu bo'yicha nav va
+    # bo'limlarni ko'rsatadi/yashiradi (frontend tarafidagi yashirish;
+    # backend tarafidagi "haqiqiy" himoya — qarang require_section) ----
+    operator_perms = await get_operator_permissions(db)
+    can_see_finance = is_owner or operator_perms.get("moliya")
+
+    # ---- KUTILAYOTGAN PUL YECHISH SO'ROVLARI (OWNER, yoki "moliya" ruxsati
+    # berilgan operator — qarang require_section("moliya")) ----
     pending_withdrawals = []
-    if is_owner:
+    if can_see_finance:
         wd_query = await db.execute(
             select(WithdrawalRequest)
             .options(
@@ -868,10 +876,23 @@ async def admin_dashboard(
                 card_security.decrypt_card_number(wd.card.encrypted_card_number) if wd.card else None
             )
 
-    # ---- OPERATOR KO'RISH HUQUQLARI — admin.html shu bo'yicha nav va
-    # bo'limlarni ko'rsatadi/yashiradi (frontend tarafidagi yashirish;
-    # backend tarafidagi "haqiqiy" himoya — qarang require_section) ----
-    operator_perms = await get_operator_permissions(db)
+    # ---- MIJOZLARDAN P2P TO'LOV QABUL QILISH UCHUN KARTALAR (faqat OWNER
+    # boshqaradi — qarang add_p2p_card/activate_p2p_card/delete_p2p_card) ----
+    p2p_cards = []
+    pending_p2p_orders = []
+    if is_owner:
+        p2p_cards_query = await db.execute(
+            select(Card).where(Card.user_id == current_user.id, Card.is_active == True).order_by(Card.created_at.desc())
+        )
+        p2p_cards = [{**_card_to_dict(c), "is_p2p_active": c.is_p2p_active} for c in p2p_cards_query.scalars().all()]
+    if can_see_finance:
+        p2p_orders_query = await db.execute(
+            select(Order)
+            .options(selectinload(Order.client), selectinload(Order.partner))
+            .where(Order.payment_method == "p2p", Order.payment_verified == False, Order.status != OrderStatus.CANCELLED)
+            .order_by(Order.created_at)
+        )
+        pending_p2p_orders = p2p_orders_query.scalars().all()
 
     # ---- ANALITIKA (faqat OWNER) ----
     # DIQQAT: komissiya foizi har bir do'kon uchun boshqacha bo'lishi mumkin
@@ -968,6 +989,8 @@ async def admin_dashboard(
             "next_status_map": NEXT_STATUS_MAP,
             "recent_transactions": recent_transactions,
             "pending_withdrawals": pending_withdrawals,
+            "p2p_cards": p2p_cards,
+            "pending_p2p_orders": pending_p2p_orders,
             "birthday_clients_today": birthday_clients_today,
             "banners": banners,
             "analytics": analytics,
@@ -1089,6 +1112,8 @@ async def update_settings(
     weather_multiplier: float = Form(...),
     service_commission_percent: float = Form(...),
     courier_share_percent: float = Form(...),
+    max_cards_per_courier: int = Form(3),
+    max_cards_per_partner: int = Form(3),
     db: AsyncSession = Depends(get_db),
 ):
     try:
@@ -1098,6 +1123,8 @@ async def update_settings(
 
     if not (0 <= courier_share_percent <= 100):
         raise HTTPException(status_code=400, detail="Kuryer ulushi 0-100 oralig'ida bo'lishi kerak")
+    if not (1 <= max_cards_per_courier <= 20) or not (1 <= max_cards_per_partner <= 20):
+        raise HTTPException(status_code=400, detail="Karta soni chegarasi 1 dan 20 gacha bo'lishi kerak")
 
     setting_query = await db.execute(select(SystemSetting))
     setting = setting_query.scalars().first()
@@ -1109,6 +1136,8 @@ async def update_settings(
             weather_multiplier=weather_multiplier,
             service_commission_percent=service_commission_percent,
             courier_share_percent=courier_share_percent,
+            max_cards_per_courier=max_cards_per_courier,
+            max_cards_per_partner=max_cards_per_partner,
         )
         db.add(setting)
     else:
@@ -1117,6 +1146,8 @@ async def update_settings(
         setting.weather_multiplier = weather_multiplier
         setting.service_commission_percent = service_commission_percent
         setting.courier_share_percent = courier_share_percent
+        setting.max_cards_per_courier = max_cards_per_courier
+        setting.max_cards_per_partner = max_cards_per_partner
 
     await db.commit()
     return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
@@ -1465,8 +1496,13 @@ def _card_to_dict(card: Card) -> dict:
 
 
 async def _add_card_for_user(
-    db: AsyncSession, user_id: int, card_number: str, card_holder_name: str, expire_month: int, expire_year: int
+    db: AsyncSession, user_id: int, card_number: str, card_holder_name: str, expire_month: int, expire_year: int,
+    *, max_cards: Optional[int] = None,
 ) -> Card:
+    """`max_cards` berilsa (kuryer/hamkor uchun — qarang SystemSetting.max_cards_per_courier/
+    max_cards_per_partner), shu foydalanuvchining FAOL kartalari soni shu chegaradan
+    oshsa, yangi karta qo'shilmaydi. OWNER/operator o'z (P2P) kartalarini qo'shganda
+    `max_cards=None` uzatiladi — ularga cheklov yo'q."""
     try:
         clean_number = card_security.validate_card_number(card_number)
         card_security.validate_expiry(expire_month, expire_year)
@@ -1475,6 +1511,16 @@ async def _add_card_for_user(
 
     if not card_holder_name or not card_holder_name.strip():
         raise HTTPException(status_code=400, detail="Karta egasining ismini kiriting")
+
+    if max_cards is not None:
+        existing_count = (await db.execute(
+            select(func.count(Card.id)).where(Card.user_id == user_id, Card.is_active == True)
+        )).scalar() or 0
+        if existing_count >= max_cards:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Siz ko\'pi bilan {max_cards} ta karta qo\'sha olasiz. Avval eskisini o\'chiring.",
+            )
 
     bank_name, card_type = card_security.detect_card_bin(clean_number)
     full_year = expire_year if expire_year > 99 else 2000 + expire_year
@@ -1493,6 +1539,15 @@ async def _add_card_for_user(
     await db.commit()
     await db.refresh(new_card)
     return new_card
+
+
+async def _get_card_limits(db: AsyncSession) -> tuple[int, int]:
+    """(kuryer uchun limit, hamkor uchun limit) — SystemSetting'dan, bo'lmasa standart 3."""
+    setting_query = await db.execute(select(SystemSetting))
+    setting = setting_query.scalars().first()
+    if not setting:
+        return 3, 3
+    return (setting.max_cards_per_courier or 3), (setting.max_cards_per_partner or 3)
 
 
 async def _delete_card_for_user(db: AsyncSession, user_id: int, card_id: int) -> None:
@@ -2364,6 +2419,7 @@ async def update_courier(
     phone_number: str = Form(...),
     transport_type: str = Form(...),
     city_id: Optional[int] = Form(None),
+    credit_limit: Optional[float] = Form(None),
     new_password: Optional[str] = Form(None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_admin_user),
@@ -2389,6 +2445,20 @@ async def update_courier(
     courier_user.phone_number = normalize_phone(phone_number) or phone_number
     if courier_user.courier_profile:
         courier_user.courier_profile.transport_type = transport_type
+
+        # Kredit limitini (naqd qarz chegarasini) FAQAT OWNER o'zgartira
+        # oladi — bu kuryerga nechchi pulgacha "ishonish"ni belgilaydigan
+        # moliyaviy qaror, operatorga delegatsiya qilinmaydi. Qiymat
+        # o'zgartirilgach, bloklanish holati ham DARHOL qayta tekshiriladi
+        # (masalan limit oshirilsa va qarz endi chegaradan past bo'lsa,
+        # kuryer avtomatik blokdan chiqadi; pasaytirilsa — aksincha).
+        if current_user.role == UserRole.OWNER and credit_limit is not None:
+            if credit_limit < 0:
+                raise HTTPException(status_code=400, detail="Kredit limiti manfiy bo'la olmaydi")
+            courier_user.courier_profile.credit_limit = credit_limit
+            courier_user.courier_profile.is_blocked = (
+                courier_user.courier_profile.balance > courier_user.courier_profile.credit_limit
+            )
 
     if new_password:
         validate_pin(new_password)
@@ -2624,21 +2694,16 @@ async def update_partner_balance(
     return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
 
 
-@finance_router.post("/withdrawals/{request_id}/approve")
-async def approve_withdrawal(
-    request_id: int,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_section("moliya")),
-):
-    """DIQQAT: bu tugmani bosishdan oldin, pulni real hayotda (Click/Payme
-    yoki naqd) kuryer/hamkorning kartasiga siz ALLAQACHON o'tkazgan
-    bo'lishingiz kerak — bu tugma faqat tizimdagi balansni shunga mos
-    ravishda yakunlaydi (frozen_balance'dan chiqaradi) va tarixga yozadi,
-    pulni o'zi jismonan yubormaydi (haqiqiy to'lov integratsiyasi yo'q)."""
-    result = await db.execute(select(WithdrawalRequest).where(WithdrawalRequest.id == request_id))
-    wd = result.scalars().first()
-    if not wd:
-        raise HTTPException(status_code=404, detail="So'rov topilmadi")
+async def _finalize_withdrawal_approval(
+    db: AsyncSession, wd: WithdrawalRequest, approved_by_id: int, *, receipt_file_id: Optional[str] = None
+) -> None:
+    """Pul yechish so'rovini UZIL-KESIL tasdiqlaydi: balansni yakunlaydi
+    (frozen_balance'dan chiqaradi) va tarixga yozadi. IKKI YERDAN
+    chaqiriladi — (1) admin panelidagi '✅ To'landi' tugmasi, (2)
+    admin/operator Telegram botga chek rasm yuborganda — shuning uchun
+    bu yerda bitta joyga chiqarilgan (DRY), ikkalasi ham bir xil
+    moliyaviy natijaga olib kelishi SHART. `receipt_file_id` berilsa
+    (bot orqali chaqirilganda), chek shu yerga ham yoziladi."""
     if wd.status != WithdrawalStatus.PENDING:
         raise HTTPException(status_code=400, detail="Bu so'rov allaqachon ko'rib chiqilgan")
 
@@ -2657,7 +2722,7 @@ async def approve_withdrawal(
         db.add(Transaction(
             user_id=wd.user_id, type=TransactionType.WITHDRAWAL, amount=wd.amount,
             note=f"Pul yechish so'rovi #{wd.id} tasdiqlandi (karta: {wd.card_id or '—'})",
-            created_by_id=current_user.id,
+            created_by_id=approved_by_id,
         ))
     elif wd.partner_id:
         partner_result = await db.execute(
@@ -2670,13 +2735,36 @@ async def approve_withdrawal(
         db.add(Transaction(
             partner_id=wd.partner_id, type=TransactionType.WITHDRAWAL, amount=wd.amount,
             note=f"Pul yechish so'rovi #{wd.id} tasdiqlandi (karta: {wd.card_id or '—'})",
-            created_by_id=current_user.id,
+            created_by_id=approved_by_id,
         ))
 
     wd.status = WithdrawalStatus.APPROVED
     wd.processed_at = datetime.utcnow()
-    wd.processed_by_id = current_user.id
+    wd.processed_by_id = approved_by_id
+    if receipt_file_id:
+        wd.receipt_file_id = receipt_file_id
+        wd.receipt_sent_at = datetime.utcnow()
     await db.commit()
+
+
+@finance_router.post("/withdrawals/{request_id}/approve")
+async def approve_withdrawal(
+    request_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_section("moliya")),
+):
+    """DIQQAT: bu tugmani bosishdan oldin, pulni real hayotda (Click/Payme
+    yoki naqd) kuryer/hamkorning kartasiga siz ALLAQACHON o'tkazgan
+    bo'lishingiz kerak — bu tugma faqat tizimdagi balansni shunga mos
+    ravishda yakunlaydi, pulni o'zi jismonan yubormaydi. Chekni Telegram
+    bot orqali yuborish — alohida, ixtiyoriy qadam (qarang admin
+    panelidagi "📤 Chek yuborish" havolasi)."""
+    result = await db.execute(select(WithdrawalRequest).where(WithdrawalRequest.id == request_id))
+    wd = result.scalars().first()
+    if not wd:
+        raise HTTPException(status_code=404, detail="So'rov topilmadi")
+
+    await _finalize_withdrawal_approval(db, wd, current_user.id)
 
     try:
         if wd.user_id:
@@ -2766,6 +2854,171 @@ async def update_operator_permissions(
         else:
             db.add(OperatorPermission(section_key=section_key, enabled=enabled))
     await db.commit()
+    return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
+
+
+
+# ==================== 8-B. P2P (KARTADAN-KARTAGA) TO'LOV — OWNER KARTALARI ====================
+# Mijoz checkout'da "P2P" usulini tanlasa, aynan shu yerda FAOL (is_p2p_active)
+# deb belgilangan kartaning raqami ko'rsatiladi. OWNER xohlagancha karta
+# qo'shishi mumkin, lekin bir vaqtda faqat BITTASI "faol" bo'ladi.
+
+async def _get_active_p2p_card(db: AsyncSession) -> Optional[Card]:
+    result = await db.execute(select(Card).where(Card.is_p2p_active == True, Card.is_active == True))
+    return result.scalars().first()
+
+
+@finance_router.get("/p2p-cards")
+async def list_p2p_cards(db: AsyncSession = Depends(get_db), owner: User = Depends(require_owner)):
+    """OWNER'ning P2P uchun qo'shgan barcha shaxsiy kartalari."""
+    result = await db.execute(
+        select(Card).where(Card.user_id == owner.id, Card.is_active == True).order_by(Card.created_at.desc())
+    )
+    cards = result.scalars().all()
+    return {"cards": [{**_card_to_dict(c), "is_p2p_active": c.is_p2p_active} for c in cards]}
+
+
+@finance_router.post("/p2p-cards")
+async def add_p2p_card(
+    card_number: str = Form(...),
+    card_holder_name: str = Form(...),
+    expire_month: int = Form(...),
+    expire_year: int = Form(...),
+    db: AsyncSession = Depends(get_db),
+    owner: User = Depends(require_owner),
+):
+    """OWNER o'zining shaxsiy (P2P to'lovlar uchun ko'rsatiladigan)
+    kartasini qo'shadi — kuryer/hamkor kartalari bilan BIR XIL xavfsiz
+    yo'l (_add_card_for_user — shifrlash, BIN aniqlash, Luhn tekshiruvi)."""
+    new_card = await _add_card_for_user(db, owner.id, card_number, card_holder_name, expire_month, expire_year)
+
+    # Agar bu OWNER'ning BIRINCHI kartasi bo'lsa, qulaylik uchun avtomatik
+    # faollashtiramiz — aks holda P2P to'lov hali "kartasiz" holda qolib,
+    # mijozlar bosganda hech narsa ko'rsatilmay qolishi mumkin edi.
+    existing_active = await _get_active_p2p_card(db)
+    if not existing_active:
+        new_card.is_p2p_active = True
+        await db.commit()
+
+    return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@finance_router.post("/p2p-cards/{card_id}/activate")
+async def activate_p2p_card(
+    card_id: int, db: AsyncSession = Depends(get_db), owner: User = Depends(require_owner)
+):
+    """Shu kartani FAOL (mijozlarga ko'rsatiladigan) qiladi, qolganlarini
+    avtomatik o'chiradi — bir vaqtda faqat bitta karta faol bo'lishi uchun."""
+    result = await db.execute(select(Card).where(Card.id == card_id, Card.user_id == owner.id))
+    card = result.scalars().first()
+    if not card:
+        raise HTTPException(status_code=404, detail="Karta topilmadi")
+
+    all_owner_cards = await db.execute(select(Card).where(Card.user_id == owner.id))
+    for c in all_owner_cards.scalars().all():
+        c.is_p2p_active = (c.id == card.id)
+    await db.commit()
+    return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@finance_router.post("/p2p-cards/{card_id}/delete")
+async def delete_p2p_card(
+    card_id: int, db: AsyncSession = Depends(get_db), owner: User = Depends(require_owner)
+):
+    await _delete_card_for_user(db, owner.id, card_id)
+    return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
+
+
+async def _verify_p2p_order(db: AsyncSession, order: Order, approved: bool, verified_by_id: int, reason: str = "") -> None:
+    """P2P buyurtmani tasdiqlaydi (hamkorga ko'rinadigan qiladi) yoki rad
+    etadi (bekor qiladi). IKKI YERDAN chaqiriladi: Telegram bot
+    tugmasidan va admin panelidagi endpointdan — shuning uchun DRY."""
+    if order.payment_verified or order.status == OrderStatus.CANCELLED:
+        raise HTTPException(status_code=400, detail="Bu buyurtma allaqachon ko'rib chiqilgan")
+
+    if approved:
+        order.payment_verified = True
+        order.payment_verified_by_id = verified_by_id
+        order.payment_verified_at = datetime.utcnow()
+    else:
+        order.status = OrderStatus.CANCELLED
+        order.payment_verified_by_id = verified_by_id
+        order.payment_verified_at = datetime.utcnow()
+    await db.commit()
+
+    try:
+        client_result = await db.execute(select(User).where(User.id == order.client_id))
+        client = client_result.scalars().first()
+        if client and client.telegram_id:
+            if approved:
+                await send_telegram_message(
+                    client.telegram_id,
+                    f"✅ To'lovingiz tasdiqlandi! Buyurtma #{order.id} hamkorga yuborildi.",
+                )
+            else:
+                reason_text = f"\nSabab: {reason}" if reason else ""
+                await send_telegram_message(
+                    client.telegram_id,
+                    f"❌ Buyurtma #{order.id} uchun to'lovingiz tasdiqlanmadi va bekor qilindi.{reason_text}\n"
+                    f"Savolingiz bo'lsa, administratsiya bilan bog'laning.",
+                )
+    except Exception as e:
+        print(f"P2P tasdiqlash bildirishnomasi xatoligi: {e}")
+
+
+@finance_router.get("/p2p-orders")
+async def list_pending_p2p_orders(
+    db: AsyncSession = Depends(get_db), current_user: User = Depends(require_section("moliya"))
+):
+    """Hali tasdiqlanmagan P2P buyurtmalar — admin panel shu ro'yxatni
+    ko'rsatadi (bot orqali tasdiqlash ishlamay qolgan holatlar uchun
+    zaxira yo'l)."""
+    result = await db.execute(
+        select(Order)
+        .options(selectinload(Order.client), selectinload(Order.partner))
+        .where(Order.payment_method == "p2p", Order.payment_verified == False, Order.status != OrderStatus.CANCELLED)
+        .order_by(Order.created_at)
+    )
+    orders = result.scalars().all()
+    return {
+        "orders": [
+            {
+                "id": o.id,
+                "client_name": o.client.full_name if o.client else "—",
+                "partner_name": o.partner.brand_name if o.partner else "—",
+                "total": o.total_price + o.delivery_fee,
+                "created_at": o.created_at.isoformat(),
+                "has_receipt": bool(o.payment_receipt_file_id),
+            }
+            for o in orders
+        ]
+    }
+
+
+@finance_router.post("/p2p-orders/{order_id}/approve")
+async def approve_p2p_order(
+    order_id: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_section("moliya"))
+):
+    result = await db.execute(select(Order).where(Order.id == order_id))
+    order = result.scalars().first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Buyurtma topilmadi")
+    await _verify_p2p_order(db, order, True, current_user.id)
+    return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@finance_router.post("/p2p-orders/{order_id}/reject")
+async def reject_p2p_order(
+    order_id: int,
+    reason: str = Form(""),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_section("moliya")),
+):
+    result = await db.execute(select(Order).where(Order.id == order_id))
+    order = result.scalars().first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Buyurtma topilmadi")
+    await _verify_p2p_order(db, order, False, current_user.id, reason)
     return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -2903,6 +3156,52 @@ async def telegram_webhook(request: Request, db: AsyncSession = Depends(get_db))
                 await send_telegram_message(chat_id, "Avval /start bosib, telefon raqamingizni ulashing.")
                 return {"ok": True}
 
+            # ---- P2P BUYURTMANI TASDIQLASH / RAD ETISH (operator/OWNER botda) ----
+            if data.startswith("p2p_ok:") or data.startswith("p2p_no:"):
+                if user.role not in (UserRole.OWNER, UserRole.ADMIN):
+                    await answer_callback_query(callback_query["id"], text="Bu amal faqat admin/operator uchun.", show_alert=True)
+                    return {"ok": True}
+                order_id = int(data.split(":")[1])
+                order_result = await db.execute(select(Order).where(Order.id == order_id))
+                order = order_result.scalars().first()
+                if not order:
+                    await answer_callback_query(callback_query["id"], text="Buyurtma topilmadi.", show_alert=True)
+                    return {"ok": True}
+                if order.payment_verified or order.status == OrderStatus.CANCELLED:
+                    await answer_callback_query(callback_query["id"], text="Bu buyurtma allaqachon ko'rib chiqilgan.", show_alert=True)
+                    return {"ok": True}
+
+                approved = data.startswith("p2p_ok:")
+                await _verify_p2p_order(db, order, approved, user.id)
+                result_text = f"✅ Buyurtma #{order.id} TASDIQLANDI — {user.full_name}" if approved else f"❌ Buyurtma #{order.id} RAD ETILDI — {user.full_name}"
+                try:
+                    await send_telegram_message(chat_id, result_text)
+                except Exception:
+                    pass
+                return {"ok": True}
+
+            # ---- KURYER/HAMKOR: pul yechish — "chekni oldim" tasdig'i ----
+            if data.startswith("wd_confirm:"):
+                wd_id = int(data.split(":")[1])
+                wd_result = await db.execute(select(WithdrawalRequest).where(WithdrawalRequest.id == wd_id))
+                wd = wd_result.scalars().first()
+                belongs_to_me = False
+                if wd and wd.user_id and wd.user_id == user.id:
+                    belongs_to_me = True
+                elif wd and wd.partner_id:
+                    own_partner = await db.execute(
+                        select(PartnerProfile).where(PartnerProfile.id == wd.partner_id, PartnerProfile.user_id == user.id)
+                    )
+                    belongs_to_me = own_partner.scalars().first() is not None
+                if not wd or not belongs_to_me:
+                    await answer_callback_query(callback_query["id"], text="Bu so'rov sizga tegishli emas.", show_alert=True)
+                    return {"ok": True}
+                if not wd.recipient_confirmed_at:
+                    wd.recipient_confirmed_at = datetime.utcnow()
+                    await db.commit()
+                await send_telegram_message(chat_id, "Rahmat! Tasdiqlandi ✅")
+                return {"ok": True}
+
             if data in ("become:courier", "become:partner"):
                 role_key = data.split(":")[1]
                 already = False
@@ -2987,9 +3286,35 @@ async def telegram_webhook(request: Request, db: AsyncSession = Depends(get_db))
 async def _handle_telegram_text_message(chat_id, text, contact, message, request, db):
     if text.startswith("/start"):
         parts = text.split(maxsplit=1)
-        referral_code_payload = parts[1].strip() if len(parts) > 1 else None
+        start_payload = parts[1].strip() if len(parts) > 1 else None
 
         bot_conversation_state.pop(chat_id, None)
+
+        # ---- ADMIN/OPERATOR: pul yechish so'rovi uchun CHEK yuborish rejimi ----
+        # Admin panelidagi "📤 Chek yuborish" havolasi shu formatda keladi:
+        # https://t.me/BOT?start=wd_123
+        if start_payload and start_payload.startswith("wd_") and start_payload[3:].isdigit():
+            wd_id = int(start_payload[3:])
+            admin_user_result = await db.execute(select(User).where(User.telegram_id == str(chat_id)))
+            admin_user = admin_user_result.scalars().first()
+            if not admin_user or admin_user.role not in (UserRole.OWNER, UserRole.ADMIN):
+                await send_telegram_message(chat_id, "Bu havola faqat admin/operator uchun. Avval o'z hisobingiz bilan /start bosing.")
+                return {"ok": True}
+            wd_result = await db.execute(select(WithdrawalRequest).where(WithdrawalRequest.id == wd_id))
+            wd = wd_result.scalars().first()
+            if not wd or wd.status != WithdrawalStatus.PENDING:
+                await send_telegram_message(chat_id, "Bu so'rov topilmadi yoki allaqachon ko'rib chiqilgan.")
+                return {"ok": True}
+            bot_conversation_state[chat_id] = {"awaiting_receipt_for_withdrawal": wd_id}
+            await send_telegram_message(
+                chat_id,
+                f"💸 Pul yechish so'rovi #{wd.id} — {wd.amount:,.0f} so'm.\n\n"
+                f"Pulni kartaga o'tkazgach, TO'LOV CHEKINI (skrinshot) shu yerga rasm qilib yuboring — "
+                f"so'rov avtomatik yakunlanadi va qabul qiluvchiga chek yuboriladi.",
+            )
+            return {"ok": True}
+
+        referral_code_payload = start_payload
         if referral_code_payload:
             # Referal kodini vaqtincha saqlab qo'yamiz — telefon ulashilganda
             # (pastroqda) shu kodga tegishli odamni "taklif qiluvchi" deb yozamiz.
@@ -3227,6 +3552,31 @@ class ShopOrderBody(BaseModel):
     promo_code: Optional[str] = None
     location: Optional[dict] = None
     use_cashback: Optional[bool] = None
+
+
+@shop_router.get("/p2p-card")
+async def shop_get_p2p_card(db: AsyncSession = Depends(get_db)):
+    """Mijoz checkout'da 'Karta orqali (P2P)' usulini tanlaganda shu
+    endpoint chaqiriladi — qaysi kartaga pul o'tkazish kerakligini
+    ko'rsatish uchun. DIQQAT: bu yerda raqam ATAYLAB TO'LIQ (maskalanmagan)
+    qaytariladi — chunki mijoz AYNAN shu raqamga pul o'tkazishi kerak,
+    bu boshqa foydalanuvchilarning shaxsiy kartasi emas, balki
+    OWNER'ning ATAYLAB OMMAGA ko'rsatish uchun qo'shgan to'lov kartasi."""
+    card = await _get_active_p2p_card(db)
+    if not card:
+        return {"available": False}
+
+    digits = card_security.decrypt_card_number(card.encrypted_card_number)
+    if not digits:
+        return {"available": False}
+
+    grouped = " ".join(digits[i:i + 4] for i in range(0, len(digits), 4))
+    return {
+        "available": True,
+        "card_number": grouped,
+        "bank_name": card.bank_name,
+        "card_holder_name": card.card_holder_name,
+    }
 
 
 @app.get("/health")
@@ -3588,6 +3938,19 @@ async def shop_create_order(body: ShopOrderBody, db: AsyncSession = Depends(get_
         except (TypeError, ValueError):
             delivery_lat, delivery_lng = None, None
 
+    payment_method = body.payment_method or "cash"
+
+    # ---- P2P TO'LOV: avval FAOL karta borligini tekshiramiz ----
+    # (bo'lmasa, mijoz pulni qayerga o'tkazishini bilmay qoladi)
+    p2p_card = None
+    if payment_method == "p2p":
+        p2p_card = await _get_active_p2p_card(db)
+        if not p2p_card:
+            raise HTTPException(
+                status_code=400,
+                detail="Hozircha P2P (karta orqali) to'lov mavjud emas. Boshqa to'lov usulini tanlang.",
+            )
+
     new_order = Order(
         client_id=client.id,
         partner_id=body.partner_id,
@@ -3599,7 +3962,10 @@ async def shop_create_order(body: ShopOrderBody, db: AsyncSession = Depends(get_
         delivery_longitude=delivery_lng,
         client_comment=body.comment,
         order_type=body.order_type or "delivery",
-        payment_method=body.payment_method or "cash",
+        payment_method=payment_method,
+        # P2P uchun — operator/OWNER botda chekni tasdiqlagunga qadar
+        # "tasdiqlanmagan" holatda turadi (hamkorga ko'rinmaydi).
+        payment_verified=(payment_method != "p2p"),
         promo_code_id=promo_code_obj.id if promo_code_obj else None,
         discount_amount=discount_amount + cashback_used,
         cashback_used=cashback_used,
@@ -3626,17 +3992,36 @@ async def shop_create_order(body: ShopOrderBody, db: AsyncSession = Depends(get_
     await db.commit()
 
     try:
-        await send_telegram_message(
-            telegram_id,
-            f"✅ Buyurtmangiz qabul qilindi!\n\n"
-            f"<b>Buyurtma:</b> #{new_order.id}\n"
-            f"<b>Do'kon:</b> {partner.brand_name}\n"
-            f"<b>Jami:</b> {total_price:,.0f} so'm + yetkazish {delivery_fee:,.0f} so'm",
-        )
+        if payment_method == "p2p" and p2p_card:
+            # Mijozni botda "chek kutilmoqda" holatiga o'tkazamiz — bot
+            # webhook'i (_handle_telegram_text_message) keyingi rasm
+            # xabarini aynan shu buyurtmaga tegishli CHEK deb qabul qiladi.
+            bot_conversation_state[int(telegram_id)] = {"awaiting_receipt_for_order": new_order.id}
+            card_digits = card_security.decrypt_card_number(p2p_card.encrypted_card_number) or ""
+            grouped = " ".join(card_digits[i:i + 4] for i in range(0, len(card_digits), 4))
+            await send_telegram_message(
+                telegram_id,
+                f"🧾 Buyurtma #{new_order.id} qabul qilindi — endi to'lov qiling.\n\n"
+                f"<b>To'lov summasi:</b> {(total_price + delivery_fee):,.0f} so'm\n"
+                f"<b>Karta raqami:</b> <code>{grouped}</code>\n"
+                f"<b>Bank:</b> {p2p_card.bank_name}\n"
+                f"<b>Karta egasi:</b> {p2p_card.card_holder_name}\n\n"
+                f"Pulni o'tkazgach, TO'LOV CHEKINI (skrinshot) shu yerga, "
+                f"SHU CHATGA rasm qilib yuboring — operator tekshirib tasdiqlagach, "
+                f"buyurtmangiz avtomatik hamkorga yuboriladi.",
+            )
+        else:
+            await send_telegram_message(
+                telegram_id,
+                f"✅ Buyurtmangiz qabul qilindi!\n\n"
+                f"<b>Buyurtma:</b> #{new_order.id}\n"
+                f"<b>Do'kon:</b> {partner.brand_name}\n"
+                f"<b>Jami:</b> {total_price:,.0f} so'm + yetkazish {delivery_fee:,.0f} so'm",
+            )
     except Exception as e:
         print(f"Buyurtma tasdiqlash xabarini yuborishda xatolik: {e}")
 
-    return {"ok": True, "order_id": new_order.id}
+    return {"ok": True, "order_id": new_order.id, "payment_method": payment_method}
 
 
 # ==================== 12. HAMKOR KABINETI (do'kon egasi) ====================
@@ -3667,7 +4052,13 @@ async def partner_dashboard(
     orders_result = await db.execute(
         select(Order)
         .options(selectinload(Order.items), selectinload(Order.client), selectinload(Order.courier))
-        .where(Order.partner_id == partner.id)
+        .where(
+            Order.partner_id == partner.id,
+            # P2P to'lov tasdiqlanmagan buyurtmalar hamkorga HALI ko'rinmaydi —
+            # operator/OWNER botda chekni tasdiqlagach, bu filtr avtomatik
+            # "o'tkazadi" (qarang _verify_p2p_order).
+            or_(Order.payment_method != "p2p", Order.payment_verified == True),
+        )
         .order_by(Order.created_at.desc())
         .limit(200)
     )
@@ -3692,6 +4083,7 @@ async def partner_dashboard(
         select(Card).where(Card.user_id == current_user.id, Card.is_active == True).order_by(Card.created_at.desc())
     )
     cards = [_card_to_dict(c) for c in cards_result.scalars().all()]
+    _, partner_card_limit = await _get_card_limits(db)
 
     return templates.TemplateResponse(
         request=request,
@@ -3705,6 +4097,7 @@ async def partner_dashboard(
             "current_user": current_user,
             "withdrawal_requests": withdrawal_requests,
             "cards": cards,
+            "MAX_CARDS": partner_card_limit,
             "MIN_WITHDRAWAL_AMOUNT": MIN_WITHDRAWAL_AMOUNT,
             "MAX_WITHDRAWAL_AMOUNT": MAX_WITHDRAWAL_AMOUNT,
         },
@@ -3784,7 +4177,10 @@ async def partner_add_card(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_partner_user),
 ):
-    await _add_card_for_user(db, current_user.id, card_number, card_holder_name, expire_month, expire_year)
+    _, partner_limit = await _get_card_limits(db)
+    await _add_card_for_user(
+        db, current_user.id, card_number, card_holder_name, expire_month, expire_year, max_cards=partner_limit
+    )
     return RedirectResponse(url="/partner", status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -4112,6 +4508,7 @@ async def courier_dashboard(
         select(Card).where(Card.user_id == current_user.id, Card.is_active == True).order_by(Card.created_at.desc())
     )
     cards = [_card_to_dict(c) for c in cards_result.scalars().all()]
+    courier_card_limit, _ = await _get_card_limits(db)
 
     return templates.TemplateResponse(
         request=request,
@@ -4124,6 +4521,7 @@ async def courier_dashboard(
             "history_orders": history_orders,
             "withdrawal_requests": withdrawal_requests,
             "cards": cards,
+            "MAX_CARDS": courier_card_limit,
             "MIN_WITHDRAWAL_AMOUNT": MIN_WITHDRAWAL_AMOUNT,
             "MAX_WITHDRAWAL_AMOUNT": MAX_WITHDRAWAL_AMOUNT,
             "COURIER_SOUND_OPTIONS": COURIER_SOUND_OPTIONS,
@@ -4232,7 +4630,10 @@ async def courier_add_card(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_courier_user),
 ):
-    await _add_card_for_user(db, current_user.id, card_number, card_holder_name, expire_month, expire_year)
+    courier_limit, _ = await _get_card_limits(db)
+    await _add_card_for_user(
+        db, current_user.id, card_number, card_holder_name, expire_month, expire_year, max_cards=courier_limit
+    )
     return RedirectResponse(url="/courier", status_code=status.HTTP_303_SEE_OTHER)
 
 

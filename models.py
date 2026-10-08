@@ -238,6 +238,19 @@ class Order(Base):
     delivery_latitude = Column(Float, nullable=True)
     delivery_longitude = Column(Float, nullable=True)
 
+    # ---- P2P (KARTADAN-KARTAGA) TO'LOV TEKSHIRUVI ----
+    # payment_method == "p2p" bo'lgan buyurtmalar uchun: mijoz pulni
+    # OWNER'ning shaxsiy kartasiga o'zi o'tkazadi, keyin chek rasmini
+    # botga yuboradi. Operator/OWNER botda "Tasdiqlash" bosgunga qadar
+    # bu buyurtma hamkorga KO'RINMAYDI (qarang partner_dashboard'dagi
+    # filtr) — aks holda hali to'lanmagan buyurtma tayyorlanib qolishi
+    # mumkin edi. Naqd/boshqa usullar uchun bu maydon ahamiyatsiz —
+    # shuning uchun standart qiymati True.
+    payment_verified = Column(Boolean, default=True)
+    payment_receipt_file_id = Column(String, nullable=True)
+    payment_verified_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    payment_verified_at = Column(DateTime, nullable=True)
+
     # Mijozning maxsus istaklari ("Piyozsiz", "Achchiq bo'lmasin" va h.k.)
     client_comment = Column(Text, nullable=True)
 
@@ -305,6 +318,12 @@ class SystemSetting(Base):
     # Yetkazish narxining necha foizi kuryerga tegishli ekani (qolgani egasiga qoladi).
     # Masalan 80.0 = yetkazish narxining 80%i kuryerga, 20%i egasiga.
     courier_share_percent = Column(Float, default=80.0)
+
+    # Kuryer/hamkor o'z kabinetidan ko'pi bilan nechta plastik karta
+    # qo'sha olishi — OWNER bu yerdan belgilaydi (qarang _add_card_for_user).
+    # OWNER/operator'ning o'z (P2P) kartalariga bu cheklov TEGMAYDI.
+    max_cards_per_courier = Column(Integer, default=3)
+    max_cards_per_partner = Column(Integer, default=3)
 
     # Tug'ilgan kun bonusi, referal va cashback dasturlari — bularning
     # barchasini faqat OWNER qo'lda kiritadi/o'zgartiradi.
@@ -393,6 +412,17 @@ class WithdrawalRequest(Base):
     # foydalanuvchiga ko'rsatiladi (shaffoflik uchun).
     reject_reason = Column(String, nullable=True)
 
+    # ---- BOT ORQALI CHEK YUBORISH / QABUL TASDIG'I ----
+    # Admin/operator pulni real o'tkazgach, chek rasmini botga yuboradi —
+    # shu rasm shu yerga (Telegram file_id sifatida) saqlanadi va
+    # kuryer/hamkorga "✅ Pulni oldim" tugmasi bilan birga yuboriladi.
+    receipt_file_id = Column(String, nullable=True)
+    receipt_sent_at = Column(DateTime, nullable=True)
+    # Qabul qiluvchi (kuryer/hamkor) botda "✅ Pulni oldim" bosgan payt —
+    # BU MOLIYAVIY HISOBGA TA'SIR QILMAYDI (balans allaqachon approve
+    # paytida yakunlangan), faqat shaffoflik/audit uchun yoziladi.
+    recipient_confirmed_at = Column(DateTime, nullable=True)
+
     user = relationship("User", foreign_keys=[user_id])
     partner = relationship("PartnerProfile", foreign_keys=[partner_id])
     card = relationship("Card")
@@ -420,6 +450,12 @@ class Card(Base):
     # card_security.detect_card_bin(). Har safar qayta hisoblash shart
     # bo'lmasligi uchun bazada ham saqlanadi.
     bank_name = Column(String, nullable=True)
+
+    # Faqat OWNER'ning shaxsiy kartalari uchun ma'noga ega: mijozlar P2P
+    # to'lov qilganda aynan SHU karta raqami ko'rsatiladi. Bir vaqtning
+    # o'zida faqat BITTA karta faol bo'ladi (yangisini faollashtirsangiz,
+    # eskisi avtomatik o'chadi — qarang _activate_p2p_card).
+    is_p2p_active = Column(Boolean, default=False)
     card_type = Column(String, nullable=True)  # uzcard / humo / visa / mastercard / mir / unknown
 
     is_active = Column(Boolean, default=True)

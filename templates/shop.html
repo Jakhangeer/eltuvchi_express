@@ -305,7 +305,9 @@
 
         let favorites = JSON.parse(localStorage.getItem('fav_items') || '[]');
         let orderType = 'delivery'; 
-        let paymentMethod = 'cash'; // Real to'lovlar: 'cash', 'click', 'payme'
+        let paymentMethod = 'cash'; // Real to'lovlar: 'cash', 'click', 'payme', 'p2p'
+        let p2pCardInfo = null;     // { available, card_number, bank_name, card_holder_name } — bir marta yuklab keshlanadi
+        let p2pCardLoading = false;
         let promoCode = '';
         let promoDiscountPercent = 0;
         let orderComment = '';
@@ -1115,20 +1117,48 @@
                     <!-- REAL TO'LOV TURLARI -->
                     <div class="border-t border-slate-100/10 pt-3">
                         <label class="block text-xs font-bold text-title mb-1.5">To'lov usuli</label>
-                        <div class="grid grid-cols-3 gap-2 text-xs font-bold">
+                        <div class="grid grid-cols-4 gap-2 text-xs font-bold">
                             <button onclick="setPayment('cash')" class="p-2 rounded-xl border flex flex-col items-center justify-center space-y-1 ${paymentMethod === 'cash' ? 'border-amber-500 bg-amber-50 text-amber-900' : 'border-slate-200'}">
                                 <i class="fa-solid fa-money-bill-wave text-emerald-600 text-sm"></i>
                                 <span>Naqd</span>
+                            </button>
+                            <button onclick="setPayment('p2p')" class="p-2 rounded-xl border flex flex-col items-center justify-center space-y-1 ${paymentMethod === 'p2p' ? 'border-amber-500 bg-amber-50 text-amber-900' : 'border-slate-200'}">
+                                <i class="fa-solid fa-credit-card text-indigo-500 text-sm"></i>
+                                <span>Karta (P2P)</span>
                             </button>
                             <button onclick="setPayment('click')" class="p-2 rounded-xl border flex flex-col items-center justify-center space-y-1 ${paymentMethod === 'click' ? 'border-amber-500 bg-amber-50 text-amber-900' : 'border-slate-200'}">
                                 <i class="fa-solid fa-mobile-screen text-blue-500 text-sm"></i>
                                 <span>Click</span>
                             </button>
                             <button onclick="setPayment('payme')" class="p-2 rounded-xl border flex flex-col items-center justify-center space-y-1 ${paymentMethod === 'payme' ? 'border-amber-500 bg-amber-50 text-amber-900' : 'border-slate-200'}">
-                                <i class="fa-solid fa-credit-card text-cyan-500 text-sm"></i>
+                                <i class="fa-solid fa-wallet text-cyan-500 text-sm"></i>
                                 <span>Payme</span>
                             </button>
                         </div>
+
+                        ${paymentMethod === 'p2p' ? `
+                        <div class="mt-3 p-3 rounded-2xl border border-indigo-200 bg-indigo-50/60">
+                            ${p2pCardLoading || p2pCardInfo === null ? `
+                                <p class="text-xs text-sub font-semibold">Karta ma'lumoti yuklanmoqda...</p>
+                            ` : p2pCardInfo.available ? `
+                                <p class="text-[10px] font-bold text-indigo-700 uppercase tracking-wide mb-1.5">Shu kartaga o'tkazing</p>
+                                <div class="flex items-center justify-between gap-2">
+                                    <div class="min-w-0">
+                                        <p class="font-mono font-extrabold text-base text-slate-900 tracking-wide">${p2pCardInfo.card_number}</p>
+                                        <p class="text-[11px] text-sub font-semibold truncate">${p2pCardInfo.bank_name} · ${p2pCardInfo.card_holder_name}</p>
+                                    </div>
+                                    <button onclick="copyP2pCardNumber()" class="shrink-0 bg-indigo-600 text-white text-[11px] font-bold px-3 py-2 rounded-xl active:scale-95 transition-all">
+                                        📋 Nusxalash
+                                    </button>
+                                </div>
+                                <p id="p2p-copy-status" class="text-[10px] text-emerald-600 font-bold h-3 mt-1"></p>
+                                <p class="text-[10px] text-sub mt-1.5 leading-relaxed">Avval shu summani yuqoridagi kartaga o'tkazing, so'ng pastdagi "Buyurtmani tasdiqlash" tugmasini bosing. To'lovingiz operator tomonidan tekshirilgach, buyurtma hamkorga yuboriladi.</p>
+                            ` : `
+                                <p class="text-xs text-rose-600 font-bold">Hozircha P2P (karta orqali) to'lov mavjud emas.</p>
+                                <button onclick="setPayment('cash')" class="text-[11px] text-indigo-700 font-bold underline mt-1">Naqd pulga o'tish</button>
+                            `}
+                        </div>
+                        ` : ''}
                     </div>
 
                     <!-- KESHBEKDAN FOYDALANISH ALOHIDA QISM -->
@@ -1195,7 +1225,28 @@
         }
 
         function setOrderType(type) { orderType = type; openCart(); }
-        function setPayment(method) { paymentMethod = method; openCart(); }
+        function setPayment(method) {
+            paymentMethod = method;
+            if (method === 'p2p' && p2pCardInfo === null && !p2pCardLoading) {
+                p2pCardLoading = true;
+                fetch('/api/shop/p2p-card')
+                    .then(r => r.json())
+                    .then(data => { p2pCardInfo = data; })
+                    .catch(() => { p2pCardInfo = { available: false }; })
+                    .finally(() => { p2pCardLoading = false; openCart(); });
+            }
+            openCart();
+        }
+
+        function copyP2pCardNumber() {
+            if (!p2pCardInfo || !p2pCardInfo.card_number) return;
+            const digitsOnly = p2pCardInfo.card_number.replace(/\s/g, '');
+            navigator.clipboard?.writeText(digitsOnly).then(() => {
+                const el = document.getElementById('p2p-copy-status');
+                if (el) { el.textContent = '✓ Nusxalandi'; setTimeout(() => { el.textContent = ''; }, 1800); }
+                if (navigator.vibrate) navigator.vibrate(12);
+            });
+        }
 
         function applyPromoCode() {
             const code = document.getElementById("promo-input").value.trim().toUpperCase();
@@ -1250,6 +1301,11 @@
         }
 
         async function placeOrder() {
+            if (paymentMethod === 'p2p' && (!p2pCardInfo || !p2pCardInfo.available)) {
+                alert("Hozircha P2P (karta orqali) to'lov mavjud emas. Iltimos, boshqa to'lov usulini tanlang.");
+                return;
+            }
+
             let address = "";
             if (orderType === 'delivery') {
                 address = document.getElementById("delivery-address")?.value.trim() || "";
