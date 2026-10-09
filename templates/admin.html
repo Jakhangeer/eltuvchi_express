@@ -723,9 +723,8 @@
                                     {% if courier.courier_profile %}{{ courier.courier_profile.transport_type }}{% endif %}
                                 </td>
                                 {% if is_owner %}<td class="p-2 text-xs">{{ courier.city.name if courier.city else '—' }}</td>{% endif %}
-                                <td class="p-2 text-xs font-semibold {% if courier.courier_profile and courier.courier_profile.balance > 0 %}text-red-600{% else %}text-green-700{% endif %}">
+                                <td class="p-2 text-xs font-semibold {% if courier.courier_profile and courier.courier_profile.balance < 0 %}text-red-600{% else %}text-green-700{% endif %}">
                                     {% if courier.courier_profile %}{{ "%.0f"|format(courier.courier_profile.balance or 0) }} so'm{% endif %}
-                                    {% if is_owner and courier.courier_profile %}<span class="block text-[10px] text-gray-400 font-normal">limit: {{ "%.0f"|format(courier.courier_profile.credit_limit or 0) }}</span>{% endif %}
                                 </td>
                                 <td class="p-2 text-center">
                                     <span class="px-2 py-0.5 text-[10px] font-semibold rounded-full {% if courier.courier_profile and courier.courier_profile.is_blocked %}bg-red-100 text-red-800{% elif courier.is_active %}bg-green-100 text-green-800{% else %}bg-gray-200 text-gray-700{% endif %}">
@@ -968,6 +967,57 @@
         </div>
         {% endif %}
 
+        {% if pending_receipts or recent_receipts %}
+        <div class="card-bg bg-white p-6 rounded-xl shadow-md border-2 border-emerald-400 mb-6" id="receipts-section">
+            <h2 class="theme-title text-lg font-bold mb-1 text-emerald-700">🧾 Cheklar — tasdiqlash ({{ pending_receipts|length }} ta kutilmoqda)</h2>
+            <p class="text-xs text-gray-500 mb-4">Kuryer, hamkor va mijozlar platforma ichida yuklagan to'lov cheklari. Pul kartangizga haqiqatan tushganini tekshirib, tasdiqlang: kuryer/hamkor chekida balans avtomatik to'ldiriladi, mijoz chekida P2P buyurtma tasdiqlanadi.</p>
+            <div class="space-y-3">
+                {% for r in pending_receipts %}
+                <div class="p-3 rounded-lg border dark:border-gray-700 flex gap-3 flex-wrap">
+                    <a href="/admin/finance/receipts/{{ r.id }}/image" target="_blank" class="shrink-0">
+                        <img src="/admin/finance/receipts/{{ r.id }}/image" alt="Chek #{{ r.id }}" loading="lazy" class="w-28 h-28 object-cover rounded-lg border">
+                    </a>
+                    <div class="flex-1 min-w-[200px]">
+                        <p class="text-sm font-bold">#{{ r.id }} — {{ r.who }} <span class="text-xs font-normal text-gray-500">{{ r.phone }}</span></p>
+                        <p class="text-xs text-indigo-600 font-semibold">{{ r.kind_label }}{% if r.order_id %} · buyurtma #{{ r.order_id }}{% endif %}</p>
+                        <p class="text-xs text-gray-500">{{ "%.0f"|format(r.amount) }} so'm · {{ r.created_at|uzb_time('%d.%m %H:%M') }}</p>
+                        {% if r.comment %}<p class="text-xs text-gray-500 italic">"{{ r.comment }}"</p>{% endif %}
+                        <div class="flex gap-2 mt-2 flex-wrap items-center">
+                            <form action="/admin/finance/receipts/{{ r.id }}/approve" method="POST" class="flex gap-2 items-center" onsubmit="return confirm('Pul kartangizga haqiqatan tushganiga ishonch hosil qildingizmi?');">
+                                {% if r.kind != 'client_order' %}
+                                <input type="number" name="amount" value="{{ '%.0f'|format(r.amount) }}" min="1" step="1" class="w-28 p-2 border rounded-lg text-xs dark:bg-gray-800" title="Haqiqatan tushgan summa">
+                                {% endif %}
+                                <button type="submit" class="text-xs bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-lg font-bold">✅ Tasdiqlash</button>
+                            </form>
+                            <button type="button" onclick="document.getElementById('receipt-reject-{{ r.id }}').classList.toggle('hidden')" class="text-xs bg-red-100 text-red-700 hover:bg-red-200 px-3 py-2 rounded-lg font-semibold">✕ Rad etish</button>
+                        </div>
+                        <form id="receipt-reject-{{ r.id }}" action="/admin/finance/receipts/{{ r.id }}/reject" method="POST" class="hidden flex gap-2 mt-2">
+                            <input type="text" name="reason" placeholder="Rad etish sababi" class="flex-1 p-2 border rounded-lg text-xs dark:bg-gray-800">
+                            <button type="submit" class="text-xs bg-red-600 hover:bg-red-700 text-white px-3 py-2 rounded-lg font-bold whitespace-nowrap">Rad etish</button>
+                        </form>
+                    </div>
+                </div>
+                {% else %}
+                <p class="text-sm text-gray-500 text-center py-3">Kutilayotgan chek yo'q</p>
+                {% endfor %}
+            </div>
+            {% if recent_receipts %}
+            <details class="mt-4">
+                <summary class="text-xs font-semibold text-gray-500 cursor-pointer">So'nggi ko'rib chiqilgan cheklar ({{ recent_receipts|length }})</summary>
+                <div class="mt-2 space-y-1">
+                    {% for r in recent_receipts %}
+                    <div class="flex justify-between gap-2 text-xs border-b dark:border-gray-700 py-1.5 flex-wrap">
+                        <span><a href="/admin/finance/receipts/{{ r.id }}/image" target="_blank" class="text-indigo-600 underline">#{{ r.id }}</a> · {{ r.who }} · {{ r.kind_label }}</span>
+                        <span class="font-semibold">{{ "%.0f"|format(r.amount) }} so'm</span>
+                        <span class="{% if r.status == 'approved' %}text-green-600{% else %}text-red-600{% endif %}">{% if r.status == 'approved' %}✅ Tasdiqlandi{% else %}✕ Rad etildi{% if r.reject_reason %}: {{ r.reject_reason }}{% endif %}{% endif %}</span>
+                    </div>
+                    {% endfor %}
+                </div>
+            </details>
+            {% endif %}
+        </div>
+        {% endif %}
+
         {% if pending_p2p_orders %}
         <div class="card-bg bg-white p-6 rounded-xl shadow-md border-2 border-sky-400 mb-6">
             <h2 class="theme-title text-lg font-bold mb-4 text-sky-700">💳 Tasdiqlanmagan P2P To'lovlar ({{ pending_p2p_orders|length }})</h2>
@@ -977,7 +1027,7 @@
                 <div class="flex items-center justify-between gap-3 flex-wrap p-3 rounded-lg border dark:border-gray-700">
                     <div>
                         <p class="text-sm font-bold">#{{ o.id }} — {{ o.client.full_name if o.client else '—' }}</p>
-                        <p class="text-xs text-gray-500">🏪 {{ o.partner.brand_name if o.partner else '—' }} · {{ "%.0f"|format(o.total_price + o.delivery_fee) }} so'm · {{ o.created_at|uzb_time('%d.%m %H:%M') }}{% if not o.payment_receipt_file_id %} · <span class="text-amber-600">chek yuborilmagan</span>{% endif %}</p>
+                        <p class="text-xs text-gray-500">🏪 {{ o.partner.brand_name if o.partner else '—' }} · {{ "%.0f"|format(o.total_price + o.delivery_fee) }} so'm · {{ o.created_at|uzb_time('%d.%m %H:%M') }}{% if receipt_by_order and receipt_by_order.get(o.id) %} · <a href="/admin/finance/receipts/{{ receipt_by_order[o.id] }}/image" target="_blank" class="text-indigo-600 underline">🧾 chekni ko'rish</a>{% elif not o.payment_receipt_file_id %} · <span class="text-amber-600">chek yuborilmagan</span>{% endif %}</p>
                     </div>
                     <div class="flex gap-2">
                         <form action="/admin/finance/p2p-orders/{{ o.id }}/approve" method="POST" onsubmit="return confirm('Pul kartangizga haqiqatan ham tushganiga ishonch hosil qildingizmi?');">
@@ -1040,7 +1090,8 @@
 
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div class="card-bg bg-white p-6 rounded-xl shadow-md col-span-1">
-                <h2 class="theme-title text-lg font-bold mb-4 text-indigo-700">💰 Kuryer Balansi</h2>
+                <h2 class="theme-title text-lg font-bold mb-1 text-indigo-700">💰 Kuryer Balansi</h2>
+                <p class="text-[11px] text-gray-500 mb-3">Kuryerning oldindan to'ldirilgan hisobi: naqd buyurtma yetkazilganda platforma ulushi undan yechiladi, balans yetmasa naqd buyurtma berilmaydi. Kuryer o'zi chek yuborib to'ldiradi (yuqoridagi "Cheklar"); bu yerda qo'lda to'ldirish/yechish mumkin.</p>
                 <form action="/admin/finance/courier" method="POST" class="space-y-3">
                     <div>
                         <label class="block text-xs font-medium">Kuryer</label>
@@ -1711,8 +1762,8 @@
                     <option value="{{ city.id }}">{{ city.name }}</option>
                     {% endfor %}
                 </select>
-                <div>
-                    <label class="block text-xs font-medium mb-1 dark:text-gray-300">Kredit limiti (naqd qarz chegarasi, so'm)</label>
+                <div class="hidden">
+                    <label class="block text-xs font-medium mb-1 dark:text-gray-300">Kredit limiti (eskirgan)</label>
                     <input type="number" id="edit-courier-credit-limit" name="credit_limit" min="0" step="1000" class="w-full p-2 border rounded dark:bg-gray-700 dark:text-white">
                     <p class="text-[11px] text-gray-400 mt-1">Kuryerning qarzi shu summadan oshsa, yangi buyurtma olishi avtomatik bloklanadi.</p>
                 </div>

@@ -170,44 +170,80 @@
         <div class="fade-up rounded-2xl p-4" style="background:rgba(244,63,94,.12); border:1px solid rgba(244,63,94,.35);">
             <p class="text-sm font-bold text-rose-300 flex items-center gap-2">🚫 Siz vaqtincha bloklangansiz</p>
             <p class="text-xs text-rose-200/80 mt-1">
-                Qarzingiz ruxsat etilgan chegaradan ({{ "%.0f"|format(courier_profile.credit_limit or 0) }} so'm) oshib ketdi — yangi buyurtma qabul qila olmaysiz.
-                Yig'gan naqd pulingizni egasiga topshiring (yoki pastdan "Yechib olish" orqali so'rov yuboring), shundan keyin bloklash avtomatik olinadi.
+                Administrator sizni vaqtincha bloklagan — yangi buyurtma qabul qila olmaysiz. Savollar bo'lsa administratorga murojaat qiling.
             </p>
         </div>
         {% endif %}
 
-        <!-- BALANS / QARZ -->
+        <!-- BALANS (oldindan to'ldiriladigan hisob) -->
+        {% set bal = (courier_profile.balance or 0) if courier_profile else 0 %}
         <div class="glass fade-up stagger-1 rounded-2xl p-4" id="balance-card">
-            {% set debt = (courier_profile.balance or 0) if courier_profile else 0 %}
-            {% set limit = (courier_profile.credit_limit or 300000) if courier_profile else 300000 %}
-            {% set used_pct = (debt / limit * 100) if (courier_profile and limit > 0 and debt > 0) else 0 %}
             <div class="flex justify-between items-center">
-                <span class="text-xs text-slate-400">💰 Sizdagi qarz (egasiga topshirilishi kerak)</span>
-                <span class="text-xl font-extrabold {% if debt > 0 %}text-rose-400{% else %}text-emerald-400{% endif %}">
-                    {{ "%.0f"|format(debt) }} so'm
+                <span class="text-xs text-slate-400">💰 Sizning balansingiz</span>
+                <span class="text-xl font-extrabold {% if bal > 0 %}text-emerald-400{% elif bal < 0 %}text-rose-400{% else %}text-slate-300{% endif %}">
+                    {{ "%.0f"|format(bal) }} so'm
                 </span>
             </div>
             <p class="text-[11px] text-slate-500 mt-1.5">
-                Bu — naqd pulda yig'gan, hali egasiga topshirmagan summangiz. Har yetkazgan buyurtmadan keyin bu raqam avtomatik oshadi; egasiga naqd pul topshirganingizda (yoki admin balansni kamaytirganda), u pasayadi.
+                Mijoz naqd to'lagan buyurtmada pul sizning cho'ntagingizda qoladi, platforma ulushi esa shu balansdan yechiladi.
+                Naqd buyurtma olish uchun balansingiz yetarli bo'lishi kerak. Karta orqali to'langan buyurtmada yetkazish haqingiz balansingizga qo'shiladi.
             </p>
+            {% if reserved_hold and reserved_hold > 0 %}
+            <p class="text-[11px] text-amber-300 mt-1.5">Yo'ldagi buyurtmalar uchun band: {{ "%.0f"|format(reserved_hold) }} so'm · Yangi buyurtma uchun mavjud: {{ "%.0f"|format(free_balance if free_balance > 0 else 0) }} so'm</p>
+            {% endif %}
+            {% if bal < 0 %}
+            <p class="text-[11px] text-rose-300 mt-1.5">Balansingiz manfiy — iltimos, quyidagi "Balansni to'ldirish" orqali to'ldiring.</p>
+            {% endif %}
+        </div>
 
-            {% if courier_profile and debt > 0 %}
-            <div class="mt-3">
-                <div class="flex justify-between text-[10px] text-slate-500 mb-1">
-                    <span>Limit: {{ "%.0f"|format(limit or 0) }} so'm</span>
-                    <span>{{ "%.0f"|format(used_pct) }}%</span>
-                </div>
-                <div class="w-full h-1.5 rounded-full overflow-hidden" style="background:rgba(255,255,255,.08);">
-                    <div class="h-full rounded-full {% if used_pct >= 100 %}bg-rose-500{% elif used_pct >= 70 %}bg-amber-400{% else %}bg-emerald-400{% endif %}" style="width:{{ [used_pct, 100]|min }}%;"></div>
-                </div>
+        <!-- BALANSNI TO'LDIRISH: admin kartasi + chek yuklash -->
+        <div class="glass fade-up stagger-1 rounded-2xl p-4" id="topup-card">
+            <div class="flex items-center justify-between mb-2">
+                <h2 class="text-sm font-extrabold flex items-center gap-1.5">➕ Balansni to'ldirish</h2>
+                <span class="text-[10px] text-slate-500">Admin tasdiqlaydi</span>
             </div>
+            {% if topup_card %}
+            <div class="rounded-xl p-3 mb-3" style="background:rgba(99,102,241,.10); border:1px solid rgba(129,140,248,.30);">
+                <p class="text-[10px] text-indigo-300/80 font-semibold">1) Shu kartaga pul o'tkazing</p>
+                <p class="text-lg font-extrabold tracking-wider mt-0.5" id="topup-card-number">{{ topup_card.card_number }}</p>
+                <p class="text-xs text-slate-400">{{ topup_card.bank_name or '' }} · {{ topup_card.card_holder_name }}</p>
+                <button type="button" onclick="copyTopupCard()" class="btn-press mt-2 text-xs font-bold px-3 py-1.5 rounded-lg" style="background:rgba(255,255,255,.08);">📋 Raqamni nusxalash</button>
+            </div>
+            <form action="/courier/topup" method="POST" enctype="multipart/form-data" class="space-y-2">
+                <p class="text-[10px] text-slate-400 font-semibold">2) O'tkazgan summa va chek rasmini yuboring</p>
+                <input type="number" name="amount" min="{{ MIN_TOPUP_AMOUNT|int }}" step="1" placeholder="O'tkazgan summa (so'm)" class="glass-input w-full p-2.5 rounded-xl text-sm" required>
+                <input type="file" name="file" accept="image/png,image/jpeg,image/webp" class="glass-input w-full p-2 rounded-xl text-xs" required>
+                <input type="text" name="comment" maxlength="200" placeholder="Izoh (ixtiyoriy)" class="glass-input w-full p-2.5 rounded-xl text-sm">
+                <button type="submit" class="btn-press btn-accept w-full text-white py-2.5 rounded-xl text-sm font-bold">🧾 Chekni yuborish</button>
+            </form>
+            {% else %}
+            <p class="text-xs text-amber-300">Hozircha admin kartasi qo'shilmagan. Administrator bilan bog'laning.</p>
             {% endif %}
 
+            {% if my_receipts %}
+            <div class="mt-3 pt-3 border-t border-white/10 space-y-2">
+                <p class="text-[11px] text-slate-500 font-semibold">Cheklarim</p>
+                {% for r in my_receipts %}
+                <div class="text-xs">
+                    <div class="flex justify-between">
+                        <span class="text-slate-400">{{ r.created_at|uzb_time('%d.%m %H:%M') }}</span>
+                        <span class="font-semibold">{{ "%.0f"|format(r.amount) }} so'm</span>
+                        <span class="{% if r.status == 'pending' %}text-amber-400{% elif r.status == 'approved' %}text-emerald-400{% else %}text-rose-400{% endif %}">
+                            {% if r.status == 'pending' %}⏳ Ko'rilmoqda{% elif r.status == 'approved' %}✅ Tasdiqlandi{% else %}✕ Rad etildi{% endif %}
+                        </span>
+                    </div>
+                    {% if r.status == 'rejected' and r.reject_reason %}
+                    <p class="text-rose-300/80 text-[10px] mt-0.5">Sabab: {{ r.reject_reason }}</p>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
         </div>
 
         <!-- PUL YECHISH SO'ROVI — doim ko'rinadi (mavjud mablag' 0 bo'lsa ham) -->
         {% set frozen = (courier_profile.frozen_balance or 0) if courier_profile else 0 %}
-        {% set available = ((-debt) - frozen) if (courier_profile and debt < 0) else 0 %}
+        {% set available = (bal - frozen) if courier_profile else 0 %}
         {% if available < 0 %}{% set available = 0 %}{% endif %}
         {% set can_request = available >= MIN_WITHDRAWAL_AMOUNT and cards %}
         <div class="glass fade-up stagger-1 rounded-2xl p-4" id="withdraw-card">
@@ -248,7 +284,7 @@
             </form>
             <p class="text-[10px] text-slate-500 mt-1.5">
                 Minimal {{ "%.0f"|format(MIN_WITHDRAWAL_AMOUNT) }} so'm, bir martalik maksimal {{ "%.0f"|format(MAX_WITHDRAWAL_AMOUNT) }} so'm.
-                {% if available < MIN_WITHDRAWAL_AMOUNT %}Hozircha yechib olish mumkin bo'lgan mablag' yo'q — u egasi hisobingizga mablag' o'tkazganda paydo bo'ladi.{% endif %}
+                {% if available < MIN_WITHDRAWAL_AMOUNT %}Hozircha yechib olish mumkin bo'lgan mablag' yo'q — balansingiz to'ldirilganda yoki karta orqali to'langan buyurtma yetkazilganda paydo bo'ladi.{% endif %}
             </p>
 
             {% if withdrawal_requests %}
@@ -357,10 +393,22 @@
                 <div class="row-lift rounded-xl p-3" style="background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.08);">
                     <p class="font-bold text-sm">#{{ order.id }} — {{ order.partner.brand_name if order.partner else '—' }}</p>
                     <p class="text-xs text-slate-400 mb-1">📍 {{ order.delivery_address }}</p>
-                    <p class="text-xs text-emerald-400 font-semibold mb-2">Yetkazish haqingiz: taxminan {{ "%.0f"|format(order.delivery_fee * 0.8) }} so'm</p>
+                    <p class="text-xs text-emerald-400 font-semibold mb-1">Yetkazish haqingiz: taxminan {{ "%.0f"|format(order.delivery_fee * 0.8) }} so'm</p>
+                    {% set need = order_holds.get(order.id, 0) %}
+                    {% if need > 0 %}
+                    <p class="text-[11px] text-slate-400 mb-2">💵 Naqd to'lov — balansdan {{ "%.0f"|format(need) }} so'm yechiladi</p>
+                    {% else %}
+                    <p class="text-[11px] text-sky-300 mb-2">💳 Karta orqali to'langan — balansdan yechilmaydi</p>
+                    {% endif %}
+                    {% if need > free_balance %}
+                    <div class="w-full text-center py-2.5 rounded-xl text-xs font-bold opacity-80" style="background:rgba(244,63,94,.12); border:1px solid rgba(244,63,94,.3); color:#fda4af;">
+                        🔒 Balans yetmaydi (kerak: {{ "%.0f"|format(need) }} so'm, mavjud: {{ "%.0f"|format(free_balance if free_balance > 0 else 0) }} so'm)
+                    </div>
+                    {% else %}
                     <form action="/courier/orders/{{ order.id }}/accept" method="POST" class="js-haptic-form">
                         <button type="submit" class="btn-accept btn-press w-full text-white py-2.5 rounded-xl text-sm font-bold">🛵 Qabul qilaman</button>
                     </form>
+                    {% endif %}
                 </div>
                 {% else %}
                 <p class="text-sm text-slate-500 text-center py-6">Hozircha bo'sh buyurtma yo'q</p>
@@ -428,6 +476,19 @@
 
     <!-- ================= UMUMIY HAPTIC/CLICK TUYG'USI — barcha muhim formalar uchun ================= -->
     <script>
+        function copyTopupCard() {
+            var el = document.getElementById('topup-card-number');
+            if (!el) return;
+            var txt = el.textContent.replace(/\s+/g, '');
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(txt).then(function () { alert('Karta raqami nusxalandi'); });
+            } else {
+                var ta = document.createElement('textarea'); ta.value = txt; document.body.appendChild(ta); ta.select();
+                try { document.execCommand('copy'); alert('Karta raqami nusxalandi'); } catch (e) {}
+                document.body.removeChild(ta);
+            }
+        }
+
         // Har qanday ".js-haptic-form" jo'natilganda yengil vibratsiya (agar
         // qurilma qo'llasa) — tugmalar "jonli, qimmat" tuyulishi uchun.
         // Formaning haqiqiy yuborilishiga (backendga POST) hech qanday

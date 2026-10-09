@@ -624,6 +624,8 @@
                                 <span class="font-bold text-title">${Number(order.total_amount).toLocaleString()} so'm</span>
                             </div>
                             ${order.courier_name ? `<div class="text-[10px] text-amber-600 mt-1 font-medium"><i class="fa-solid fa-motorcycle mr-1"></i> Kuryer: ${order.courier_name}</div>` : ''}
+                            ${order.needs_receipt ? `<div class="mt-2 rounded-lg border p-2" style="border-color:#fcd34d;background:#fffbeb;"><p class="text-[10px] font-bold text-amber-900 mb-1">🧾 To'lov chekini yuboring</p><input type="file" id="receipt-file-${order.id}" accept="image/png,image/jpeg,image/webp" class="w-full text-[10px] mb-1"><button onclick="uploadReceipt(${order.id}, this)" class="w-full bg-amber-500 text-white text-[11px] font-bold py-1.5 rounded-lg">📤 Chekni yuborish</button></div>` : ''}
+                            ${order.receipt_pending ? `<div class="text-[10px] text-amber-600 mt-1 font-bold">⏳ Chek ko'rib chiqilmoqda</div>` : ''}
                             ${order.status === 'on_the_way' ? `<button onclick="openOrderTracking(${order.id})" class="w-full mt-2 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white text-[11px] font-bold py-2 rounded-lg transition-all flex items-center justify-center gap-1.5"><i class="fa-solid fa-location-crosshairs"></i> Kuryerni jonli kuzatish</button>` : ''}
                         </div>`;
                 }).join('');
@@ -1300,6 +1302,25 @@
             }
         }
 
+        async function uploadReceipt(orderId, btn) {
+            const input = document.getElementById('receipt-file-' + orderId);
+            if (!input || !input.files || !input.files[0]) { alert("Avval chek rasmini tanlang"); return; }
+            const fd = new FormData();
+            fd.append('init_data', initData);
+            fd.append('file', input.files[0]);
+            if (btn) { btn.disabled = true; btn.textContent = 'Yuborilmoqda...'; }
+            try {
+                const res = await fetch('/api/shop/orders/' + orderId + '/receipt', { method: 'POST', body: fd });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) throw new Error(data.detail || "Chekni yuborib bo'lmadi");
+                alert("✅ Chek yuborildi! Administrator tasdiqlashini kuting.");
+                if (btn && btn.parentElement) btn.parentElement.innerHTML = '<p class="text-xs font-bold text-emerald-600">✅ Chek yuborildi — tasdiqlanishini kuting</p>';
+            } catch (e) {
+                alert("Xatolik: " + e.message);
+                if (btn) { btn.disabled = false; btn.textContent = '📤 Chekni yuborish'; }
+            }
+        }
+
         async function placeOrder() {
             if (paymentMethod === 'p2p' && (!p2pCardInfo || !p2pCardInfo.available)) {
                 alert("Hozircha P2P (karta orqali) to'lov mavjud emas. Iltimos, boshqa to'lov usulini tanlang.");
@@ -1338,14 +1359,20 @@
                         </div>
                         <h2 class="text-xl font-black text-title mb-1">Buyurtma qabul qilindi!</h2>
                         <p class="text-xs text-sub font-medium mb-3">Buyurtma ID: #${result.order_id || result.id}</p>
-                        <p class="text-xs text-sub">Tez orada operator yoki kuryerimiz siz bilan bog'lanadi.</p>
+                        ${paymentMethod === 'p2p' ? `
+                        <div class="mt-3 text-left rounded-2xl border p-3" style="border-color:#fcd34d;background:#fffbeb;">
+                            <p class="text-xs font-extrabold text-amber-900 mb-1">🧾 To'lov chekini yuboring</p>
+                            <p class="text-[11px] text-amber-800 mb-2">Karta orqali pul o'tkazgach, chek rasmini shu yerga yuklang — administrator tasdiqlagach buyurtmangiz hamkorga yuboriladi.</p>
+                            <input type="file" id="receipt-file-${result.order_id || result.id}" accept="image/png,image/jpeg,image/webp" class="w-full text-xs mb-2">
+                            <button onclick="uploadReceipt(${result.order_id || result.id}, this)" class="w-full bg-amber-500 text-white py-2.5 rounded-xl text-xs font-bold">📤 Chekni yuborish</button>
+                        </div>` : `<p class="text-xs text-sub">Tez orada operator yoki kuryerimiz siz bilan bog'lanadi.</p>`}
                     </div>`;
                 document.getElementById("cart-bar").classList.add("hidden");
                 cart = {};
                 useCashback = false;
                 promoCode = '';
                 promoDiscountPercent = 0;
-                if (tg) setTimeout(() => tg.close(), 3000);
+                if (tg && paymentMethod !== 'p2p') setTimeout(() => tg.close(), 3000);
             } catch (e) {
                 alert("Xatolik: " + e.message);
             }

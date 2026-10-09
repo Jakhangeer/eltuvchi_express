@@ -55,6 +55,7 @@ from models import (
     FavoriteProduct,
     Card,
     OperatorPermission,
+    PaymentReceipt,
 )
 import card_security
 from auth import (
@@ -261,6 +262,32 @@ async def auto_sync_missing_columns(conn):
     await conn.run_sync(_backfill_null_defaults)
 
 
+async def _migrate_courier_wallet_v2():
+    """BIR MARTALIK: eski modelda kuryer `balance` = QARZ (musbat = kuryer
+    egasiga qarzdor edi). Yangi modelda `balance` = kuryerning OLDINDAN
+    TO'LDIRILGAN mablag'i (musbat = pul bor). Shuning uchun birinchi ishga
+    tushishda hamma kuryer balansining ishorasi teskarilanadi va
+    SystemSetting.courier_wallet_v2 = True qo'yiladi (qayta aylanmaydi).
+    Qarz tufayli avtomatik bloklangan kuryerlar blokdan chiqariladi."""
+    async with AsyncSessionLocal() as session:
+        setting = (await session.execute(select(SystemSetting))).scalars().first()
+        if not setting:
+            setting = SystemSetting()
+            session.add(setting)
+            await session.flush()
+        if setting.courier_wallet_v2:
+            return
+        profiles = (await session.execute(select(CourierProfile))).scalars().all()
+        for prof in profiles:
+            old = prof.balance or 0.0
+            prof.balance = -old if old else 0.0
+            if prof.is_blocked and old > (prof.credit_limit or 0):
+                prof.is_blocked = False
+        setting.courier_wallet_v2 = True
+        await session.commit()
+        print(f"[WALLET MIGRATSIYA] {len(profiles)} ta kuryer balansi yangi modelga o'tkazildi.")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
@@ -271,6 +298,10 @@ async def lifespan(app: FastAPI):
 
     print("PostgreSQL jadvallari tayyor va sinxronlashtirildi.")
     await seed_default_data()
+    try:
+        await _migrate_courier_wallet_v2()
+    except Exception as e:
+        print(f"[WALLET MIGRATSIYA XATOSI] {e!r}")
 
     # ---- TELEGRAM WEBHOOK'NI AVTOMATIK ULASH ----
     # Avval buni har safar qo'lda (/telegram/set-webhook) qilish kerak edi —
@@ -933,6 +964,24 @@ async def admin_dashboard(
         )
         pending_p2p_orders = p2p_orders_query.scalars().all()
 
+    # ---- CHEKLAR (kuryer/hamkor/mijoz → admin) ----
+    pending_receipts = []
+    recent_receipts = []
+    receipt_by_order = {}
+    if can_see_finance:
+        rcp_opts = (selectinload(PaymentReceipt.user), selectinload(PaymentReceipt.partner))
+        pending_receipts = [_receipt_to_dict(r) for r in (await db.execute(
+            select(PaymentReceipt).options(*rcp_opts).where(PaymentReceipt.status == "pending")
+            .order_by(PaymentReceipt.created_at)
+        )).scalars().all()]
+        recent_receipts = [_receipt_to_dict(r) for r in (await db.execute(
+            select(PaymentReceipt).options(*rcp_opts).where(PaymentReceipt.status != "pending")
+            .order_by(PaymentReceipt.reviewed_at.desc()).limit(20)
+        )).scalars().all()]
+        for rr in pending_receipts:
+            if rr["order_id"]:
+                receipt_by_order[rr["order_id"]] = rr["id"]
+
     # ---- ANALITIKA (faqat OWNER) ----
     # DIQQAT: komissiya foizi har bir do'kon uchun boshqacha bo'lishi mumkin
     # (partner.commission_rate), shuning uchun buni SQL darajasida bitta
@@ -1030,6 +1079,9 @@ async def admin_dashboard(
             "pending_withdrawals": pending_withdrawals,
             "p2p_cards": p2p_cards,
             "pending_p2p_orders": pending_p2p_orders,
+            "pending_receipts": pending_receipts,
+            "recent_receipts": recent_receipts,
+            "receipt_by_order": receipt_by_order,
             "birthday_clients_today": birthday_clients_today,
             "banners": banners,
             "analytics": analytics,
@@ -1416,14 +1468,12 @@ async def apply_cod_delivery_financials(db: AsyncSession, order: Order) -> None:
     courier_earning = order.delivery_fee * courier_pct
     courier_owes = (order.total_price + order.delivery_fee) - courier_earning
 
-    # P2P (karta orqali) TO'LANGAN buyurtma: mijoz pulni to'g'ridan-to'g'ri
-    # platformaning kartasiga o'tkazgan va admin/bot buni TASDIQLAGAN
-    # (payment_verified) — ya'ni kuryer mijozdan NAQD PUL OLMAGAN. Shuning uchun
-    # unga naqd qarz yozilmaydi; aksincha, uning yetkazish haqi (ulushi) platforma
-    # tomonidan unga qarz bo'lib, balansidan AYIRILADI (balans manfiy = egasi
-    # kuryerga qarzdor) — kuryer buni "Pul yechish" orqali kartasiga yechadi.
-    # Tasdiqlanmagan P2P buyurtma (masalan admin Kanban'da qo'lda "Yetkazildi"
-    # qilgan bo'lsa) avvalgidek naqd hisoblanadi — pul kelganiga ishonch yo'q.
+    # YANGI MODEL (oldindan to'ldiriladigan balans):
+    # - NAQD buyurtma: mijoz pulni kuryerga bergan, pul kuryer cho'ntagida
+    #   qoladi. Platformaga (hamkor + egasi) tegishli ulush (courier_owes)
+    #   kuryerning BALANSIDAN yechiladi.
+    # - P2P (karta) bilan to'langan va TASDIQLANGAN buyurtma: kuryer naqd pul
+    #   olmagan; uning yetkazish haqi (ulushi) balansiga QO'SHILADI.
     is_prepaid_p2p = (order.payment_method == "p2p" and bool(order.payment_verified))
 
     if order.courier_id and (courier_owes > 0 or (is_prepaid_p2p and courier_earning > 0)):
@@ -1436,31 +1486,23 @@ async def apply_cod_delivery_financials(db: AsyncSession, order: Order) -> None:
         if courier and courier.courier_profile:
             if is_prepaid_p2p:
                 if courier_earning > 0:
-                    courier.courier_profile.balance = (courier.courier_profile.balance or 0) - courier_earning
+                    courier.courier_profile.balance = (courier.courier_profile.balance or 0) + courier_earning
                     db.add(Transaction(
                         user_id=courier.id,
                         type=TransactionType.ORDER_FEE,
                         amount=courier_earning,
-                        note=f"Yetkazish haqi — buyurtma #{order.id} (mijoz karta orqali to'lagan, yechib olishingiz mumkin)",
+                        note=f"Yetkazish haqi — buyurtma #{order.id} (mijoz karta orqali to'lagan, balansingizga qo'shildi)",
                         created_by_id=None,
                     ))
-                    # DIQQAT: bu yerda is_blocked'ga TEGILMAYDI — admin kuryerni qo'lda
-                    # bloklagan bo'lishi mumkin, avtomatik hisob buni bekor qilib yubormasin.
             else:
-                courier.courier_profile.balance = (courier.courier_profile.balance or 0) + courier_owes
+                courier.courier_profile.balance = (courier.courier_profile.balance or 0) - courier_owes
                 db.add(Transaction(
                     user_id=courier.id,
-                    type=TransactionType.DEPOSIT,
+                    type=TransactionType.WITHDRAWAL,
                     amount=courier_owes,
-                    note=f"Naqd pul yig'ildi — buyurtma #{order.id} (sizga topshirilishi kerak)",
+                    note=f"Naqd buyurtma #{order.id} — platforma ulushi balansingizdan yechildi",
                     created_by_id=None,
                 ))
-                # KREDIT LIMITI: qarz belgilangan chegaradan oshsa, kuryer
-                # avtomatik bloklanadi — yangi buyurtma qabul qila olmaydi,
-                # to'plagan naqd pulini egasiga topshirgunga (yoki admin
-                # balansni qo'lda kamaytirgunga) qadar.
-                if (courier.courier_profile.balance or 0) > (courier.courier_profile.credit_limit or 0):
-                    courier.courier_profile.is_blocked = True
 
     if order.partner_id:
         partner_result = await db.execute(select(PartnerProfile).where(PartnerProfile.id == order.partner_id))
@@ -1637,6 +1679,25 @@ COURIER_LOCATION_FRESHNESS_MINUTES = 15
 MAP_LOCATION_FRESHNESS_MINUTES = 2
 
 
+def _courier_cash_hold(order: Order, courier_pct: float) -> float:
+    """Shu buyurtmani yetkazish uchun kuryer balansida KAMIDA qancha pul
+    bo'lishi kerak. Naqd buyurtmada = platforma ulushi (jami - kuryer haqi);
+    tasdiqlangan P2P buyurtmada = 0 (pul allaqachon platformada)."""
+    if order.payment_method == "p2p" and order.payment_verified:
+        return 0.0
+    fee = order.delivery_fee or 0
+    total = (order.total_price or 0) + fee
+    return max(0.0, total - fee * courier_pct)
+
+
+async def _courier_reserved_hold(db: AsyncSession, courier_id: int, courier_pct: float) -> float:
+    """Kuryerning hozir yo'lda yurgan naqd buyurtmalari uchun band qilingan summa."""
+    res = await db.execute(
+        select(Order).where(Order.courier_id == courier_id, Order.status == OrderStatus.ON_THE_WAY)
+    )
+    return sum(_courier_cash_hold(o, courier_pct) for o in res.scalars().all())
+
+
 async def auto_assign_nearest_courier(db: AsyncSession, order: Order) -> Optional[User]:
     """
     Buyurtma "Kuryer izlanmoqda" holatiga o'tganda avtomatik chaqiriladi.
@@ -1673,7 +1734,7 @@ async def auto_assign_nearest_courier(db: AsyncSession, order: Order) -> Optiona
             CourierProfile.longitude.is_not(None),
             CourierProfile.location_updated_at.is_not(None),
             CourierProfile.location_updated_at >= freshness_cutoff,
-            CourierProfile.is_blocked == False,  # qarzi limitdan oshgan kuryerga avtomatik biriktirilmaydi
+            CourierProfile.is_blocked == False,  # admin bloklagan kuryerga avtomatik biriktirilmaydi
         )
     )
     if partner.city_id is not None:
@@ -1691,6 +1752,11 @@ async def auto_assign_nearest_courier(db: AsyncSession, order: Order) -> Optiona
     )
     busy_ids = {row[0] for row in busy_result.all()}
     free_candidates = [c for c in candidates if c.id not in busy_ids]
+
+    # NAQD buyurtma faqat balansi yetadigan kuryerga biriktiriladi.
+    setting_for_hold = await _get_or_create_setting(db)
+    hold = _courier_cash_hold(order, (setting_for_hold.courier_share_percent or 0) / 100)
+    free_candidates = [c for c in free_candidates if (c.courier_profile.balance or 0) >= hold]
     if not free_candidates:
         return None
 
@@ -2519,10 +2585,9 @@ async def update_courier(
         if current_user.role == UserRole.OWNER and credit_limit is not None:
             if credit_limit < 0:
                 raise HTTPException(status_code=400, detail="Kredit limiti manfiy bo'la olmaydi")
+            # Yangi modelda limit avtomatik bloklamaydi (balans yetmasa naqd
+            # buyurtma shunchaki berilmaydi) — maydon faqat eski ma'lumot sifatida saqlanadi.
             courier_user.courier_profile.credit_limit = credit_limit
-            courier_user.courier_profile.is_blocked = (
-                (courier_user.courier_profile.balance or 0) > (courier_user.courier_profile.credit_limit or 0)
-            )
 
     if new_password:
         validate_pin(new_password)
@@ -2705,11 +2770,6 @@ async def update_courier_balance(
     # Bu yerda odatda "− Yechish" tugmasi — kuryer naqd pulni egasiga
     # jismonan topshirganda bosiladi (qarz kamayadi). Agar shu tufayli
     # qarz endi kredit limitidan past bo'lsa — bloklash AVTOMATIK yechiladi.
-    if (courier.courier_profile.balance or 0) <= (courier.courier_profile.credit_limit or 0):
-        courier.courier_profile.is_blocked = False
-    elif (courier.courier_profile.balance or 0) > (courier.courier_profile.credit_limit or 0):
-        courier.courier_profile.is_blocked = True
-
     db.add(Transaction(
         user_id=courier.id,
         type=tx_type,
@@ -2781,7 +2841,7 @@ async def _finalize_withdrawal_approval(
             # So'rov paytida balance -300 bo'lib, frozen_balance=50000 edi.
             # Endi uzil-kesil "to'landi": balance 0'ga yaqinlashadi (-300+50000),
             # frozen_balance'dan chiqariladi.
-            profile.balance += wd.amount
+            profile.balance = (profile.balance or 0) - wd.amount
             profile.frozen_balance = max(0.0, (profile.frozen_balance or 0) - wd.amount)
         db.add(Transaction(
             user_id=wd.user_id, type=TransactionType.WITHDRAWAL, amount=wd.amount,
@@ -3009,6 +3069,7 @@ async def _verify_p2p_order(db: AsyncSession, order: Order, approved: bool, veri
         order.payment_verified_by_id = verified_by_id
         order.payment_verified_at = datetime.utcnow()
     await db.commit()
+    await _mark_order_receipts(db, order.id, approved, verified_by_id, reason)
 
     try:
         client_result = await db.execute(select(User).where(User.id == order.client_id))
@@ -3083,6 +3144,260 @@ async def reject_p2p_order(
     if not order:
         raise HTTPException(status_code=404, detail="Buyurtma topilmadi")
     await _verify_p2p_order(db, order, False, current_user.id, reason)
+    return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
+
+
+# ==================== CHEKLAR (to'lov cheki rasmi) — tasdiqlash tizimi ====================
+RECEIPT_KIND_LABELS = {
+    "courier_topup": "Kuryer → Admin (balans to'ldirish)",
+    "partner_topup": "Hamkor → Admin (hisob to'ldirish)",
+    "client_order": "Mijoz → Admin (P2P buyurtma)",
+}
+MIN_TOPUP_AMOUNT = 1000.0
+MAX_TOPUP_AMOUNT = 100_000_000.0
+MAX_PENDING_RECEIPTS_PER_USER = 5
+
+
+async def _get_topup_card_info(db: AsyncSession) -> Optional[dict]:
+    """Admin'ning faol P2P kartasi (kuryer/hamkor/mijoz pul o'tkazadigan karta)."""
+    card = await _get_active_p2p_card(db)
+    if not card:
+        return None
+    digits = card_security.decrypt_card_number(card.encrypted_card_number)
+    if not digits:
+        return None
+    return {
+        "card_number": " ".join(digits[i:i + 4] for i in range(0, len(digits), 4)),
+        "bank_name": card.bank_name,
+        "card_holder_name": card.card_holder_name,
+    }
+
+
+def _receipt_to_dict(r: PaymentReceipt) -> dict:
+    who = "—"
+    if r.kind == "partner_topup" and r.partner:
+        who = r.partner.brand_name
+    elif r.user:
+        who = r.user.full_name or r.user.phone_number
+    return {
+        "id": r.id,
+        "kind": r.kind,
+        "kind_label": RECEIPT_KIND_LABELS.get(r.kind, r.kind),
+        "who": who,
+        "phone": r.user.phone_number if r.user else "",
+        "amount": r.amount or 0,
+        "order_id": r.order_id,
+        "comment": r.comment or "",
+        "status": r.status or "pending",
+        "reject_reason": r.reject_reason or "",
+        "created_at": r.created_at,
+        "reviewed_at": r.reviewed_at,
+    }
+
+
+async def _create_receipt(
+    db: AsyncSession, *, kind: str, user: User, amount: float, file: UploadFile,
+    partner_id: Optional[int] = None, order_id: Optional[int] = None, comment: str = "",
+) -> PaymentReceipt:
+    if amount < MIN_TOPUP_AMOUNT or amount > MAX_TOPUP_AMOUNT:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Summa {MIN_TOPUP_AMOUNT:,.0f} dan {MAX_TOPUP_AMOUNT:,.0f} so'mgacha bo'lishi kerak",
+        )
+    pending_count = (await db.execute(
+        select(func.count(PaymentReceipt.id)).where(
+            PaymentReceipt.user_id == user.id, PaymentReceipt.status == "pending",
+            PaymentReceipt.kind == kind,
+        )
+    )).scalar() or 0
+    if kind != "client_order" and pending_count >= MAX_PENDING_RECEIPTS_PER_USER:
+        raise HTTPException(status_code=400, detail="Ko'rib chiqilmagan cheklaringiz juda ko'p — avval ularni tasdiqlashni kuting")
+    data, mime = await process_uploaded_image(file)
+    receipt = PaymentReceipt(
+        kind=kind, user_id=user.id, partner_id=partner_id, order_id=order_id,
+        amount=amount, image_data=data, image_mime=mime, comment=(comment or "")[:300],
+        status="pending",
+    )
+    db.add(receipt)
+    await db.commit()
+    await db.refresh(receipt)
+
+    # Egalarga (OWNER) Telegram orqali xabar — best-effort
+    try:
+        owners = (await db.execute(
+            select(User).where(User.role == UserRole.OWNER, User.telegram_id.is_not(None))
+        )).scalars().all()
+        for o in owners:
+            await send_telegram_message(
+                o.telegram_id,
+                f"🧾 Yangi chek #{receipt.id}: {RECEIPT_KIND_LABELS.get(kind, kind)}\n"
+                f"{user.full_name or user.phone_number} — {amount:,.0f} so'm\nAdmin panel → Moliya → Cheklar",
+            )
+    except Exception as e:
+        print(f"Chek bildirishnomasi xatoligi: {e}")
+    return receipt
+
+
+async def _mark_order_receipts(db: AsyncSession, order_id: int, approved: bool, reviewer_id: int, reason: str = "") -> None:
+    """Buyurtmaga bog'langan kutilayotgan cheklarni (admin buyurtmani botdan
+    yoki paneldan tasdiqlaganda) ham yopadi — ikki joyda holat farq qilmasin."""
+    res = await db.execute(select(PaymentReceipt).where(
+        PaymentReceipt.order_id == order_id, PaymentReceipt.kind == "client_order", PaymentReceipt.status == "pending"
+    ))
+    for r in res.scalars().all():
+        r.status = "approved" if approved else "rejected"
+        r.reviewed_by_id = reviewer_id
+        r.reviewed_at = datetime.utcnow()
+        if not approved:
+            r.reject_reason = reason or None
+    await db.commit()
+
+
+@finance_router.get("/receipts")
+async def list_receipts(
+    status_filter: str = "pending",
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_section("moliya")),
+):
+    stmt = select(PaymentReceipt).options(
+        selectinload(PaymentReceipt.user), selectinload(PaymentReceipt.partner)
+    ).order_by(PaymentReceipt.created_at.desc()).limit(100)
+    if status_filter in ("pending", "approved", "rejected"):
+        stmt = stmt.where(PaymentReceipt.status == status_filter)
+    rows = (await db.execute(stmt)).scalars().all()
+    out = []
+    for r in rows:
+        d = _receipt_to_dict(r)
+        d["created_at"] = r.created_at.isoformat() if r.created_at else None
+        d["reviewed_at"] = r.reviewed_at.isoformat() if r.reviewed_at else None
+        out.append(d)
+    return {"receipts": out}
+
+
+@finance_router.get("/receipts/{receipt_id}/image")
+async def receipt_image(
+    receipt_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_section("moliya")),
+):
+    r = (await db.execute(select(PaymentReceipt).where(PaymentReceipt.id == receipt_id))).scalars().first()
+    if not r or not r.image_data:
+        raise HTTPException(status_code=404, detail="Chek rasmi topilmadi")
+    return Response(
+        content=r.image_data, media_type=r.image_mime or "image/jpeg",
+        headers={"Cache-Control": "private, max-age=3600"},
+    )
+
+
+@finance_router.post("/receipts/{receipt_id}/approve")
+async def approve_receipt(
+    receipt_id: int,
+    amount: Optional[float] = Form(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_section("moliya")),
+):
+    """Chekni tasdiqlaydi. Kuryer/hamkor chekida balans (admin haqiqatda
+    tushgan summani `amount` bilan tuzatishi mumkin) to'ldiriladi; mijoz
+    chekida esa P2P buyurtma to'lovi tasdiqlanadi."""
+    r = (await db.execute(
+        select(PaymentReceipt).where(PaymentReceipt.id == receipt_id).with_for_update()
+    )).scalars().first()
+    if not r:
+        raise HTTPException(status_code=404, detail="Chek topilmadi")
+    if r.status != "pending":
+        raise HTTPException(status_code=400, detail="Bu chek allaqachon ko'rib chiqilgan")
+
+    final_amount = amount if (amount is not None and amount > 0) else (r.amount or 0)
+    notify_user_id = r.user_id
+    msg = ""
+
+    if r.kind == "client_order":
+        order = (await db.execute(select(Order).where(Order.id == r.order_id))).scalars().first()
+        if not order:
+            raise HTTPException(status_code=404, detail="Buyurtma topilmadi")
+        r.status = "approved"
+        r.reviewed_by_id = current_user.id
+        r.reviewed_at = datetime.utcnow()
+        await db.commit()
+        if not order.payment_verified and order.status != OrderStatus.CANCELLED:
+            await _verify_p2p_order(db, order, True, current_user.id)
+        return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
+
+    if r.kind == "courier_topup":
+        prof = (await db.execute(
+            select(CourierProfile).where(CourierProfile.user_id == r.user_id).with_for_update()
+        )).scalars().first()
+        if not prof:
+            raise HTTPException(status_code=404, detail="Kuryer profili topilmadi")
+        prof.balance = (prof.balance or 0) + final_amount
+        db.add(Transaction(
+            user_id=r.user_id, type=TransactionType.DEPOSIT, amount=final_amount,
+            note=f"Balans to'ldirildi — chek #{r.id} tasdiqlandi", created_by_id=current_user.id,
+        ))
+        msg = f"✅ Chekingiz tasdiqlandi — balansingizga {final_amount:,.0f} so'm qo'shildi."
+    elif r.kind == "partner_topup":
+        partner = (await db.execute(
+            select(PartnerProfile).where(PartnerProfile.id == r.partner_id).with_for_update()
+        )).scalars().first()
+        if not partner:
+            raise HTTPException(status_code=404, detail="Hamkor topilmadi")
+        partner.balance = (partner.balance or 0) + final_amount
+        db.add(Transaction(
+            partner_id=partner.id, type=TransactionType.DEPOSIT, amount=final_amount,
+            note=f"Hisob to'ldirildi — chek #{r.id} tasdiqlandi", created_by_id=current_user.id,
+        ))
+        msg = f"✅ Chekingiz tasdiqlandi — hisobingizga {final_amount:,.0f} so'm qo'shildi."
+    else:
+        raise HTTPException(status_code=400, detail="Noma'lum chek turi")
+
+    r.amount = final_amount
+    r.status = "approved"
+    r.reviewed_by_id = current_user.id
+    r.reviewed_at = datetime.utcnow()
+    await db.commit()
+
+    try:
+        u = (await db.execute(select(User).where(User.id == notify_user_id))).scalars().first()
+        if u and u.telegram_id and msg:
+            await send_telegram_message(u.telegram_id, msg)
+    except Exception as e:
+        print(f"Chek tasdiq bildirishnomasi xatoligi: {e}")
+    return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@finance_router.post("/receipts/{receipt_id}/reject")
+async def reject_receipt(
+    receipt_id: int,
+    reason: str = Form(""),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_section("moliya")),
+):
+    r = (await db.execute(
+        select(PaymentReceipt).where(PaymentReceipt.id == receipt_id).with_for_update()
+    )).scalars().first()
+    if not r:
+        raise HTTPException(status_code=404, detail="Chek topilmadi")
+    if r.status != "pending":
+        raise HTTPException(status_code=400, detail="Bu chek allaqachon ko'rib chiqilgan")
+
+    r.status = "rejected"
+    r.reject_reason = (reason or "").strip()[:300] or None
+    r.reviewed_by_id = current_user.id
+    r.reviewed_at = datetime.utcnow()
+    await db.commit()
+
+    if r.kind == "client_order" and r.order_id:
+        order = (await db.execute(select(Order).where(Order.id == r.order_id))).scalars().first()
+        if order and not order.payment_verified and order.status != OrderStatus.CANCELLED:
+            await _verify_p2p_order(db, order, False, current_user.id, reason)
+    else:
+        try:
+            u = (await db.execute(select(User).where(User.id == r.user_id))).scalars().first()
+            if u and u.telegram_id:
+                extra = f"\nSabab: {r.reject_reason}" if r.reject_reason else ""
+                await send_telegram_message(u.telegram_id, f"❌ Chek #{r.id} ({r.amount:,.0f} so'm) tasdiqlanmadi.{extra}")
+        except Exception as e:
+            print(f"Chek rad bildirishnomasi xatoligi: {e}")
     return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -3791,6 +4106,13 @@ async def shop_order_history(init_data: str, db: AsyncSession = Depends(get_db))
         .limit(30)
     )
     orders = orders_result.scalars().all()
+    receipt_pending_ids = set()
+    if orders:
+        rp = await db.execute(select(PaymentReceipt.order_id).where(
+            PaymentReceipt.kind == "client_order", PaymentReceipt.status == "pending",
+            PaymentReceipt.order_id.in_([o.id for o in orders]),
+        ))
+        receipt_pending_ids = {row[0] for row in rp.all()}
 
     # DIQQAT: frontend (shop.html) statuslarni o'zining inglizcha
     # nomlari bilan kutadi ("pending", "accepted", "on_the_way",
@@ -3813,9 +4135,44 @@ async def shop_order_history(init_data: str, db: AsyncSession = Depends(get_db))
             "partner_name": o.partner.brand_name if o.partner else None,
             "total_amount": o.total_price + o.delivery_fee - (o.discount_amount or 0),
             "courier_name": o.courier.full_name if o.courier else None,
+            "payment_method": o.payment_method,
+            "payment_verified": bool(o.payment_verified),
+            "needs_receipt": bool(
+                o.payment_method == "p2p" and not o.payment_verified
+                and o.status != OrderStatus.CANCELLED and o.id not in receipt_pending_ids
+            ),
+            "receipt_pending": o.id in receipt_pending_ids,
         }
         for o in orders
     ]
+
+
+@shop_router.post("/orders/{order_id}/receipt")
+async def shop_upload_receipt(
+    order_id: int,
+    init_data: str = Form(...),
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Mijoz P2P orqali pul o'tkazgach, chek rasmini platforma ichida yuboradi."""
+    tg_user = _get_telegram_user_or_403(init_data)
+    client = (await db.execute(
+        select(User).where(User.telegram_id == str(tg_user["id"]), User.role == UserRole.CLIENT)
+    )).scalars().first()
+    if not client:
+        raise HTTPException(status_code=404, detail="Mijoz topilmadi")
+    order = (await db.execute(
+        select(Order).where(Order.id == order_id, Order.client_id == client.id)
+    )).scalars().first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Buyurtma topilmadi")
+    if order.payment_method != "p2p" or order.payment_verified or order.status == OrderStatus.CANCELLED:
+        raise HTTPException(status_code=400, detail="Bu buyurtma uchun chek yuklash shart emas")
+    total = (order.total_price or 0) + (order.delivery_fee or 0) - (order.discount_amount or 0)
+    receipt = await _create_receipt(
+        db, kind="client_order", user=client, amount=max(total, MIN_TOPUP_AMOUNT), file=file, order_id=order.id,
+    )
+    return {"ok": True, "receipt_id": receipt.id}
 
 
 @shop_router.get("/orders/{order_id}/track")
@@ -4148,6 +4505,12 @@ async def partner_dashboard(
     )
     cards = [_card_to_dict(c) for c in cards_result.scalars().all()]
     _, partner_card_limit = await _get_card_limits(db)
+    topup_card = await _get_topup_card_info(db)
+    my_receipts = [_receipt_to_dict(r) for r in (await db.execute(
+        select(PaymentReceipt).options(selectinload(PaymentReceipt.user), selectinload(PaymentReceipt.partner))
+        .where(PaymentReceipt.partner_id == partner.id, PaymentReceipt.kind == "partner_topup")
+        .order_by(PaymentReceipt.created_at.desc()).limit(10)
+    )).scalars().all()]
 
     return templates.TemplateResponse(
         request=request,
@@ -4160,6 +4523,8 @@ async def partner_dashboard(
             "status_labels": STATUS_LABELS_UZ,
             "current_user": current_user,
             "withdrawal_requests": withdrawal_requests,
+            "topup_card": topup_card,
+            "my_receipts": my_receipts,
             "cards": cards,
             "MAX_CARDS": partner_card_limit,
             "MIN_WITHDRAWAL_AMOUNT": MIN_WITHDRAWAL_AMOUNT,
@@ -4255,6 +4620,22 @@ async def partner_delete_card(
     current_user: User = Depends(get_current_partner_user),
 ):
     await _delete_card_for_user(db, current_user.id, card_id)
+    return RedirectResponse(url="/partner", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@partner_router.post("/topup")
+async def partner_topup_receipt(
+    amount: float = Form(...),
+    comment: str = Form(""),
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_partner_user),
+):
+    partner = await _get_own_partner(db, current_user)
+    await _create_receipt(
+        db, kind="partner_topup", user=current_user, amount=amount, file=file,
+        partner_id=partner.id, comment=comment,
+    )
     return RedirectResponse(url="/partner", status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -4574,6 +4955,20 @@ async def courier_dashboard(
     cards = [_card_to_dict(c) for c in cards_result.scalars().all()]
     courier_card_limit, _ = await _get_card_limits(db)
 
+    # ---- PREPAID BALANS: har buyurtma uchun kerakli summa va yetish-yetmasligi ----
+    setting = await _get_or_create_setting(db)
+    courier_pct = (setting.courier_share_percent or 0) / 100
+    reserved = await _courier_reserved_hold(db, current_user.id, courier_pct)
+    free_balance = ((courier_profile.balance if courier_profile else 0) or 0) - reserved
+    order_holds = {o.id: _courier_cash_hold(o, courier_pct) for o in available_orders}
+    topup_card = await _get_topup_card_info(db)
+    my_receipts = (await db.execute(
+        select(PaymentReceipt).options(selectinload(PaymentReceipt.user), selectinload(PaymentReceipt.partner))
+        .where(PaymentReceipt.user_id == current_user.id, PaymentReceipt.kind == "courier_topup")
+        .order_by(PaymentReceipt.created_at.desc()).limit(10)
+    )).scalars().all()
+    my_receipts = [_receipt_to_dict(r) for r in my_receipts]
+
     return templates.TemplateResponse(
         request=request,
         name="courier.html",
@@ -4581,6 +4976,12 @@ async def courier_dashboard(
             "current_user": current_user,
             "courier_profile": courier_profile,
             "available_orders": available_orders,
+            "order_holds": order_holds,
+            "free_balance": free_balance,
+            "reserved_hold": reserved,
+            "topup_card": topup_card,
+            "my_receipts": my_receipts,
+            "MIN_TOPUP_AMOUNT": MIN_TOPUP_AMOUNT,
             "my_active_orders": my_active_orders,
             "history_orders": history_orders,
             "withdrawal_requests": withdrawal_requests,
@@ -4666,6 +5067,17 @@ async def courier_available_orders_json(
         )
     ids = [row[0] for row in (await db.execute(available_stmt)).all()]
 
+    # Balansi yetmaydigan naqd buyurtmalar uchun signal chalinmasin.
+    prof_res = await db.execute(select(CourierProfile).where(CourierProfile.user_id == current_user.id))
+    prof = prof_res.scalars().first()
+    if ids:
+        st = await _get_or_create_setting(db)
+        pct = (st.courier_share_percent or 0) / 100
+        reserved = await _courier_reserved_hold(db, current_user.id, pct)
+        free = ((prof.balance if prof else 0) or 0) - reserved
+        ords = (await db.execute(select(Order).where(Order.id.in_(ids)))).scalars().all()
+        ids = [o.id for o in ords if _courier_cash_hold(o, pct) <= free]
+
     my_active_stmt = select(Order.id).where(
         Order.courier_id == current_user.id, Order.status == OrderStatus.ON_THE_WAY
     )
@@ -4718,9 +5130,8 @@ async def courier_request_withdrawal(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_courier_user),
 ):
-    """Kuryerning 'balance' maydoni — kuryerning NAQD QARZI (musbat =
-    egasiga qarzdor). Pul yechish FAQAT balance MANFIY bo'lganda mumkin
-    (ya'ni egasi kuryerga qarzdor — masalan bonus/haq). So'ralgan summa
+    """Kuryerning 'balance' maydoni — uning platformadagi hisobi (musbat =
+    mablag' bor). Yechish mumkin: balance - frozen_balance. So'ralgan summa
     darhol frozen_balance'ga o'tkaziladi (double-spend himoyasi)."""
     if amount < MIN_WITHDRAWAL_AMOUNT:
         raise HTTPException(status_code=400, detail=f"Minimal summa — {MIN_WITHDRAWAL_AMOUNT:,.0f} so'm")
@@ -4741,7 +5152,7 @@ async def courier_request_withdrawal(
     if not courier_profile:
         raise HTTPException(status_code=404, detail="Kuryer profili topilmadi")
 
-    available = -(courier_profile.balance or 0) - (courier_profile.frozen_balance or 0)
+    available = (courier_profile.balance or 0) - (courier_profile.frozen_balance or 0)
     if available <= 0:
         raise HTTPException(status_code=400, detail="Hozircha yechib olish uchun mavjud mablag' yo'q")
     if amount > available:
@@ -4756,6 +5167,20 @@ async def courier_request_withdrawal(
     return RedirectResponse(url="/courier", status_code=status.HTTP_303_SEE_OTHER)
 
 
+@courier_router_app.post("/topup")
+async def courier_topup_receipt(
+    amount: float = Form(...),
+    comment: str = Form(""),
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_courier_user),
+):
+    """Kuryer admin kartasiga pul o'tkazgach, chek rasmini shu yerga yuklaydi —
+    admin/operator ko'rib tasdiqlagach, balansi to'ldiriladi."""
+    await _create_receipt(db, kind="courier_topup", user=current_user, amount=amount, file=file, comment=comment)
+    return RedirectResponse(url="/courier", status_code=status.HTTP_303_SEE_OTHER)
+
+
 @courier_router_app.post("/orders/{order_id}/accept")
 async def courier_accept_order(
     order_id: int,
@@ -4763,17 +5188,13 @@ async def courier_accept_order(
     current_user: User = Depends(get_current_courier_user),
 ):
     courier_profile_result = await db.execute(
-        select(CourierProfile).where(CourierProfile.user_id == current_user.id)
+        select(CourierProfile).where(CourierProfile.user_id == current_user.id).with_for_update()
     )
     courier_profile = courier_profile_result.scalars().first()
     if courier_profile and courier_profile.is_blocked:
         raise HTTPException(
             status_code=403,
-            detail=(
-                f"Sizda {courier_profile.balance:,.0f} so'm naqd pul qarzi bor — bu ruxsat etilgan "
-                f"chegaradan ({(courier_profile.credit_limit or 0):,.0f} so'm) oshib ketgan. Yangi buyurtma "
-                f"qabul qilishdan oldin, yig'gan naqd pulingizni egasiga topshiring."
-            ),
+            detail="Siz administrator tomonidan vaqtincha bloklangansiz — yangi buyurtma qabul qila olmaysiz. Administratorga murojaat qiling.",
         )
 
     order_result = await db.execute(
@@ -4785,6 +5206,22 @@ async def courier_accept_order(
 
     if order.courier_id is not None:
         raise HTTPException(status_code=400, detail="Bu buyurtmani allaqachon boshqa kuryer oldi")
+
+    # NAQD buyurtma: balans yetishi shart (yo'ldagi boshqa naqd buyurtmalar band qilgan summa ayiriladi).
+    setting = await _get_or_create_setting(db)
+    courier_pct = (setting.courier_share_percent or 0) / 100
+    need = _courier_cash_hold(order, courier_pct)
+    if need > 0:
+        reserved = await _courier_reserved_hold(db, current_user.id, courier_pct)
+        free = ((courier_profile.balance if courier_profile else 0) or 0) - reserved
+        if free < need:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    f"Balansingiz yetarli emas: bu naqd buyurtma uchun kamida {need:,.0f} so'm kerak, "
+                    f"sizda {max(free, 0):,.0f} so'm bor. Avval balansingizni to'ldiring (admin kartasiga o'tkazib, chekni yuklang)."
+                ),
+            )
 
     order.courier_id = current_user.id
     order.status = OrderStatus.ON_THE_WAY

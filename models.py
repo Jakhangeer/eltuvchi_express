@@ -105,10 +105,12 @@ class CourierProfile(Base):
     is_approved = Column(Boolean, default=False)
     is_online = Column(Boolean, default=False)
 
-    # `balance` — kuryerning NAQD PUL QARZI: mijozlardan naqd yig'ilgan, lekin
-    # hali egasiga topshirilmagan summa (musbat = qarz bor). Buyurtma
-    # yetkazilganda avtomatik oshadi (qarang apply_cod_delivery_financials),
-    # egasiga naqd topshirilganda admin panelidan kamaytiriladi.
+    # `balance` — kuryerning OLDINDAN TO'LDIRILGAN HISOBI (musbat = kuryerda
+    # mablag' bor). Kuryer buni admin kartasiga pul o'tkazib, chek yuklab
+    # to'ldiradi. Mijoz NAQD to'lagan buyurtma yetkazilganda pul kuryer
+    # cho'ntagida qoladi, platforma ulushi shu balansdan YECHILADI
+    # (apply_cod_delivery_financials). Balans yetmasa naqd buyurtma olinmaydi.
+    # Karta (P2P) orqali to'langan buyurtmada kuryer haqi balansga QO'SHILADI.
     balance = Column(Float, default=0.0)
 
     # Qarz shu chegaradan oshsa, kuryerga YANGI BUYURTMA berish avtomatik
@@ -358,6 +360,11 @@ class SystemSetting(Base):
     # OWNER-only bo'lmagan barcha bo'limlarni ko'radi (standart holat).
     operator_hidden_sections = Column(Text, nullable=True)
 
+    # Kuryer balansi eski ("qarz") belgidan yangi ("oldindan to'ldirilgan
+    # hisob") belgiga bir marta o'tkazilganini bildiradi — qarang main.py
+    # _migrate_courier_wallet_v2. Qayta ishga tushganda ikki marta aylanmaydi.
+    courier_wallet_v2 = Column(Boolean, default=False)
+
 
 class Transaction(Base):
     __tablename__ = "transactions"
@@ -544,3 +551,38 @@ class FavoriteProduct(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     product = relationship("Product")
+
+
+class PaymentReceipt(Base):
+    """Platforma ichida yuklangan TO'LOV CHEKI (rasm) — admin/operator
+    ko'rib, tasdiqlaydi yoki rad etadi.
+
+    kind:
+      - "courier_topup"  : kuryer admin kartasiga pul o'tkazib, balansini to'ldiradi
+      - "partner_topup"  : hamkor admin kartasiga pul o'tkazadi (hamkor hisobiga yoziladi)
+      - "client_order"   : mijoz P2P buyurtma uchun o'tkazma qildi (order_id bilan)
+    Rasm baytlari bazada saqlanadi (Render'da disk doimiy emas).
+    """
+    __tablename__ = "payment_receipts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    kind = Column(String, nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    partner_id = Column(Integer, ForeignKey("partner_profiles.id"), nullable=True)
+    order_id = Column(Integer, ForeignKey("orders.id"), nullable=True)
+
+    amount = Column(Float, nullable=False, default=0.0)
+    image_data = Column(LargeBinary, nullable=True)
+    image_mime = Column(String, nullable=True)
+    comment = Column(String, nullable=True)
+
+    status = Column(String, default="pending", index=True)  # pending / approved / rejected
+    created_at = Column(DateTime, default=datetime.utcnow)
+    reviewed_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    reviewed_at = Column(DateTime, nullable=True)
+    reject_reason = Column(String, nullable=True)
+
+    user = relationship("User", foreign_keys=[user_id])
+    partner = relationship("PartnerProfile", foreign_keys=[partner_id])
+    order = relationship("Order", foreign_keys=[order_id])
+    reviewed_by = relationship("User", foreign_keys=[reviewed_by_id])
