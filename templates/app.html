@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>ZooMo — Delivery Service</title>
+    <meta name="theme-color" content="#ffffff">
+    <link rel="icon" type="image/png" href="/static/images/favicon.png">
+    <link rel="apple-touch-icon" href="/static/images/apple-touch-icon.png">
+    <link rel="stylesheet" href="/static/css/splash.css">
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        :root {
+            --green: #0f5c36;
+            --green-2: #166534;
+            --green-soft: #e8f3ec;
+            --gold: #d4a017;
+            --gold-soft: #fbf3d6;
+            --bg: #ffffff;
+            --tile: #efefef;
+            --text: #14201a;
+            --sub: #6b7280;
+            --line: #e5e7eb;
+            --danger: #dc2626;
+        }
+        * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+        html, body { margin: 0; background: var(--bg); color: var(--text);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+        body { padding-bottom: calc(86px + env(safe-area-inset-bottom)); }
+        .wrap { max-width: 520px; margin: 0 auto; padding: 14px 16px 0; }
+
+        /* header */
+        .top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+        .top img.logo { height: 46px; width: auto; display: block; }
+        .icons { display: flex; gap: 14px; align-items: center; }
+        .icon-btn { background: none; border: 0; padding: 4px; cursor: pointer; color: var(--green); display: grid; place-items: center; }
+        .icon-btn svg { width: 28px; height: 28px; }
+        .avatar { width: 34px; height: 34px; border-radius: 50%; background: var(--green); color: #fff; display: grid; place-items: center; font-weight: 800; font-size: 15px; }
+        .search { display: none; margin-bottom: 12px; }
+        .search.on { display: block; }
+        .search input { width: 100%; padding: 12px 14px; border-radius: 14px; border: 1.5px solid var(--line); font-size: 15px; outline: none; }
+        .search input:focus { border-color: var(--green-2); }
+
+        /* banner */
+        .banner { border-radius: 18px; padding: 18px 14px 20px; text-align: center;
+            background: radial-gradient(120% 140% at 50% 30%, #f4f6ea 0%, #cdd9a4 45%, #b9a64a 100%);
+            box-shadow: 0 6px 18px rgba(15, 92, 54, .18); margin-bottom: 18px; position: relative; overflow: hidden; }
+        .banner img { width: 62%; max-width: 250px; display: block; margin: 0 auto 12px; filter: drop-shadow(0 6px 10px rgba(0,0,0,.12)); }
+        .cta { background: var(--green); color: #fff; border: 0; border-radius: 999px; padding: 12px 26px; font-weight: 800; font-size: 15px; letter-spacing: .02em; cursor: pointer; box-shadow: 0 6px 14px rgba(15,92,54,.35); }
+        .cta:active { transform: scale(.97); }
+
+        /* categories */
+        .sec-title { display: flex; align-items: center; gap: 10px; margin: 18px 0 10px; font-size: 20px; font-weight: 900; letter-spacing: .02em; text-transform: uppercase; }
+        .sec-title .ico { font-size: 26px; }
+        .row { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 6px; scrollbar-width: none; scroll-snap-type: x proximity; }
+        .row::-webkit-scrollbar { display: none; }
+        .tile { flex: 0 0 auto; width: 98px; min-height: 98px; background: var(--tile); border: 0; border-radius: 14px; padding: 10px 6px; text-align: center; cursor: pointer; scroll-snap-align: start; color: var(--text); font-family: inherit; }
+        .tile:active { transform: scale(.96); }
+        .tile .e { font-size: 38px; line-height: 1.1; display: block; margin-bottom: 6px; }
+        .tile .n { font-size: 13px; font-weight: 600; line-height: 1.15; display: block; }
+        .empty { color: var(--sub); text-align: center; padding: 20px 0; font-size: 14px; display: none; }
+
+        /* bottom nav */
+        .nav { position: fixed; left: 0; right: 0; bottom: 0; background: #fff; border-top: 1px solid var(--line); display: flex; justify-content: space-around; padding: 8px 4px calc(8px + env(safe-area-inset-bottom)); z-index: 50; }
+        .nav a, .nav button { background: none; border: 0; flex: 1; text-decoration: none; color: var(--green); display: grid; justify-items: center; gap: 2px; font-size: 11.5px; font-weight: 800; cursor: pointer; font-family: inherit; }
+        .nav .em { font-size: 24px; line-height: 1; }
+        .nav .on { color: var(--green-2); }
+
+        /* bottom sheet */
+        .overlay { position: fixed; inset: 0; background: rgba(10, 30, 20, .45); z-index: 80; display: none; align-items: flex-end; justify-content: center; }
+        .overlay.on { display: flex; }
+        .sheet { background: #fff; width: 100%; max-width: 520px; max-height: 92vh; overflow-y: auto; border-radius: 22px 22px 0 0; padding: 18px 16px calc(22px + env(safe-area-inset-bottom)); animation: up .28s ease; }
+        @keyframes up { from { transform: translateY(40px); opacity: 0; } to { transform: none; opacity: 1; } }
+        .sheet h2 { margin: 0 0 4px; font-size: 20px; font-weight: 900; }
+        .sheet .lead { color: var(--sub); font-size: 13px; margin: 0 0 14px; }
+        .close { float: right; background: var(--tile); border: 0; border-radius: 50%; width: 32px; height: 32px; font-size: 16px; cursor: pointer; }
+        .tabs { display: flex; background: var(--tile); border-radius: 12px; padding: 4px; margin-bottom: 14px; }
+        .tabs button { flex: 1; border: 0; background: none; padding: 9px; border-radius: 9px; font-weight: 800; font-size: 14px; color: var(--sub); cursor: pointer; font-family: inherit; }
+        .tabs button.on { background: #fff; color: var(--green-2); box-shadow: 0 1px 4px rgba(0,0,0,.1); }
+        .roles { display: grid; gap: 10px; }
+        .role { display: flex; align-items: center; gap: 12px; text-align: left; border: 1.5px solid var(--line); background: #fff; border-radius: 16px; padding: 14px; cursor: pointer; font-family: inherit; }
+        .role:active { transform: scale(.98); }
+        .role .e { font-size: 30px; }
+        .role b { display: block; font-size: 16px; color: var(--text); }
+        .role span { font-size: 12.5px; color: var(--sub); }
+        .role.sel { border-color: var(--green-2); background: var(--green-soft); }
+        label.f { display: block; font-size: 12px; font-weight: 700; color: #374151; margin: 10px 0 4px; }
+        .in { width: 100%; padding: 12px 13px; border: 1.5px solid var(--line); border-radius: 12px; font-size: 15px; outline: none; background: #fff; font-family: inherit; color: var(--text); }
+        .in:focus { border-color: var(--green-2); }
+        .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .hint { font-size: 11.5px; color: var(--sub); margin-top: 3px; }
+        .group { margin-top: 16px; padding-top: 4px; border-top: 1px dashed var(--line); }
+        .group h3 { margin: 12px 0 0; font-size: 14px; font-weight: 900; color: var(--green-2); }
+        .btn { width: 100%; border: 0; border-radius: 14px; padding: 14px; font-size: 16px; font-weight: 900; background: var(--green); color: #fff; cursor: pointer; margin-top: 16px; font-family: inherit; box-shadow: 0 6px 14px rgba(15,92,54,.25); }
+        .btn:disabled { opacity: .6; }
+        .btn.ghost { background: var(--tile); color: var(--text); box-shadow: none; margin-top: 8px; }
+        .btn.gold { background: var(--gold); box-shadow: 0 6px 14px rgba(212,160,23,.3); }
+        .err { background: #fef2f2; color: var(--danger); border: 1px solid #fecaca; border-radius: 12px; padding: 10px 12px; font-size: 13px; font-weight: 600; margin-top: 12px; display: none; }
+        .ok { background: var(--green-soft); color: var(--green-2); border: 1px solid #bbe0c8; border-radius: 14px; padding: 16px; font-size: 14px; font-weight: 600; text-align: center; }
+        .terms { max-height: 110px; overflow-y: auto; background: #f9fafb; border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; font-size: 12px; color: #4b5563; margin-top: 10px; white-space: pre-wrap; }
+        .chk { display: flex; gap: 9px; align-items: flex-start; font-size: 13px; margin-top: 12px; }
+        .chk input { margin-top: 2px; width: 18px; height: 18px; accent-color: var(--green-2); }
+        .loc { display: flex; gap: 8px; align-items: center; }
+        .loc .btn { margin-top: 0; padding: 11px; font-size: 14px; }
+        .loc-st { font-size: 12px; margin-top: 6px; font-weight: 700; color: var(--green-2); }
+        .panel-link { display: flex; align-items: center; justify-content: space-between; text-decoration: none; background: var(--tile); border-radius: 14px; padding: 14px; margin-top: 10px; color: var(--text); font-weight: 800; }
+        .badge { font-size: 11px; font-weight: 800; padding: 3px 8px; border-radius: 99px; background: var(--gold-soft); color: #8a6a00; }
+        .badge.ok2 { background: var(--green-soft); color: var(--green-2); }
+        .back { background: none; border: 0; color: var(--green-2); font-weight: 800; font-size: 13px; padding: 0 0 8px; cursor: pointer; font-family: inherit; }
+    </style>
+</head>
+<body>
+<div class="wrap">
+    <div class="top">
+        <img class="logo" src="/static/images/logo.png" alt="ZooMo Delivery Service">
+        <div class="icons">
+            <button class="icon-btn" id="btn-search" aria-label="Qidirish">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+            </button>
+            <button class="icon-btn" id="btn-profile" aria-label="Profil">
+                <span id="profile-ico"><svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="11"/><circle cx="12" cy="9.5" r="3.6" fill="#fff"/><path d="M5.2 19.2c1.4-3.2 4-4.6 6.8-4.6s5.4 1.4 6.8 4.6A10.9 10.9 0 0112 23a10.9 10.9 0 01-6.8-3.8z" fill="#fff"/></svg></span>
+            </button>
+        </div>
+    </div>
+
+    <div class="search" id="search-box"><input id="search-input" type="search" placeholder="Qidirish: pitsa, dori, sabzavot…" autocomplete="off"></div>
+
+    <div class="banner">
+        <img src="/static/images/logo.png" alt="ZooMo">
+        <button class="cta" id="btn-order">HOZIR BUYURTMA QILING!</button>
+    </div>
+
+    <div id="cats"></div>
+    <div class="empty" id="empty">Hech narsa topilmadi</div>
+</div>
+
+<nav class="nav">
+    <a href="/app" class="on"><span class="em">🏠</span>Bosh Sahifa</a>
+    <a href="/shop" data-need-tg><span class="em">📋</span>Buyurtmalar</a>
+    <a href="/shop" data-need-tg><span class="em">👛</span>Hamyon</a>
+    <button type="button" id="nav-settings"><span class="em">⚙️</span>Sozlamalar</button>
+</nav>
+
+<!-- Hisob / ro'yxatdan o'tish oynasi -->
+<div class="overlay" id="overlay">
+    <div class="sheet" id="sheet"></div>
+</div>
+
+<script src="/static/js/splash.js"></script>
+<script>
+(function () {
+    var tg = window.Telegram && window.Telegram.WebApp;
+    var initData = tg && tg.initData ? tg.initData : '';
+    if (tg) { try { tg.ready(); tg.expand(); } catch (e) {} }
+
+    var CATS = [
+        { t: 'Oziq-ovqat', e: '🍴', items: [['Fast Food', '🍔'], ['Pitsa', '🍕'], ['Milliy Taomlar', '🍲'], ['Coffee', '☕'], ['Shirinliklar', '🍰']] },
+        { t: 'Supermarket', e: '🛒', items: [['Sabzavot va Mevalar', '🥕'], ["Go'sht va Baliq", '🥩'], ['Ichimliklar', '🍾'], ['Non mahsulotlari', '🍞'], ['Sut mahsulotlari', '🥛']] },
+        { t: 'Dorixona', e: '💊', items: [['Dori-darmon', '💊'], ['Vitaminlar', '🧴'], ['Gigiyena', '🧼']] }
+    ];
+
+    var me = { registered: false };
+    var config = { cities: [], terms: {} };
+
+    function $(id) { return document.getElementById(id); }
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); }
+
+    /* ---------- kategoriyalar ---------- */
+    function renderCats(filter) {
+        var q = (filter || '').trim().toLowerCase(), html = '', any = false;
+        CATS.forEach(function (c) {
+            var items = c.items.filter(function (i) { return !q || i[0].toLowerCase().indexOf(q) >= 0 || c.t.toLowerCase().indexOf(q) >= 0; });
+            if (!items.length) return;
+            any = true;
+            html += '<div class="sec-title"><span class="ico">' + c.e + '</span>' + esc(c.t) + '</div><div class="row">' +
+                items.map(function (i) { return '<button class="tile" data-go="1"><span class="e">' + i[1] + '</span><span class="n">' + esc(i[0]) + '</span></button>'; }).join('') + '</div>';
+        });
+        $('cats').innerHTML = html;
+        $('empty').style.display = any ? 'none' : 'block';
+    }
+
+    function goShop() {
+        if (me.registered) { location.href = '/shop'; return; }
+        openSheet('register');
+    }
+
+    document.addEventListener('click', function (e) {
+        var t = e.target.closest('[data-go]');
+        if (t) { goShop(); return; }
+        var a = e.target.closest('a[data-need-tg]');
+        if (a && !me.registered) { e.preventDefault(); openSheet('register'); }
+    });
+    $('btn-order').addEventListener('click', goShop);
+    $('btn-search').addEventListener('click', function () {
+        var b = $('search-box'); b.classList.toggle('on');
+        if (b.classList.contains('on')) $('search-input').focus(); else { $('search-input').value = ''; renderCats(''); }
+    });
+    $('search-input').addEventListener('input', function (e) { renderCats(e.target.value); });
+    $('btn-profile').addEventListener('click', function () { openSheet(me.registered ? 'account' : 'register'); });
+    $('nav-settings').addEventListener('click', function () { openSheet(me.registered ? 'account' : 'register'); });
+    $('overlay').addEventListener('click', function (e) { if (e.target === $('overlay')) closeSheet(); });
+
+    function closeSheet() { $('overlay').classList.remove('on'); }
+
+    /* ---------- holat ---------- */
+    function refreshMe(cb) {
+        fetch('/api/app/me', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ init_data: initData }) })
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                me = d || { registered: false };
+                if (me.registered) {
+                    $('profile-ico').innerHTML = '<span class="avatar">' + esc((me.name || '?').trim().charAt(0).toUpperCase()) + '</span>';
+                }
+                if (cb) cb();
+            })
+            .catch(function () { if (cb) cb(); });
+    }
+    function loadConfig(cb) {
+        fetch('/api/app/config').then(function (r) { return r.json(); }).then(function (d) { config = d; if (cb) cb(); }).catch(function () { if (cb) cb(); });
+    }
+
+    /* ---------- oyna ---------- */
+    var state = { tab: 'register', role: null };
+
+    function openSheet(view) {
+        $('overlay').classList.add('on');
+        if (view === 'account') renderAccount(); else { state.role = null; renderRegisterHome(); }
+    }
+    function head(title, lead) {
+        return '<button class="close" id="x">✕</button><h2>' + title + '</h2>' + (lead ? '<p class="lead">' + lead + '</p>' : '');
+    }
+    function bindClose() { var x = $('x'); if (x) x.onclick = closeSheet; }
+
+    function tabsHtml() {
+        return '<div class="tabs"><button data-tab="register" class="' + (state.tab === 'register' ? 'on' : '') + '">Ro\'yxatdan o\'tish</button>' +
+            '<button data-tab="login" class="' + (state.tab === 'login' ? 'on' : '') + '">Kirish</button></div>';
+    }
+    function bindTabs() {
+        document.querySelectorAll('[data-tab]').forEach(function (b) {
+            b.onclick = function () { state.tab = b.getAttribute('data-tab'); if (state.tab === 'login') renderLogin(); else renderRegisterHome(); };
+        });
+    }
+
+    function renderRegisterHome() {
+        state.tab = 'register';
+        $('sheet').innerHTML = head('ZooMo\'ga xush kelibsiz', 'Kim sifatida davom etasiz?') + tabsHtml() +
+            '<div class="roles">' +
+            '<button class="role" data-role="client"><span class="e">🛍</span><div><b>Mijoz</b><span>Buyurtma berish va yetkazib olish</span></div></button>' +
+            '<button class="role" data-role="courier"><span class="e">🛵</span><div><b>Kuryer bo\'lib ishlash</b><span>Arizangizni ko\'rib chiqib, siz bilan bog\'lanamiz</span></div></button>' +
+            '<button class="role" data-role="partner"><span class="e">🏪</span><div><b>Hamkor bo\'lish</b><span>Do\'kon / restoran / dorixona — siz bilan bog\'lanamiz</span></div></button>' +
+            '</div>';
+        bindClose(); bindTabs();
+        document.querySelectorAll('[data-role]').forEach(function (b) {
+            b.onclick = function () { state.role = b.getAttribute('data-role'); renderForm(); };
+        });
+    }
+
+    function renderLogin() {
+        state.tab = 'login';
+        var next = '/courier';
+        $('sheet').innerHTML = head('Kirish', 'Telefon raqamingiz va 4 xonali PIN kod bilan kiring.') + tabsHtml() +
+            '<form method="POST" action="/login">' +
+            '<label class="f">Telefon raqami</label><input class="in" name="phone_number" type="tel" inputmode="tel" placeholder="+998 90 123 45 67" required>' +
+            '<label class="f">PIN kod</label><input class="in" name="password" type="password" inputmode="numeric" maxlength="4" placeholder="••••" required>' +
+            '<button class="btn" type="submit">Kirish</button></form>';
+        bindClose(); bindTabs();
+    }
+
+    function renderAccount() {
+        var h = head(esc(me.name || 'Profil'), esc(me.phone || ''));
+        h += '<a class="panel-link" href="/shop"><span>🛍 Buyurtma berish</span><span>›</span></a>';
+        if (me.is_admin) h += '<a class="panel-link" href="/admin"><span>🛠 Boshqaruv paneli</span><span>›</span></a>';
+        if (me.courier) {
+            h += me.courier.status === 'pending'
+                ? '<div class="panel-link"><span>🛵 Kuryer arizasi</span><span class="badge">⏳ Ko\'rib chiqilmoqda</span></div>'
+                : '<a class="panel-link" href="/courier"><span>🛵 Kuryer kabineti</span><span class="badge ok2">Faol</span></a>';
+        }
+        if (me.partner) {
+            h += me.partner.status === 'pending'
+                ? '<div class="panel-link"><span>🏪 ' + esc(me.partner.brand || 'Hamkor') + ' arizasi</span><span class="badge">⏳ Ko\'rib chiqilmoqda</span></div>'
+                : '<a class="panel-link" href="/partner"><span>🏪 Hamkor kabineti</span><span class="badge ok2">Faol</span></a>';
+        }
+        if (!me.courier) h += '<button class="btn ghost" id="add-courier">🛵 Kuryer bo\'lib ishlash</button>';
+        if (!me.partner) h += '<button class="btn ghost" id="add-partner">🏪 Hamkor bo\'lish</button>';
+        $('sheet').innerHTML = h;
+        bindClose();
+        if ($('add-courier')) $('add-courier').onclick = function () { state.role = 'courier'; renderForm(); };
+        if ($('add-partner')) $('add-partner').onclick = function () { state.role = 'partner'; renderForm(); };
+    }
+
+    function cityOptions() {
+        return '<option value="">Shaharni tanlang</option>' + (config.cities || []).map(function (c) { return '<option value="' + c.id + '">' + esc(c.name) + '</option>'; }).join('');
+    }
+
+    function renderForm() {
+        var r = state.role, titles = { client: 'Mijoz sifatida', courier: 'Kuryer arizasi', partner: 'Hamkor arizasi' };
+        var leads = {
+            client: 'Ma\'lumotlaringizni kiriting va joylashuvingizni ulashing — shunda kuryer sizni tez topadi.',
+            courier: 'Arizangizni yuboring — administratsiya siz bilan bog\'lanib, tasdiqlaydi.',
+            partner: 'Arizangizni yuboring — administratsiya siz bilan bog\'lanib, shartnomani rasmiylashtiradi.'
+        };
+        var h = '<button class="back" id="back">‹ Orqaga</button>' + head(titles[r], leads[r]);
+        if (r === 'client' && !initData && !me.registered) {
+            h += '<div class="err" style="display:block">Mijoz sifatida ro\'yxatdan o\'tish uchun ilovani Telegram bot orqali oching ("🏠 ZooMo ilovasini ochish" tugmasi).</div>';
+        }
+        h += '<form id="reg-form" novalidate>';
+        h += '<label class="f">' + (r === 'partner' ? 'Aloqa shaxsi (F.I.O.)' : 'Ism, familiya') + '</label><input class="in" id="f-name" value="' + esc(me.name || '') + '" autocomplete="name">';
+        h += '<div class="grid2"><div><label class="f">Telefon raqami</label><input class="in" id="f-phone" type="tel" inputmode="tel" placeholder="+998 90 123 45 67" value="' + esc(me.phone || '') + '"></div>' +
+             '<div><label class="f">PIN kod (4 raqam)</label><input class="in" id="f-pin" type="password" inputmode="numeric" maxlength="4" placeholder="••••"></div></div>';
+        h += '<div class="hint">PIN kod kabinetga kirish uchun kerak bo\'ladi — eslab qoling.</div>';
+
+        if (r === 'client') {
+            h += '<label class="f">Joylashuvingiz</label><div class="loc"><button type="button" class="btn gold" id="btn-loc">📍 Joylashuvni ulashish</button></div><div class="loc-st" id="loc-st"></div>';
+        }
+        if (r === 'courier') {
+            h += '<div class="grid2"><div><label class="f">Shahar</label><select class="in" id="f-city">' + cityOptions() + '</select></div>' +
+                 '<div><label class="f">Transport</label><select class="in" id="f-transport"><option value="walking">🚶 Piyoda</option><option value="bike">🚴 Velosiped</option><option value="scooter">🛵 Skuter</option><option value="car">🚗 Mashina</option></select></div></div>';
+        }
+        if (r === 'partner') {
+            h += '<div class="group"><h3>🏪 Do\'kon ma\'lumotlari</h3>' +
+                 '<label class="f">Do\'kon / brend nomi</label><input class="in" id="f-brand">' +
+                 '<div class="grid2"><div><label class="f">Kategoriya</label><select class="in" id="f-cat"><option>Oziq-ovqat</option><option>Fast Food</option><option>Pitsa</option><option>Milliy taomlar</option><option>Supermarket</option><option>Dorixona</option><option>Boshqa</option></select></div>' +
+                 '<div><label class="f">Shahar</label><select class="in" id="f-city">' + cityOptions() + '</select></div></div>' +
+                 '<label class="f">Manzil</label><input class="in" id="f-addr" placeholder="Ko\'cha, uy, mo\'ljal"></div>';
+            h += '<div class="group"><h3>📄 Yuridik rekvizitlar</h3>' +
+                 '<label class="f">Yuridik nomi</label><input class="in" id="f-legal" placeholder="\'Gourmet Express\' MChJ yoki \'Aliyev B.\' YTT">' +
+                 '<div class="grid2"><div><label class="f">STIR (INN)</label><input class="in" id="f-stir" inputmode="numeric" maxlength="9" placeholder="9 raqam"></div>' +
+                 '<div><label class="f">MFO</label><input class="in" id="f-mfo" inputmode="numeric" maxlength="5" placeholder="5 raqam"></div></div>' +
+                 '<label class="f">Hisob-kitob raqami</label><input class="in" id="f-acc" inputmode="numeric" maxlength="20" placeholder="20208… (20 raqam)">' +
+                 '<label class="f">Bank nomi</label><input class="in" id="f-bank" placeholder="Masalan: Kapitalbank ATB">' +
+                 '<div class="grid2"><div><label class="f">Direktor / rahbar ismi</label><input class="in" id="f-dname"></div>' +
+                 '<div><label class="f">Direktor telefoni</label><input class="in" id="f-dphone" type="tel" placeholder="+998…"></div></div></div>';
+        }
+        var terms = (config.terms && config.terms[r]) || '';
+        if (terms) h += '<div class="terms">' + esc(terms) + '</div>';
+        h += '<label class="chk"><input type="checkbox" id="f-terms"><span>Foydalanish shartlari bilan tanishdim va roziman</span></label>';
+        h += '<div class="err" id="err"></div>';
+        h += '<button class="btn" type="submit" id="submit">' + (r === 'client' ? 'Ro\'yxatdan o\'tish' : 'Arizani yuborish') + '</button></form>';
+        $('sheet').innerHTML = h;
+        bindClose();
+        $('back').onclick = function () { if (me.registered) renderAccount(); else renderRegisterHome(); };
+
+        var loc = null;
+        if ($('btn-loc')) $('btn-loc').onclick = function () {
+            var st = $('loc-st'); st.style.color = ''; st.textContent = 'Aniqlanmoqda…';
+            if (!navigator.geolocation) { st.textContent = 'Qurilma joylashuvni qo\'llab-quvvatlamaydi'; return; }
+            navigator.geolocation.getCurrentPosition(function (p) {
+                loc = { lat: p.coords.latitude, lng: p.coords.longitude };
+                st.style.color = ''; st.textContent = '✅ Joylashuv ulashildi';
+            }, function () {
+                st.style.color = '#b45309'; st.textContent = 'Ruxsat berilmadi — keyinroq buyurtma paytida ham ulashishingiz mumkin.';
+            }, { enableHighAccuracy: true, timeout: 12000 });
+        };
+
+        $('reg-form').onsubmit = function (ev) {
+            ev.preventDefault();
+            var err = $('err'); err.style.display = 'none';
+            function fail(m) { err.textContent = m; err.style.display = 'block'; err.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+            function v(id) { var el = $(id); return el ? el.value.trim() : ''; }
+            function digits(id) { return v(id).replace(/\D/g, ''); }
+
+            var body = { role: r, full_name: v('f-name'), phone_number: v('f-phone'), password: v('f-pin'), accepted_terms: $('f-terms').checked, init_data: initData || null };
+            if (body.full_name.length < 2) return fail('Ismingizni kiriting');
+            if (body.phone_number.replace(/\D/g, '').length < 9) return fail('Telefon raqamini to\'liq kiriting');
+            if (!/^\d{4}$/.test(body.password)) return fail('PIN kod aynan 4 ta raqamdan iborat bo\'lishi kerak');
+            if (r === 'client' && loc) { body.latitude = loc.lat; body.longitude = loc.lng; }
+            if (r === 'courier' || r === 'partner') {
+                if (!v('f-city')) return fail('Shaharni tanlang');
+                body.city_id = parseInt(v('f-city'), 10);
+            }
+            if (r === 'courier') body.transport_type = v('f-transport');
+            if (r === 'partner') {
+                if (!v('f-brand') || !v('f-addr')) return fail('Do\'kon nomi va manzilini kiriting');
+                if (!v('f-legal')) return fail('Yuridik nomini kiriting');
+                if (digits('f-stir').length !== 9) return fail('STIR aynan 9 xonali bo\'lishi kerak');
+                if (digits('f-acc').length !== 20) return fail('Hisob-kitob raqami aynan 20 xonali bo\'lishi kerak');
+                if (digits('f-mfo').length !== 5) return fail('MFO aynan 5 xonali bo\'lishi kerak');
+                if (!v('f-bank')) return fail('Bank nomini kiriting');
+                if (!v('f-dname')) return fail('Direktor ismini kiriting');
+                if (v('f-dphone').replace(/\D/g, '').length < 9) return fail('Direktor telefon raqamini kiriting');
+                body.brand_name = v('f-brand'); body.category = v('f-cat'); body.address = v('f-addr');
+                body.legal_name = v('f-legal'); body.stir = digits('f-stir'); body.bank_account = digits('f-acc'); body.mfo = digits('f-mfo');
+                body.bank_name = v('f-bank'); body.director_name = v('f-dname'); body.director_phone = v('f-dphone');
+            }
+            if (!body.accepted_terms) return fail('Davom etish uchun shartlarga rozilik bering');
+
+            var btn = $('submit'); btn.disabled = true; var old = btn.textContent; btn.textContent = 'Yuborilmoqda…';
+            fetch('/api/app/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+                .then(function (res) { return res.json().then(function (d) { return { ok: res.ok, d: d }; }); })
+                .then(function (x) {
+                    if (!x.ok) { btn.disabled = false; btn.textContent = old; return fail(x.d.detail || 'Xatolik yuz berdi'); }
+                    if (x.d.redirect) { location.href = x.d.redirect; return; }
+                    refreshMe(function () {
+                        $('sheet').innerHTML = head('Rahmat!', '') +
+                            '<div class="ok">✅ ' + esc(x.d.message || 'Arizangiz qabul qilindi') + '</div>' +
+                            '<button class="btn ghost" id="done">Yopish</button>';
+                        bindClose(); $('done').onclick = closeSheet;
+                    });
+                })
+                .catch(function () { btn.disabled = false; btn.textContent = old; fail('Tarmoq xatosi — qaytadan urinib ko\'ring'); });
+        };
+    }
+
+    /* ---------- ishga tushirish ---------- */
+    renderCats('');
+    loadConfig();
+    refreshMe(function () {
+        // Birinchi kirishda (ro'yxatdan o'tmagan bo'lsa) — ro'yxatdan o'tish oynasini ochamiz
+        if (!me.registered) setTimeout(function () { openSheet('register'); }, window.ZooMoSplash && !window.ZooMoSplash.seen() ? 3700 : 400);
+    });
+})();
+</script>
+</body>
+</html>

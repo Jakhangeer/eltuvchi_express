@@ -967,6 +967,50 @@
         </div>
         {% endif %}
 
+        {% if pending_partner_apps or pending_courier_apps %}
+        <div class="card-bg bg-white p-6 rounded-xl shadow-md border-2 border-amber-400 mb-6" id="applications-section">
+            <h2 class="theme-title text-lg font-bold mb-1 text-amber-700">📥 Yangi arizalar ({{ pending_partner_apps|length + pending_courier_apps|length }})</h2>
+            <p class="text-xs text-gray-500 mb-4">Ilova orqali ro'yxatdan o'tgan hamkor va kuryerlar. Ular bilan telefon orqali bog'lanib, so'ng tasdiqlang — tasdiqlanmaguncha kabinetga kira olmaydi.</p>
+            <div class="space-y-3">
+                {% for p in pending_partner_apps %}
+                <div class="p-3 rounded-lg border dark:border-gray-700">
+                    <p class="text-sm font-bold">🏪 {{ p.brand_name }} <span class="text-xs font-normal text-gray-500">· {{ p.category }} · {{ p.city.name if p.city else '—' }}</span></p>
+                    <p class="text-xs text-gray-500">📍 {{ p.address }}</p>
+                    <p class="text-xs mt-1">📞 Aloqa: <b>{{ p.user.full_name if p.user else '—' }}</b> <a href="tel:{{ p.user.phone_number if p.user else '' }}" class="text-indigo-600 underline">{{ p.user.phone_number if p.user else '' }}</a></p>
+                    <div class="mt-2 text-xs rounded-lg p-2 bg-gray-50 dark:bg-gray-800 grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-0.5">
+                        <span>Yuridik nomi: <b>{{ p.legal_name or '—' }}</b></span>
+                        <span>STIR: <b>{{ p.stir or '—' }}</b></span>
+                        <span>Hisob raqami: <b class="font-mono">{{ p.bank_account or '—' }}</b></span>
+                        <span>MFO: <b>{{ p.mfo or '—' }}</b></span>
+                        <span>Bank: <b>{{ p.bank_name or '—' }}</b></span>
+                        <span>Direktor: <b>{{ p.director_name or '—' }}</b> {{ p.director_phone or '' }}</span>
+                    </div>
+                    <div class="flex gap-2 mt-2 flex-wrap">
+                        <form action="/admin/applications/partner/{{ p.id }}/approve" method="POST"><button type="submit" class="text-xs bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-lg font-bold">✅ Tasdiqlash</button></form>
+                        <form action="/admin/applications/partner/{{ p.id }}/reject" method="POST" class="flex gap-2" onsubmit="return confirm('Ariza rad etilsinmi?');">
+                            <input type="text" name="reason" placeholder="Sabab (ixtiyoriy)" class="p-2 border rounded-lg text-xs dark:bg-gray-800">
+                            <button type="submit" class="text-xs bg-red-100 text-red-700 hover:bg-red-200 px-3 py-2 rounded-lg font-semibold">✕ Rad etish</button>
+                        </form>
+                    </div>
+                </div>
+                {% endfor %}
+                {% for u in pending_courier_apps %}
+                <div class="p-3 rounded-lg border dark:border-gray-700">
+                    <p class="text-sm font-bold">🛵 {{ u.full_name }} <span class="text-xs font-normal text-gray-500">· {{ u.courier_profile.transport_type }} · {{ u.city.name if u.city else '—' }}</span></p>
+                    <p class="text-xs mt-1">📞 <a href="tel:{{ u.phone_number }}" class="text-indigo-600 underline">{{ u.phone_number }}</a></p>
+                    <div class="flex gap-2 mt-2 flex-wrap">
+                        <form action="/admin/applications/courier/{{ u.id }}/approve" method="POST"><button type="submit" class="text-xs bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-lg font-bold">✅ Tasdiqlash</button></form>
+                        <form action="/admin/applications/courier/{{ u.id }}/reject" method="POST" class="flex gap-2" onsubmit="return confirm('Ariza rad etilsinmi?');">
+                            <input type="text" name="reason" placeholder="Sabab (ixtiyoriy)" class="p-2 border rounded-lg text-xs dark:bg-gray-800">
+                            <button type="submit" class="text-xs bg-red-100 text-red-700 hover:bg-red-200 px-3 py-2 rounded-lg font-semibold">✕ Rad etish</button>
+                        </form>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
         {% if pending_receipts or recent_receipts %}
         <div class="card-bg bg-white p-6 rounded-xl shadow-md border-2 border-emerald-400 mb-6" id="receipts-section">
             <h2 class="theme-title text-lg font-bold mb-1 text-emerald-700">🧾 Cheklar — tasdiqlash ({{ pending_receipts|length }} ta kutilmoqda)</h2>
@@ -1360,6 +1404,18 @@
                         </div>
                         <p class="text-[11px] text-gray-500">📍 {{ partner.address }} {% if partner.city %}| 🏙️ {{ partner.city.name }}{% endif %} | 🕒 {{ partner.opening_time }}-{{ partner.closing_time }} | 🏷️ {{ partner.commission_rate }}%{% if is_owner %} | 💰 {{ "%.0f"|format(partner.balance or 0) }} so'm{% endif %}</p>
                         
+                        {% if partner.legal_name or partner.stir %}
+                        <details class="text-[11px] text-gray-500 mt-1">
+                            <summary class="cursor-pointer font-semibold text-indigo-600">📄 Rekvizitlar</summary>
+                            <div class="mt-1 space-y-0.5">
+                                <p>Yuridik nomi: <b>{{ partner.legal_name or '—' }}</b></p>
+                                <p>STIR: <b>{{ partner.stir or '—' }}</b> · MFO: <b>{{ partner.mfo or '—' }}</b></p>
+                                <p>Hisob raqami: <b class="font-mono">{{ partner.bank_account or '—' }}</b></p>
+                                <p>Bank: <b>{{ partner.bank_name or '—' }}</b></p>
+                                <p>Direktor: <b>{{ partner.director_name or '—' }}</b> {{ partner.director_phone or '' }}</p>
+                            </div>
+                        </details>
+                        {% endif %}
                         <div class="divide-y dark:divide-gray-700 border-t dark:border-gray-700 pt-2 mt-2">
                             {% for product in products %}
                                 {% if product.partner_id == partner.id %}

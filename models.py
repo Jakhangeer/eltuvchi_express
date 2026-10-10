@@ -78,6 +78,10 @@ class User(Base):
     # Mijoz o'z kabinetida (keyingi bosqichda) kiritadi, hozircha bo'sh qoladi.
     birth_date = Column(Date, nullable=True)
 
+    # Mijozning ro'yxatdan o'tishda ulashgan uy/asosiy joylashuvi (ixtiyoriy)
+    home_latitude = Column(Float, nullable=True)
+    home_longitude = Column(Float, nullable=True)
+
     # Faqat mijoz (CLIENT) uchun — keshbek balli (buyurtmadan qaytadigan
     # foizlar shu yerga to'planadi, keyingi buyurtmada ishlatiladi)
     cashback_balance = Column(Float, default=0.0)
@@ -142,6 +146,11 @@ class CourierProfile(Base):
     # tayyor variantdan biri, frontend Web Audio API orqali generatsiya qiladi.
     notification_sound = Column(String, default="chime1")
 
+    # Veb/ilova orqali ariza bergan kuryerlar: "pending" = administratsiya hali
+    # bog'lanmagan/tasdiqlamagan (kabinetga kira olmaydi). NULL = eski
+    # (admin qo'lda qo'shgan yoki bot orqali) kuryerlar — ular tasdiqlangan.
+    application_status = Column(String, nullable=True)
+
     user = relationship("User", back_populates="courier_profile")
 
 
@@ -179,6 +188,20 @@ class PartnerProfile(Base):
     latitude = Column(Float, nullable=True)
     longitude = Column(Float, nullable=True)
     terms_accepted_at = Column(DateTime, nullable=True)
+
+    # ---- YURIDIK REKVIZITLAR (hamkor ro'yxatdan o'tganda kiritadi) ----
+    legal_name = Column(String, nullable=True)        # masalan: 'Gourmet Express' MChJ yoki 'Aliyev B.' YTT
+    stir = Column(String, nullable=True)              # STIR (INN) — 9 xonali raqam
+    bank_account = Column(String, nullable=True)      # hisob-kitob raqami — 20 xonali (20208...)
+    mfo = Column(String, nullable=True)               # bank kodi — 5 xonali
+    bank_name = Column(String, nullable=True)         # masalan: Kapitalbank ATB
+    director_name = Column(String, nullable=True)     # direktor/rahbar ismi
+    director_phone = Column(String, nullable=True)    # direktor telefoni
+
+    # Veb orqali ariza bergan hamkorlar: "pending" = administratsiya hali
+    # bog'lanmagan/tasdiqlamagan, "approved" = tasdiqlangan. NULL = eski
+    # (admin qo'lda qo'shgan) hamkorlar — ular tasdiqlangan hisoblanadi.
+    application_status = Column(String, nullable=True)
 
     # Yangi buyurtma kelganda hamkor kabinetida qaysi signal ovozi
     # chalinishi — 3 ta tayyor variantdan biri (frontend Web Audio API

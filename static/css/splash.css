@@ -1,0 +1,65 @@
+/* ZooMo yuklanish animatsiyasi — logotip: g'ildiraklar aylanadi, skuter oldinga yuradi,
+   linza yaltirashi va "DELIVERY SERVICE" yozuvi zarrachalar bilan ochiladi. */
+#zm-splash{position:fixed;inset:0;z-index:99999;background:#fff;display:flex;align-items:center;justify-content:center;
+  overflow:hidden;opacity:1;transition:opacity .55s ease, transform .55s ease;perspective:1100px;-webkit-tap-highlight-color:transparent}
+#zm-splash.zm-out{opacity:0;transform:scale(1.04);pointer-events:none}
+#zm-splash::before{content:"";position:absolute;inset:0;
+  background:radial-gradient(90% 60% at 50% 100%, rgba(22,101,52,.05), rgba(255,255,255,0) 70%)}
+.zm-stage{position:relative;width:min(80vw,440px);aspect-ratio:886/420;transform-style:preserve-3d;
+  animation:zmStage 3s cubic-bezier(.22,.8,.2,1) both}
+@keyframes zmStage{
+  0%{opacity:0;transform:translateZ(-160px) rotateY(-24deg) rotateX(8deg) scale(.82)}
+  22%{opacity:1}
+  45%{transform:translateZ(0) rotateY(-6deg) rotateX(3deg) scale(1)}
+  100%{opacity:1;transform:translateZ(30px) rotateY(0) rotateX(0) scale(1.03)}
+}
+.zm-shadow{position:absolute;left:12%;right:12%;bottom:-9%;height:8%;border-radius:50%;
+  background:radial-gradient(closest-side,rgba(15,60,30,.28),rgba(15,60,30,0));filter:blur(4px);
+  animation:zmShadow 3s ease both}
+@keyframes zmShadow{0%{opacity:0;transform:scaleX(.5)}40%{opacity:1;transform:scaleX(1)}100%{opacity:.8;transform:scaleX(1.08)}}
+/* skuter oldinga yuradi */
+.zm-ride{position:absolute;inset:0;animation:zmRide 3s cubic-bezier(.5,0,.2,1) both}
+@keyframes zmRide{0%,34%{transform:translateX(-3%)}60%{transform:translateX(5%)}78%,100%{transform:translateX(0)}}
+.zm-img{position:absolute;inset:0;background:url(/static/images/logo.png) center/100% 100% no-repeat}
+.zm-main{clip-path:inset(0 0 20.2% 0);filter:drop-shadow(0 10px 14px rgba(20,80,40,.18))}
+.zm-text{clip-path:inset(79.8% 100% 0 0);animation:zmText .95s cubic-bezier(.5,0,.2,1) 1.75s forwards}
+@keyframes zmText{from{clip-path:inset(79.8% 100% 0 0)}to{clip-path:inset(79.8% 0 0 0)}}
+/* g'ildiraklar: logotip piksellarining aylana nusxasi aylantiriladi */
+.zm-wheel{position:absolute;border-radius:50%;background-color:#fff;background-image:url(/static/images/logo.png);background-repeat:no-repeat;
+  aspect-ratio:1/1;animation:zmSpin 2.6s cubic-bezier(.3,.1,.1,1) .35s both, zmGlow 2.6s ease .35s both}
+.zm-w1{left:calc((318 - 49) / 886 * 100%);top:calc((188 - 49) / 420 * 100%);width:calc(98 / 886 * 100%);
+  background-size:calc(886 / 98 * 100%) auto;background-position:calc((318 - 49) / (886 - 98) * 100%) calc((188 - 49) / (420 - 98) * 100%)}
+.zm-w2{left:calc((278 - 20) / 886 * 100%);top:calc((290 - 20) / 420 * 100%);width:calc(40 / 886 * 100%);
+  background-size:calc(886 / 40 * 100%) auto;background-position:calc((278 - 20) / (886 - 40) * 100%) calc((290 - 20) / (420 - 40) * 100%);
+  animation-duration:2.6s,2.6s}
+.zm-w3{left:calc((520.5 - 20) / 886 * 100%);top:calc((290 - 20) / 420 * 100%);width:calc(40 / 886 * 100%);
+  background-size:calc(886 / 40 * 100%) auto;background-position:calc((520.5 - 20) / (886 - 40) * 100%) calc((290 - 20) / (420 - 40) * 100%)}
+@keyframes zmSpin{from{transform:rotate(0)}to{transform:rotate(1440deg)}}
+@keyframes zmGlow{0%{filter:drop-shadow(0 0 0 rgba(250,204,21,0))}35%,70%{filter:drop-shadow(0 0 7px rgba(250,204,21,.95))}100%{filter:drop-shadow(0 0 2px rgba(250,204,21,.35))}}
+/* sariq yorug'lik izlari */
+.zm-trails{position:absolute;left:-2%;top:30%;width:34%;height:34%;pointer-events:none}
+.zm-trails i{position:absolute;left:0;height:3px;border-radius:3px;width:100%;transform-origin:right center;opacity:0;
+  background:linear-gradient(90deg,rgba(250,204,21,0),rgba(250,204,21,.95) 60%,rgba(255,244,180,1));
+  filter:drop-shadow(0 0 5px rgba(250,204,21,.9));animation:zmTrail 1.5s ease-out 1.0s both}
+.zm-trails i:nth-child(1){top:18%;animation-delay:1.0s}
+.zm-trails i:nth-child(2){top:46%;animation-delay:1.1s;width:84%}
+.zm-trails i:nth-child(3){top:74%;animation-delay:1.2s;width:62%}
+@keyframes zmTrail{0%{opacity:0;transform:translateX(30%) scaleX(.1)}30%{opacity:1;transform:translateX(0) scaleX(1)}100%{opacity:0;transform:translateX(-60%) scaleX(1.5)}}
+/* linza yaltirashi (faradan) */
+.zm-flare{position:absolute;left:calc(540 / 886 * 100%);top:calc(45 / 420 * 100%);width:0;height:0;pointer-events:none;mix-blend-mode:screen}
+.zm-flare::before,.zm-flare::after{content:"";position:absolute;left:0;top:0;transform:translate(-50%,-50%)}
+.zm-flare::before{width:46vw;max-width:260px;height:6px;border-radius:6px;opacity:0;
+  background:linear-gradient(90deg,rgba(255,255,255,0),rgba(255,236,150,.95),rgba(255,255,255,0));
+  animation:zmFlareLine 1s ease-out 1.15s both;filter:blur(1px)}
+.zm-flare::after{width:70px;height:70px;border-radius:50%;opacity:0;
+  background:radial-gradient(circle,rgba(255,255,255,1),rgba(255,226,120,.75) 35%,rgba(255,200,0,0) 70%);
+  animation:zmFlareDot 1s ease-out 1.15s both}
+@keyframes zmFlareLine{0%{opacity:0;transform:translate(-50%,-50%) scaleX(.1)}35%{opacity:1;transform:translate(-50%,-50%) scaleX(1)}100%{opacity:0;transform:translate(-50%,-50%) scaleX(1.4)}}
+@keyframes zmFlareDot{0%{opacity:0;transform:translate(-50%,-50%) scale(.2)}35%{opacity:1;transform:translate(-50%,-50%) scale(1.2)}100%{opacity:0;transform:translate(-50%,-50%) scale(2.2)}}
+/* zarrachalar */
+#zm-particles{position:absolute;left:0;top:76%;width:100%;height:30%;pointer-events:none}
+.zm-hint{position:absolute;bottom:22px;left:0;right:0;text-align:center;font:600 11px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  letter-spacing:.14em;color:#166534;opacity:0;animation:zmHint .6s ease 2.3s forwards}
+@keyframes zmHint{to{opacity:.55}}
+@media (prefers-reduced-motion:reduce){.zm-stage,.zm-ride,.zm-wheel,.zm-trails i,.zm-flare::before,.zm-flare::after,.zm-shadow{animation-duration:.01s!important;animation-delay:0s!important}
+  .zm-text{animation-duration:.01s!important;animation-delay:0s!important}}

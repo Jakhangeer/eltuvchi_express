@@ -1,3 +1,4 @@
+import re
 import json
 import os
 import html
@@ -604,10 +605,14 @@ async def telegram_login(body: TelegramLoginBody, request: Request, db: AsyncSes
         return JSONResponse(status_code=404, content={"ok": False, "detail": "Foydalanuvchi topilmadi"})
 
     can_admin = user.role in (UserRole.OWNER, UserRole.ADMIN)
-    can_partner = user.partner_profile is not None
-    can_courier = user.courier_profile is not None
+    can_partner = user.partner_profile is not None and user.partner_profile.application_status != "pending"
+    can_courier = user.courier_profile is not None and user.courier_profile.application_status != "pending"
 
     if not (can_admin or can_partner or can_courier):
+        if (user.partner_profile and user.partner_profile.application_status == "pending") or (
+            user.courier_profile and user.courier_profile.application_status == "pending"
+        ):
+            return JSONResponse(status_code=403, content={"ok": False, "detail": "Arizangiz ko'rib chiqilmoqda"})
         return JSONResponse(status_code=403, content={"ok": False, "detail": "Sizga tegishli panel topilmadi"})
 
     request.session["user_id"] = user.id
@@ -656,9 +661,20 @@ async def login_submit(
 
     # Qaysi panellarga kira olishini aniqlaymiz
     can_admin = user.role in (UserRole.OWNER, UserRole.ADMIN)
-    can_partner = user.partner_profile is not None
-    can_courier = user.courier_profile is not None
+    can_partner = user.partner_profile is not None and user.partner_profile.application_status != "pending"
+    can_courier = user.courier_profile is not None and user.courier_profile.application_status != "pending"
     available = [can_admin, can_partner, can_courier].count(True)
+
+    if available == 0 and (
+        (user.partner_profile and user.partner_profile.application_status == "pending")
+        or (user.courier_profile and user.courier_profile.application_status == "pending")
+    ):
+        request.session.clear()
+        return templates.TemplateResponse(
+            request=request,
+            name="login.html",
+            context={"error": "Arizangiz hali ko'rib chiqilmoqda — administratsiya tez orada siz bilan bog'lanadi."},
+        )
 
     if available > 1:
         # Bir nechta panelga kira oladi — tanlov sahifasini ko'rsatamiz
@@ -736,7 +752,9 @@ async def admin_dashboard(
     all_cities = cities_query.scalars().all()
 
     # ---- DO'KONLAR (shahar bo'yicha filtrlanadi) ----
-    partners_stmt = select(PartnerProfile).options(selectinload(PartnerProfile.city))
+    partners_stmt = select(PartnerProfile).options(selectinload(PartnerProfile.city)).where(
+        or_(PartnerProfile.application_status.is_(None), PartnerProfile.application_status != "pending")
+    )
     if active_city_id is not None:
         partners_stmt = partners_stmt.where(PartnerProfile.city_id == active_city_id)
     partners_query = await db.execute(partners_stmt)
@@ -964,6 +982,19 @@ async def admin_dashboard(
         )
         pending_p2p_orders = p2p_orders_query.scalars().all()
 
+    # ---- YANGI ARIZALAR (ilova orqali ro'yxatdan o'tgan hamkor/kuryerlar) ----
+    app_partner_stmt = select(PartnerProfile).options(
+        selectinload(PartnerProfile.user), selectinload(PartnerProfile.city)
+    ).where(PartnerProfile.application_status == "pending").order_by(PartnerProfile.id)
+    app_courier_stmt = select(User).join(CourierProfile, CourierProfile.user_id == User.id).options(
+        selectinload(User.courier_profile), selectinload(User.city)
+    ).where(CourierProfile.application_status == "pending").order_by(User.id)
+    if active_city_id is not None:
+        app_partner_stmt = app_partner_stmt.where(PartnerProfile.city_id == active_city_id)
+        app_courier_stmt = app_courier_stmt.where(User.city_id == active_city_id)
+    pending_partner_apps = (await db.execute(app_partner_stmt)).scalars().all()
+    pending_courier_apps = (await db.execute(app_courier_stmt)).scalars().all()
+
     # ---- CHEKLAR (kuryer/hamkor/mijoz → admin) ----
     pending_receipts = []
     recent_receipts = []
@@ -1080,6 +1111,8 @@ async def admin_dashboard(
             "p2p_cards": p2p_cards,
             "pending_p2p_orders": pending_p2p_orders,
             "pending_receipts": pending_receipts,
+            "pending_partner_apps": pending_partner_apps,
+            "pending_courier_apps": pending_courier_apps,
             "recent_receipts": recent_receipts,
             "receipt_by_order": receipt_by_order,
             "birthday_clients_today": birthday_clients_today,
@@ -3780,8 +3813,10 @@ async def _handle_telegram_text_message(chat_id, text, contact, message, request
         user = await find_user_by_phone(db, phone)
 
         shop_url = get_public_base_url(request) + "/shop"
+        app_url = get_public_base_url(request) + "/app"
         role_choice_keyboard = {
             "inline_keyboard": [
+                [{"text": "🏠 ZooMo ilovasini ochish", "web_app": {"url": app_url}}],
                 [{"text": "🛍 Menyuni ochish (mijoz)", "web_app": {"url": shop_url}}],
                 [{"text": "🛵 Kuryer bo'lib ishlash", "callback_data": "become:courier"}],
                 [{"text": "🏪 Hamkor bo'lish", "callback_data": "become:partner"}],
@@ -3843,6 +3878,313 @@ async def telegram_webhook_info(owner: User = Depends(require_owner)):
     ko'rsatadi — xususan 'allowed_updates' ichida 'callback_query'
     borligini shu yerdan TEKSHIRISH mumkin (taxmin qilmasdan)."""
     return await get_telegram_webhook_info()
+
+
+# ==================== ILOVA: RO'YXATDAN O'TISH (mijoz / kuryer / hamkor) ====================
+app_api_router = APIRouter(prefix="/api/app", tags=["Ilova (kirish/ro'yxat)"])
+
+applications_router = APIRouter(tags=["Arizalar"])
+
+COURIER_TRANSPORTS = {"walking", "bike", "scooter", "car"}
+
+
+class AppMeBody(BaseModel):
+    init_data: Optional[str] = None
+
+
+class AppRegisterBody(BaseModel):
+    role: str                       # "client" | "courier" | "partner"
+    full_name: str
+    phone_number: str
+    password: str                   # 4 xonali PIN
+    accepted_terms: bool = False
+    init_data: Optional[str] = None  # Telegram ichida ochilgan bo'lsa
+    city_id: Optional[int] = None
+    latitude: Optional[float] = None   # mijoz joylashuvi
+    longitude: Optional[float] = None
+    transport_type: Optional[str] = None  # kuryer
+    # hamkor
+    brand_name: Optional[str] = None
+    category: Optional[str] = None
+    address: Optional[str] = None
+    legal_name: Optional[str] = None
+    stir: Optional[str] = None
+    bank_account: Optional[str] = None
+    mfo: Optional[str] = None
+    bank_name: Optional[str] = None
+    director_name: Optional[str] = None
+    director_phone: Optional[str] = None
+
+
+@app_api_router.get("/config")
+async def app_config(db: AsyncSession = Depends(get_db)):
+    """Ro'yxatdan o'tish formasi uchun: shaharlar va rol shartlari."""
+    cities = (await db.execute(select(City).where(City.is_active == True).order_by(City.name))).scalars().all()
+    setting = await _get_or_create_setting(db)
+    await db.commit()
+    return {
+        "cities": [{"id": c.id, "name": c.name} for c in cities],
+        "terms": {
+            "client": setting.client_terms or "",
+            "courier": setting.courier_terms or "",
+            "partner": setting.partner_terms or "",
+        },
+    }
+
+
+@app_api_router.post("/me")
+async def app_me(request: Request, body: AppMeBody, db: AsyncSession = Depends(get_db)):
+    """Hozirgi foydalanuvchi holati: ro'yxatdan o'tganmi, qaysi rollari bor,
+    arizalari qaysi holatda. Telegram initData yoki sessiya bo'yicha."""
+    user = None
+    tg_user = validate_telegram_init_data(body.init_data) if body.init_data else None
+    opts = (selectinload(User.courier_profile), selectinload(User.partner_profile))
+    if tg_user:
+        user = (await db.execute(
+            select(User).where(User.telegram_id == str(tg_user["id"])).options(*opts)
+        )).scalars().first()
+    if not user and request.session.get("user_id"):
+        user = (await db.execute(select(User).where(User.id == request.session["user_id"]).options(*opts))).scalars().first()
+    if not user:
+        return {"registered": False, "in_telegram": bool(tg_user)}
+
+    cp, pp = user.courier_profile, user.partner_profile
+    return {
+        "registered": True,
+        "in_telegram": bool(tg_user),
+        "name": user.full_name,
+        "phone": user.phone_number,
+        "is_admin": user.role in (UserRole.OWNER, UserRole.ADMIN),
+        "client": True,
+        "courier": ({"status": cp.application_status or "approved"} if cp else None),
+        "partner": ({"status": pp.application_status or "approved", "brand": pp.brand_name} if pp else None),
+    }
+
+
+@app_api_router.post("/register")
+async def app_register(body: AppRegisterBody, request: Request, db: AsyncSession = Depends(get_db)):
+    role = (body.role or "").strip().lower()
+    if role not in ("client", "courier", "partner"):
+        raise HTTPException(status_code=400, detail="Rolni tanlang: mijoz, kuryer yoki hamkor")
+
+    full_name = (body.full_name or "").strip()
+    if len(full_name) < 2:
+        raise HTTPException(status_code=400, detail="Ismingizni kiriting")
+    phone = normalize_phone(body.phone_number)
+    if not re.fullmatch(r"\+998\d{9}", phone or ""):
+        raise HTTPException(status_code=400, detail="Telefon raqami noto'g'ri (masalan: +998901234567)")
+    validate_pin(body.password or "")
+    if not body.accepted_terms:
+        raise HTTPException(status_code=400, detail="Davom etish uchun shartlarga rozilik bering")
+
+    tg_user = validate_telegram_init_data(body.init_data) if body.init_data else None
+    tg_id = str(tg_user["id"]) if tg_user else None
+
+    opts = (selectinload(User.courier_profile), selectinload(User.partner_profile))
+    by_phone = await find_user_by_phone(db, phone, options=opts)
+    by_tg = None
+    if tg_id:
+        by_tg = (await db.execute(select(User).where(User.telegram_id == tg_id).options(*opts))).scalars().first()
+    if by_phone and by_tg and by_phone.id != by_tg.id:
+        raise HTTPException(status_code=409, detail="Bu telefon raqami boshqa hisobga biriktirilgan. Administratsiya bilan bog'laning.")
+
+    user = by_tg or by_phone
+
+    # Rol bo'yicha oldindan tekshiruvlar (foydalanuvchi yaratishdan OLDIN)
+    if role == "client" and not user and not tg_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Mijoz sifatida ro'yxatdan o'tish uchun ilovani Telegram ichida (bot orqali) oching.",
+        )
+    if role == "courier":
+        if body.city_id is None:
+            raise HTTPException(status_code=400, detail="Ishlaydigan shaharni tanlang")
+        transport = body.transport_type if body.transport_type in COURIER_TRANSPORTS else "walking"
+    legal = None
+    if role == "partner":
+        if body.city_id is None:
+            raise HTTPException(status_code=400, detail="Do'kon joylashgan shaharni tanlang")
+        if not (body.brand_name or "").strip() or not (body.category or "").strip() or not (body.address or "").strip():
+            raise HTTPException(status_code=400, detail="Do'kon nomi, kategoriyasi va manzilini kiriting")
+        legal = _clean_legal_details(
+            body.legal_name, body.stir, body.bank_account, body.mfo,
+            body.bank_name, body.director_name, body.director_phone,
+        )
+    if body.city_id is not None:
+        city = (await db.execute(select(City).where(City.id == body.city_id))).scalars().first()
+        if not city:
+            raise HTTPException(status_code=400, detail="Shahar topilmadi")
+
+    if user:
+        authorized = bool(tg_id and user.telegram_id == tg_id) or bool(
+            user.password_hash and verify_password(body.password, user.password_hash)
+        )
+        if not authorized:
+            raise HTTPException(
+                status_code=409,
+                detail="Bu telefon raqami allaqachon ro'yxatdan o'tgan. \"Kirish\" bo'limidan PIN bilan kiring.",
+            )
+        if role == "courier" and user.courier_profile:
+            raise HTTPException(status_code=400, detail="Siz allaqachon kuryer sifatida ro'yxatdan o'tgansiz")
+        if role == "partner" and user.partner_profile:
+            raise HTTPException(status_code=400, detail="Siz allaqachon hamkor sifatida ro'yxatdan o'tgansiz")
+    else:
+        user = User(full_name=full_name, phone_number=phone, role=UserRole.CLIENT, telegram_id=tg_id)
+        db.add(user)
+        await db.flush()
+
+    if not user.password_hash:
+        user.password_hash = hash_password(body.password)
+    if tg_id and not user.telegram_id:
+        user.telegram_id = tg_id
+    if body.latitude is not None and body.longitude is not None:
+        user.home_latitude = body.latitude
+        user.home_longitude = body.longitude
+    if body.city_id is not None and user.city_id is None and role != "partner":
+        user.city_id = body.city_id
+
+    notify_text = None
+    reply = {"ok": True, "role": role}
+    now = datetime.utcnow()
+
+    if role == "client":
+        reply["redirect"] = "/shop"
+        reply["message"] = "Ro'yxatdan o'tdingiz! Endi buyurtma berishingiz mumkin."
+    elif role == "courier":
+        db.add(CourierProfile(
+            user_id=user.id, transport_type=transport, is_approved=False,
+            application_status="pending", terms_accepted_at=now,
+        ))
+        reply["message"] = "Arizangiz qabul qilindi! Administratsiya tez orada siz bilan bog'lanadi."
+        notify_text = (
+            f"🛵 Yangi KURYER arizasi!\n\n<b>Ism:</b> {user.full_name}\n<b>Telefon:</b> {user.phone_number}\n"
+            f"<b>Transport:</b> {transport}\n\nAdmin panel → Arizalar bo'limidan ko'rib chiqing va bog'laning."
+        )
+    else:
+        db.add(PartnerProfile(
+            user_id=user.id, city_id=body.city_id, brand_name=body.brand_name.strip()[:150],
+            category=body.category.strip()[:80], address=body.address.strip()[:300],
+            is_open=False, application_status="pending", terms_accepted_at=now, **legal,
+        ))
+        reply["message"] = "Arizangiz qabul qilindi! Administratsiya tez orada siz bilan bog'lanadi."
+        notify_text = (
+            f"🏪 Yangi HAMKOR arizasi!\n\n<b>Do'kon:</b> {body.brand_name.strip()}\n"
+            f"<b>Yuridik nomi:</b> {legal['legal_name']}\n<b>STIR:</b> {legal['stir']}\n"
+            f"<b>Direktor:</b> {legal['director_name']} ({legal['director_phone']})\n"
+            f"<b>Aloqa:</b> {user.full_name}, {user.phone_number}\n\nAdmin panel → Arizalar bo'limidan ko'rib chiqing va bog'laning."
+        )
+
+    try:
+        await db.commit()
+    except Exception as e:
+        await db.rollback()
+        print(f"[REGISTER XATOSI] {e!r}")
+        raise HTTPException(status_code=400, detail="Ro'yxatdan o'tkazib bo'lmadi — ma'lumotlar takrorlangan bo'lishi mumkin")
+
+    if notify_text:
+        try:
+            owners = (await db.execute(
+                select(User).where(User.role == UserRole.OWNER, User.telegram_id.is_not(None))
+            )).scalars().all()
+            for o in owners:
+                await send_telegram_message(o.telegram_id, notify_text)
+        except Exception as e:
+            print(f"Ariza bildirishnomasi xatoligi: {e}")
+
+    if role == "client":
+        request.session["user_id"] = user.id
+    return reply
+
+
+@applications_router.post("/admin/applications/partner/{partner_id}/approve")
+async def approve_partner_application(
+    partner_id: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_admin_user)
+):
+    partner = (await db.execute(
+        select(PartnerProfile).options(selectinload(PartnerProfile.user)).where(PartnerProfile.id == partner_id)
+    )).scalars().first()
+    if not partner or partner.application_status != "pending":
+        raise HTTPException(status_code=404, detail="Ariza topilmadi yoki allaqachon ko'rib chiqilgan")
+    partner.application_status = "approved"
+    partner.is_open = True
+    await db.commit()
+    try:
+        if partner.user and partner.user.telegram_id:
+            await send_telegram_message(
+                partner.user.telegram_id,
+                "✅ Hamkorlik arizangiz tasdiqlandi! Endi telefon raqamingiz va PIN kodingiz bilan hamkor kabinetiga kirishingiz mumkin.",
+            )
+    except Exception as e:
+        print(f"Ariza bildirishnomasi xatoligi: {e}")
+    return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@applications_router.post("/admin/applications/partner/{partner_id}/reject")
+async def reject_partner_application(
+    partner_id: int, reason: str = Form(""), db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user),
+):
+    partner = (await db.execute(
+        select(PartnerProfile).options(selectinload(PartnerProfile.user)).where(PartnerProfile.id == partner_id)
+    )).scalars().first()
+    if not partner or partner.application_status != "pending":
+        raise HTTPException(status_code=404, detail="Ariza topilmadi yoki allaqachon ko'rib chiqilgan")
+    tg = partner.user.telegram_id if partner.user else None
+    await db.delete(partner)
+    await db.commit()
+    try:
+        if tg:
+            extra = f"\nSabab: {reason.strip()}" if reason.strip() else ""
+            await send_telegram_message(tg, f"❌ Hamkorlik arizangiz qabul qilinmadi.{extra}")
+    except Exception as e:
+        print(f"Ariza bildirishnomasi xatoligi: {e}")
+    return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@applications_router.post("/admin/applications/courier/{user_id}/approve")
+async def approve_courier_application(
+    user_id: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_admin_user)
+):
+    user = (await db.execute(
+        select(User).options(selectinload(User.courier_profile)).where(User.id == user_id)
+    )).scalars().first()
+    if not user or not user.courier_profile or user.courier_profile.application_status != "pending":
+        raise HTTPException(status_code=404, detail="Ariza topilmadi yoki allaqachon ko'rib chiqilgan")
+    user.courier_profile.application_status = "approved"
+    user.courier_profile.is_approved = True
+    await db.commit()
+    try:
+        if user.telegram_id:
+            await send_telegram_message(
+                user.telegram_id,
+                "✅ Kuryerlik arizangiz tasdiqlandi! Telefon raqamingiz va PIN kodingiz bilan kuryer kabinetiga kiring. "
+                "Naqd buyurtma olish uchun balansingizni to'ldirishni unutmang.",
+            )
+    except Exception as e:
+        print(f"Ariza bildirishnomasi xatoligi: {e}")
+    return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@applications_router.post("/admin/applications/courier/{user_id}/reject")
+async def reject_courier_application(
+    user_id: int, reason: str = Form(""), db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user),
+):
+    user = (await db.execute(
+        select(User).options(selectinload(User.courier_profile)).where(User.id == user_id)
+    )).scalars().first()
+    if not user or not user.courier_profile or user.courier_profile.application_status != "pending":
+        raise HTTPException(status_code=404, detail="Ariza topilmadi yoki allaqachon ko'rib chiqilgan")
+    tg = user.telegram_id
+    await db.delete(user.courier_profile)
+    await db.commit()
+    try:
+        if tg:
+            extra = f"\nSabab: {reason.strip()}" if reason.strip() else ""
+            await send_telegram_message(tg, f"❌ Kuryerlik arizangiz qabul qilinmadi.{extra}")
+    except Exception as e:
+        print(f"Ariza bildirishnomasi xatoligi: {e}")
+    return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
 
 
 # ==================== 11. MIJOZ MINI APP (Telegram WebApp) ====================
@@ -4505,12 +4847,6 @@ async def partner_dashboard(
     )
     cards = [_card_to_dict(c) for c in cards_result.scalars().all()]
     _, partner_card_limit = await _get_card_limits(db)
-    topup_card = await _get_topup_card_info(db)
-    my_receipts = [_receipt_to_dict(r) for r in (await db.execute(
-        select(PaymentReceipt).options(selectinload(PaymentReceipt.user), selectinload(PaymentReceipt.partner))
-        .where(PaymentReceipt.partner_id == partner.id, PaymentReceipt.kind == "partner_topup")
-        .order_by(PaymentReceipt.created_at.desc()).limit(10)
-    )).scalars().all()]
 
     return templates.TemplateResponse(
         request=request,
@@ -4523,8 +4859,6 @@ async def partner_dashboard(
             "status_labels": STATUS_LABELS_UZ,
             "current_user": current_user,
             "withdrawal_requests": withdrawal_requests,
-            "topup_card": topup_card,
-            "my_receipts": my_receipts,
             "cards": cards,
             "MAX_CARDS": partner_card_limit,
             "MIN_WITHDRAWAL_AMOUNT": MIN_WITHDRAWAL_AMOUNT,
@@ -4620,22 +4954,6 @@ async def partner_delete_card(
     current_user: User = Depends(get_current_partner_user),
 ):
     await _delete_card_for_user(db, current_user.id, card_id)
-    return RedirectResponse(url="/partner", status_code=status.HTTP_303_SEE_OTHER)
-
-
-@partner_router.post("/topup")
-async def partner_topup_receipt(
-    amount: float = Form(...),
-    comment: str = Form(""),
-    file: UploadFile = File(...),
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_partner_user),
-):
-    partner = await _get_own_partner(db, current_user)
-    await _create_receipt(
-        db, kind="partner_topup", user=current_user, amount=amount, file=file,
-        partner_id=partner.id, comment=comment,
-    )
     return RedirectResponse(url="/partner", status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -4815,6 +5133,62 @@ async def partner_update_settings(
         partner.longitude = longitude
     if notification_sound in ("chime1", "chime2", "chime3"):
         partner.notification_sound = notification_sound
+    await db.commit()
+    return RedirectResponse(url="/partner", status_code=status.HTTP_303_SEE_OTHER)
+
+
+def _clean_digits(value: Optional[str], length: int, label: str) -> str:
+    digits = re.sub(r"\D", "", value or "")
+    if len(digits) != length:
+        raise HTTPException(status_code=400, detail=f"{label} aynan {length} xonali raqam bo'lishi kerak")
+    return digits
+
+
+def _clean_legal_details(
+    legal_name: Optional[str], stir: Optional[str], bank_account: Optional[str], mfo: Optional[str],
+    bank_name: Optional[str], director_name: Optional[str], director_phone: Optional[str],
+) -> dict:
+    """Hamkor yuridik rekvizitlarini tekshiradi va tozalab qaytaradi."""
+    legal_name = (legal_name or "").strip()
+    bank_name = (bank_name or "").strip()
+    director_name = (director_name or "").strip()
+    if not legal_name:
+        raise HTTPException(status_code=400, detail="Yuridik nomini kiriting (masalan: 'Gourmet Express' MChJ yoki 'Aliyev B.' YTT)")
+    if not bank_name:
+        raise HTTPException(status_code=400, detail="Bank nomini kiriting")
+    if not director_name:
+        raise HTTPException(status_code=400, detail="Direktor/rahbar ismini kiriting")
+    phone = normalize_phone(director_phone or "")
+    if not re.fullmatch(r"\+998\d{9}", phone or ""):
+        raise HTTPException(status_code=400, detail="Direktor telefon raqami noto'g'ri (masalan: +998901234567)")
+    return {
+        "legal_name": legal_name[:200],
+        "stir": _clean_digits(stir, 9, "STIR (INN)"),
+        "bank_account": _clean_digits(bank_account, 20, "Hisob-kitob raqami"),
+        "mfo": _clean_digits(mfo, 5, "MFO"),
+        "bank_name": bank_name[:120],
+        "director_name": director_name[:120],
+        "director_phone": phone,
+    }
+
+
+@partner_router.post("/legal")
+async def partner_update_legal(
+    legal_name: str = Form(""),
+    stir: str = Form(""),
+    bank_account: str = Form(""),
+    mfo: str = Form(""),
+    bank_name: str = Form(""),
+    director_name: str = Form(""),
+    director_phone: str = Form(""),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_partner_user),
+):
+    """Hamkor yuridik rekvizitlari (STIR, hisob raqami, MFO, bank, direktor)."""
+    partner = await _get_own_partner(db, current_user)
+    data = _clean_legal_details(legal_name, stir, bank_account, mfo, bank_name, director_name, director_phone)
+    for k, v in data.items():
+        setattr(partner, k, v)
     await db.commit()
     return RedirectResponse(url="/partner", status_code=status.HTTP_303_SEE_OTHER)
 
@@ -5280,8 +5654,13 @@ async def courier_mark_delivered(
 app.include_router(courier_router_app)
 app.include_router(partner_router)
 app.include_router(shop_router)
+app.include_router(app_api_router)
+app.include_router(applications_router)
 app.include_router(finance_router)
 
-@app.get("/")
-async def root():
-    return {"status": "ok", "message": "ZooMo API is running"}
+@app.get("/", response_class=HTMLResponse)
+@app.get("/app", response_class=HTMLResponse)
+async def app_home(request: Request):
+    """ZooMo asosiy kirish sahifasi: yuklanish animatsiyasi, bosh sahifa va
+    ro'yxatdan o'tish (mijoz / kuryer / hamkor)."""
+    return templates.TemplateResponse(request=request, name="app.html", context={})

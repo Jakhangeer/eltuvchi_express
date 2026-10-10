@@ -71,6 +71,11 @@ async def get_current_partner_user(request: Request, db: AsyncSession = Depends(
 
     if not user or not user.is_active or not user.partner_profile:
         raise RedirectToLogin()
+    if user.partner_profile.application_status == "pending":
+        raise HTTPException(
+            status_code=403,
+            detail="Hamkorlik arizangiz hali ko'rib chiqilmoqda — administratsiya tez orada siz bilan bog'lanadi.",
+        )
 
     return user
 
@@ -89,6 +94,11 @@ async def get_current_courier_user(request: Request, db: AsyncSession = Depends(
 
     if not user or not user.is_active or not user.courier_profile:
         raise RedirectToLogin()
+    if user.courier_profile.application_status == "pending":
+        raise HTTPException(
+            status_code=403,
+            detail="Kuryerlik arizangiz hali ko'rib chiqilmoqda — administratsiya tez orada siz bilan bog'lanadi.",
+        )
 
     return user
 
