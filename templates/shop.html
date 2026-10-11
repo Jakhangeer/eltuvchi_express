@@ -19,9 +19,9 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
-    <script src="/static/js/ui-mode.js"></script>
-    <script src="/static/js/i18n.js"></script>
-    <script src="/static/js/zm-ui.js"></script>
+    <script src="/static/js/ui-mode.js?v=3"></script>
+    <script src="/static/js/i18n.js?v=3"></script>
+    <script src="/static/js/zm-ui.js?v=3"></script>
     <style>
         body.theme-default { background-color: #f8fafc; color: #0f172a; }
         body.theme-dark { background-color: #05060a; color: #f8fafc; }
@@ -179,9 +179,9 @@
         body.theme-dark .text-amber-600 { color: #fbbf24 !important; }
         body.theme-dark .bg-slate-500\/10 { background-color: rgba(255,255,255,.06) !important; }
     </style>
-    <link rel="stylesheet" href="/static/css/light-mode.css">
-    <link rel="stylesheet" href="/static/css/themes.css">
-    <link rel="stylesheet" href="/static/css/splash.css">
+    <link rel="stylesheet" href="/static/css/light-mode.css?v=3">
+    <link rel="stylesheet" href="/static/css/themes.css?v=3">
+    <link rel="stylesheet" href="/static/css/splash.css?v=3">
 </head>
 <body id="main-body" class="theme-default min-h-screen antialiased selection:bg-amber-500 selection:text-white pb-32 transition-colors duration-300">
 
@@ -330,7 +330,7 @@
         let useCashback = false; // Keshbek to'lov usuli emas, chegirma opsiyasi
 
         function setTheme(themeName) {
-            document.getElementById("main-body").className = `${themeName} min-h-screen antialiased selection:bg-amber-500 selection:text-white pb-32 transition-colors duration-300`;
+            (function(b){ Array.prototype.slice.call(b.classList).forEach(function(c){ if (c.indexOf("theme-") === 0) b.classList.remove(c); }); b.classList.add(themeName); })(document.getElementById("main-body"));
             localStorage.setItem("app_theme", themeName);
             if (themeName !== "theme-dark") localStorage.setItem("app_light_theme", themeName);
             // Light/Dark rejim bilan sinxronlash (ui-mode.js)
@@ -1432,6 +1432,6 @@
 
         init();
     </script>
-<script src="/static/js/splash.js"></script>
+<script src="/static/js/splash.js?v=3"></script>
 </body>
 </html>

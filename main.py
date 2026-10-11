@@ -365,6 +365,16 @@ CSRF_EXEMPT_PREFIXES = (
 
 
 @app.middleware("http")
+async def static_no_stale_cache_middleware(request: Request, call_next):
+    """JS/CSS/til fayllari yangilanganda brauzer eski nusxani ushlab qolmasin."""
+    response = await call_next(request)
+    p = request.url.path
+    if p.startswith("/static/") and p.endswith((".js", ".css", ".json")):
+        response.headers["Cache-Control"] = "no-cache, must-revalidate"
+    return response
+
+
+@app.middleware("http")
 async def csrf_origin_check_middleware(request: Request, call_next):
     if request.method in ("POST", "PUT", "PATCH", "DELETE"):
         path = request.url.path
