@@ -3648,6 +3648,15 @@ async def telegram_webhook(request: Request, db: AsyncSession = Depends(get_db))
                 )
                 return {"ok": True}
 
+            if data == "set_app_pin":
+                bot_conversation_state[chat_id] = {"awaiting_pin_for": "client"}
+                await send_telegram_message(
+                    chat_id,
+                    "🔑 Ilovaga kirish uchun 4 xonali PIN kod o'ylab toping va shu yerga yozing (masalan: 4271).\n"
+                    "Keyin ilovada telefon raqamingiz va shu PIN bilan kirasiz.",
+                )
+                return {"ok": True}
+
             if data in ("agree:courier", "agree:partner"):
                 role_key = data.split(":")[1]
                 bot_conversation_state[chat_id] = {"awaiting_pin_for": role_key}
@@ -3740,6 +3749,15 @@ async def _handle_telegram_text_message(chat_id, text, contact, message, request
         )
         return {"ok": True}
 
+    if text.strip().lower() in ("/pin", "/kod"):
+        u = (await db.execute(select(User).where(User.telegram_id == str(chat_id)))).scalars().first()
+        if not u:
+            await send_telegram_message(chat_id, "Avval /start bosib, telefon raqamingizni ulashing.")
+        else:
+            bot_conversation_state[chat_id] = {"awaiting_pin_for": "client"}
+            await send_telegram_message(chat_id, "🔑 Ilova uchun 4 xonali PIN kod yozing (masalan: 4271):")
+        return {"ok": True}
+
     # ---- PIN KUTILAYOTGAN BO'LSA (foydalanuvchi oddiy matn yuboryapti) ----
     pending = bot_conversation_state.get(chat_id)
     if pending and "awaiting_pin_for" in pending and text:
@@ -3757,6 +3775,16 @@ async def _handle_telegram_text_message(chat_id, text, contact, message, request
 
         role_key = pending["awaiting_pin_for"]
         user.password_hash = hash_password(pin)
+
+        if role_key == "client":
+            await db.commit()
+            bot_conversation_state.pop(chat_id, None)
+            await send_telegram_message(
+                chat_id,
+                "✅ PIN o'rnatildi!\n\nEndi ZooMo ilovasiga (telefon/kompyuterga o'rnatilgan) telefon raqamingiz va shu PIN bilan kirishingiz mumkin.\n"
+                "Xavfsizlik uchun yuborgan PIN xabaringizni o'chirib qo'ying.",
+            )
+            return {"ok": True}
 
         if role_key == "courier":
             db.add(CourierProfile(
@@ -3818,6 +3846,7 @@ async def _handle_telegram_text_message(chat_id, text, contact, message, request
             "inline_keyboard": [
                 [{"text": "🏠 ZooMo ilovasini ochish", "web_app": {"url": app_url}}],
                 [{"text": "🛍 Menyuni ochish (mijoz)", "web_app": {"url": shop_url}}],
+                [{"text": "🔑 Ilova uchun PIN o'rnatish", "callback_data": "set_app_pin"}],
                 [{"text": "🛵 Kuryer bo'lib ishlash", "callback_data": "become:courier"}],
                 [{"text": "🏪 Hamkor bo'lish", "callback_data": "become:partner"}],
             ]
@@ -4096,6 +4125,47 @@ async def app_register(body: AppRegisterBody, request: Request, db: AsyncSession
     return reply
 
 
+# ---- Brute-force'dan himoya: 4 xonali PIN uchun urinishlarni cheklash ----
+_login_attempts: dict = {}
+
+
+def _rate_limited(key: str, limit: int = 6, window: int = 900) -> bool:
+    import time as _t
+    now = _t.time()
+    arr = [t for t in _login_attempts.get(key, []) if now - t < window]
+    _login_attempts[key] = arr
+    return len(arr) >= limit
+
+
+def _rate_hit(key: str) -> None:
+    import time as _t
+    _login_attempts.setdefault(key, []).append(_t.time())
+
+
+class ClientLoginBody(BaseModel):
+    phone_number: str
+    password: str
+
+
+@app_api_router.post("/client-login")
+async def app_client_login(body: ClientLoginBody, request: Request, db: AsyncSession = Depends(get_db)):
+    """Mustaqil mijoz ilovasi (PWA / .exe) uchun: telefon + PIN → token.
+    PIN botda o'rnatiladi (🔑 «Ilova uchun PIN») — shu bilan telefon raqami Telegram orqali tasdiqlangan bo'ladi."""
+    phone = normalize_phone(body.phone_number)
+    ip = request.client.host if request.client else "?"
+    keys = [f"p:{phone_tail(phone)}", f"i:{ip}"]
+    if any(_rate_limited(k) for k in keys):
+        raise HTTPException(status_code=429, detail="Juda ko'p urinish. 15 daqiqadan keyin qayta urinib ko'ring.")
+    user = await find_user_by_phone(db, phone)
+    if not user or not user.is_active or not user.password_hash or not verify_password(body.password or "", user.password_hash):
+        for k in keys:
+            _rate_hit(k)
+        raise HTTPException(status_code=401, detail="Telefon raqami yoki PIN noto'g'ri. PIN yo'q bo'lsa, botda «🔑 Ilova uchun PIN» tugmasini bosing.")
+    for k in keys:
+        _login_attempts.pop(k, None)
+    return {"ok": True, "token": make_client_token(user.id), "name": user.full_name}
+
+
 @applications_router.post("/admin/applications/partner/{partner_id}/approve")
 async def approve_partner_application(
     partner_id: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_admin_user)
@@ -4231,11 +4301,48 @@ async def shop_promotions(db: AsyncSession = Depends(get_db)):
     }
 
 
+# ---- Mustaqil ilova (PWA / .exe) uchun kirish tokeni ----
+# Telegram'siz ochilgan mijoz ilovasi telefon + PIN bilan kiradi va imzolangan
+# token oladi. Token shop endpointlarida `init_data` o'rnida yuboriladi ("zm1." bilan boshlanadi).
+from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
+
+_CLIENT_TOKEN_MAX_AGE = 60 * 60 * 24 * 90  # 90 kun
+_token_serializer = URLSafeTimedSerializer(SESSION_SECRET_KEY, salt="zoomo-client-token")
+
+
+def make_client_token(user_id: int) -> str:
+    return "zm1." + _token_serializer.dumps({"u": user_id})
+
+
+def verify_client_token(token: str) -> Optional[int]:
+    if not token or not token.startswith("zm1."):
+        return None
+    try:
+        data = _token_serializer.loads(token[4:], max_age=_CLIENT_TOKEN_MAX_AGE)
+        return int(data["u"])
+    except (BadSignature, SignatureExpired, KeyError, ValueError, TypeError):
+        return None
+
+
 def _get_telegram_user_or_403(init_data: str) -> dict:
+    """Mijozni aniqlaydi: Telegram initData YOKI mustaqil ilova tokeni ("zm1.").
+    Qaytgan dict'da yo "id" (telegram id), yo "uid" (User.id) bo'ladi — _ident_cond() ishlatiladi."""
+    if init_data and init_data.startswith("zm1."):
+        uid = verify_client_token(init_data)
+        if not uid:
+            raise HTTPException(status_code=403, detail="Sessiya tugagan. Iltimos, qaytadan kiring.")
+        return {"uid": uid}
     tg_user = validate_telegram_init_data(init_data)
     if not tg_user:
         raise HTTPException(status_code=403, detail="Telegram tasdiqlanmadi. Iltimos, ilovani Telegram ichidan oching.")
     return tg_user
+
+
+def _ident_cond(ident: dict):
+    """SQLAlchemy sharti: foydalanuvchini telegram id yoki User.id bo'yicha topish."""
+    if "uid" in ident:
+        return User.id == ident["uid"]
+    return User.telegram_id == str(ident["id"])
 
 
 class InitDataBody(BaseModel):
@@ -4316,10 +4423,9 @@ async def shop_page(request: Request):
 @shop_router.post("/me")
 async def shop_me(body: InitDataBody, db: AsyncSession = Depends(get_db)):
     tg_user = _get_telegram_user_or_403(body.init_data)
-    telegram_id = str(tg_user["id"])
 
     result = await db.execute(
-        select(User).where(User.telegram_id == telegram_id, User.role == UserRole.CLIENT)
+        select(User).where(_ident_cond(tg_user), User.role == UserRole.CLIENT)
     )
     client = result.scalars().first()
 
@@ -4354,10 +4460,9 @@ async def shop_me(body: InitDataBody, db: AsyncSession = Depends(get_db)):
 @shop_router.post("/set-city")
 async def shop_set_city(body: SetCityBody, db: AsyncSession = Depends(get_db)):
     tg_user = _get_telegram_user_or_403(body.init_data)
-    telegram_id = str(tg_user["id"])
 
     result = await db.execute(
-        select(User).where(User.telegram_id == telegram_id, User.role == UserRole.CLIENT)
+        select(User).where(_ident_cond(tg_user), User.role == UserRole.CLIENT)
     )
     client = result.scalars().first()
     if not client:
@@ -4374,10 +4479,9 @@ async def shop_set_birthday(body: SetBirthdayBody, db: AsyncSession = Depends(ge
     Bu — avval umuman mavjud bo'lmagan endpoint edi, shuning uchun mijoz
     kiritgan sana hech qayerga saqlanmasdi (admin panelda ko'rinmasdi)."""
     tg_user = _get_telegram_user_or_403(body.init_data)
-    telegram_id = str(tg_user["id"])
 
     result = await db.execute(
-        select(User).where(User.telegram_id == telegram_id, User.role == UserRole.CLIENT)
+        select(User).where(_ident_cond(tg_user), User.role == UserRole.CLIENT)
     )
     client = result.scalars().first()
     if not client:
@@ -4407,9 +4511,8 @@ async def shop_profile_update(body: ProfileUpdateBody, db: AsyncSession = Depend
     mijoz ismini yoki tug'ilgan kunini kiritsa ham, hech qayerga
     saqlanmasdi va admin panelda hech qachon ko'rinmasdi."""
     tg_user = _get_telegram_user_or_403(body.init_data)
-    telegram_id = str(tg_user["id"])
 
-    result = await db.execute(select(User).where(User.telegram_id == telegram_id))
+    result = await db.execute(select(User).where(_ident_cond(tg_user)))
     client = result.scalars().first()
     if not client:
         raise HTTPException(status_code=404, detail="Mijoz topilmadi")
@@ -4431,10 +4534,9 @@ async def shop_profile_update(body: ProfileUpdateBody, db: AsyncSession = Depend
 async def shop_order_history(init_data: str, db: AsyncSession = Depends(get_db)):
     """Mijozning o'z buyurtmalari tarixi — Shaxsiy Kabinet bo'limida ko'rsatish uchun."""
     tg_user = _get_telegram_user_or_403(init_data)
-    telegram_id = str(tg_user["id"])
 
     client_result = await db.execute(
-        select(User).where(User.telegram_id == telegram_id, User.role == UserRole.CLIENT)
+        select(User).where(_ident_cond(tg_user), User.role == UserRole.CLIENT)
     )
     client = client_result.scalars().first()
     if not client:
@@ -4499,7 +4601,7 @@ async def shop_upload_receipt(
     """Mijoz P2P orqali pul o'tkazgach, chek rasmini platforma ichida yuboradi."""
     tg_user = _get_telegram_user_or_403(init_data)
     client = (await db.execute(
-        select(User).where(User.telegram_id == str(tg_user["id"]), User.role == UserRole.CLIENT)
+        select(User).where(_ident_cond(tg_user), User.role == UserRole.CLIENT)
     )).scalars().first()
     if not client:
         raise HTTPException(status_code=404, detail="Mijoz topilmadi")
@@ -4524,9 +4626,8 @@ async def shop_order_track(order_id: int, init_data: str, db: AsyncSession = Dep
     har 5-8 sekundda so'rov yuborib, xaritadagi kuryer belgisini yangilab
     turadi. Buyurtma boshqa mijozniki bo'lsa ko'rsatilmaydi."""
     tg_user = _get_telegram_user_or_403(init_data)
-    telegram_id = str(tg_user["id"])
 
-    client_result = await db.execute(select(User).where(User.telegram_id == telegram_id))
+    client_result = await db.execute(select(User).where(_ident_cond(tg_user)))
     client = client_result.scalars().first()
     if not client:
         raise HTTPException(status_code=404, detail="Mijoz topilmadi")
@@ -4567,6 +4668,10 @@ async def shop_order_track(order_id: int, init_data: str, db: AsyncSession = Dep
             else None
         ),
         "courier_location": courier_location,
+        "delivery_location": (
+            {"lat": order.delivery_latitude, "lng": order.delivery_longitude}
+            if order.delivery_latitude is not None and order.delivery_longitude is not None else None
+        ),
     }
 
 
@@ -4604,10 +4709,9 @@ async def shop_products(partner_id: int, db: AsyncSession = Depends(get_db)):
 @shop_router.post("/order")
 async def shop_create_order(body: ShopOrderBody, db: AsyncSession = Depends(get_db)):
     tg_user = _get_telegram_user_or_403(body.init_data)
-    telegram_id = str(tg_user["id"])
 
     client_result = await db.execute(
-        select(User).where(User.telegram_id == telegram_id, User.role == UserRole.CLIENT)
+        select(User).where(_ident_cond(tg_user), User.role == UserRole.CLIENT)
     )
     client = client_result.scalars().first()
     if not client:
@@ -4754,8 +4858,11 @@ async def shop_create_order(body: ShopOrderBody, db: AsyncSession = Depends(get_
 
     await db.commit()
 
+    telegram_id = client.telegram_id  # mustaqil ilova mijozida Telegram bo'lmasligi mumkin
     try:
-        if payment_method == "p2p" and p2p_card:
+        if not telegram_id:
+            pass  # bildirishnoma yuboriladigan joy yo'q — ilovaning o'zida ko'rsatiladi
+        elif payment_method == "p2p" and p2p_card:
             # Mijozni botda "chek kutilmoqda" holatiga o'tkazamiz — bot
             # webhook'i (_handle_telegram_text_message) keyingi rasm
             # xabarini aynan shu buyurtmaga tegishli CHEK deb qabul qiladi.
@@ -5300,11 +5407,17 @@ async def courier_dashboard(
     # O'zi hozir yetkazib yurgan buyurtma(lar)
     my_active_stmt = (
         select(Order)
-        .options(selectinload(Order.items), selectinload(Order.partner))
+        .options(selectinload(Order.items), selectinload(Order.partner), selectinload(Order.client))
         .where(Order.courier_id == current_user.id, Order.status == OrderStatus.ON_THE_WAY)
         .order_by(Order.created_at)
     )
     my_active_orders = (await db.execute(my_active_stmt)).scalars().all()
+    # Navigator uchun: do'kon egasining telefoni (kuryer do'konga qo'ng'iroq qilishi uchun)
+    _p_uids = [o.partner.user_id for o in my_active_orders if o.partner and o.partner.user_id]
+    partner_phones = {}
+    if _p_uids:
+        for u in (await db.execute(select(User).where(User.id.in_(_p_uids)))).scalars().all():
+            partner_phones[u.id] = u.phone_number
 
     # O'zi yetkazib bergan so'nggi buyurtmalar (tarix)
     history_stmt = (
@@ -5357,6 +5470,8 @@ async def courier_dashboard(
             "my_receipts": my_receipts,
             "MIN_TOPUP_AMOUNT": MIN_TOPUP_AMOUNT,
             "my_active_orders": my_active_orders,
+            "partner_phones": partner_phones,
+            "courier_pct": courier_pct,
             "history_orders": history_orders,
             "withdrawal_requests": withdrawal_requests,
             "cards": cards,

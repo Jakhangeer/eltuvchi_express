@@ -6,6 +6,8 @@
     <title>Kuryer Kabineti</title><link rel="icon" type="image/png" href="/static/images/favicon.png"><link rel="apple-touch-icon" href="/static/images/apple-touch-icon.png">
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="/static/js/ui-mode.js"></script>
+    <script src="/static/js/i18n.js"></script>
+    <script src="/static/js/zm-ui.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Leaflet — faol buyurtmada do'kon (olib ketish) va mijoz (yetkazish) nuqtalarini xaritada ko'rsatish uchun -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -98,6 +100,7 @@
         body { padding-bottom: max(24px, env(safe-area-inset-bottom)); }
     </style>
     <link rel="stylesheet" href="/static/css/light-mode.css">
+    <link rel="stylesheet" href="/static/css/themes.css">
 </head>
 <body class="min-h-screen relative text-white" data-ui="glass" data-panel="courier" data-courier-online="{{ 'true' if (courier_profile and courier_profile.is_online) else 'false' }}">
     <script>
@@ -130,21 +133,13 @@
         <div class="flex items-center gap-3">
             <div id="live-clock" class="text-[11px] font-mono text-slate-400 glass rounded-full px-2.5 py-1"></div>
             <button type="button" data-mode-toggle class="glass btn-press rounded-lg w-9 h-9 flex items-center justify-center text-sm" aria-label="Rejim"></button>
-            <div class="relative only-dark">
-                <button type="button" onclick="document.getElementById('bg-menu').classList.toggle('hidden')" class="glass rounded-lg w-8 h-8 flex items-center justify-center text-sm">🎨</button>
-                <div id="bg-menu" class="hidden absolute right-0 mt-2 glass-strong rounded-xl p-2.5 flex gap-2 z-30">
-                    <button type="button" onclick="setPanelBg('obsidian')" title="Obsidian" class="w-6 h-6 rounded-full border-2 border-white/50" style="background:linear-gradient(135deg,#6366f1,#05060a)"></button>
-                    <button type="button" onclick="setPanelBg('aurora')" title="Aurora" class="w-6 h-6 rounded-full border-2 border-white/50" style="background:linear-gradient(135deg,#14b8a6,#03110f)"></button>
-                    <button type="button" onclick="setPanelBg('sunset')" title="Sunset" class="w-6 h-6 rounded-full border-2 border-white/50" style="background:linear-gradient(135deg,#f43f5e,#0e0610)"></button>
-                    <button type="button" onclick="setPanelBg('midnight')" title="Midnight" class="w-6 h-6 rounded-full border-2 border-white/50" style="background:linear-gradient(135deg,#3b82f6,#040816)"></button>
-                </div>
-            </div>
+            <button type="button" data-zm-settings="all" class="glass btn-press" aria-label="Mavzu va til"></button>
             <a href="/logout" class="text-[11px] text-slate-400 hover:text-white transition-colors underline underline-offset-2">Chiqish</a>
         </div>
     </header>
 
     <!-- ONLINE/OFFLINE HOLATI VA JONLI JOYLASHUV -->
-    <div class="container mx-auto px-4 pt-4 max-w-2xl relative z-10">
+    <div class="container zm-wide mx-auto px-4 pt-4 max-w-2xl relative z-10">
         <div class="glass fade-up rounded-2xl p-4 flex items-center justify-between gap-3">
             <div class="min-w-0">
                 <p class="text-sm font-bold flex items-center gap-2 {% if courier_profile and courier_profile.is_online %}text-emerald-400{% else %}text-slate-500{% endif %}" id="online-status-label">
@@ -163,7 +158,7 @@
         </div>
     </div>
 
-    <div class="container mx-auto p-4 space-y-4 max-w-2xl relative z-10">
+    <div class="container zm-wide zm-cols mx-auto p-4 space-y-4 max-w-2xl relative z-10">
 
         <!-- BLOKLANGAN OGOHLANTIRISHI -->
         {% if courier_profile and courier_profile.is_blocked %}
@@ -356,7 +351,15 @@
         <div class="active-order-card glass-strong fade-up stagger-2 p-5 rounded-2xl">
             <h2 class="text-base font-extrabold mb-3 text-grad flex items-center gap-2">🚴 Sizda hozir yo'lda</h2>
             {% for order in my_active_orders %}
-            <div class="rounded-xl p-3 mb-2 last:mb-0" style="background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.08);">
+            {% set pct = courier_pct if courier_pct else 0.8 %}
+            <div class="rounded-xl p-3 mb-2 last:mb-0" style="background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.08);"
+                 data-nav-order="{{ order.id }}" data-order-id="{{ order.id }}" data-brand="{{ order.partner.brand_name if order.partner else '' }}"
+                 data-p-lat="{{ order.partner.latitude if order.partner and order.partner.latitude is not none else '' }}" data-p-lng="{{ order.partner.longitude if order.partner and order.partner.longitude is not none else '' }}"
+                 data-c-lat="{{ order.delivery_latitude if order.delivery_latitude is not none else '' }}" data-c-lng="{{ order.delivery_longitude if order.delivery_longitude is not none else '' }}"
+                 data-address="{{ order.delivery_address }}" data-client-name="{{ order.client.full_name if order.client else '' }}" data-client-phone="{{ order.client.phone_number if order.client else '' }}"
+                 data-partner-phone="{{ partner_phones.get(order.partner.user_id, '') if order.partner else '' }}"
+                 data-total="{{ order.total_price or 0 }}" data-fee="{{ order.delivery_fee or 0 }}" data-earn="{{ ((order.delivery_fee or 0) * pct)|round|int }}"
+                 data-cash="{{ '1' if order.payment_method == 'cash' else '0' }}" data-comment="{{ order.client_comment or '' }}">
                 <p class="font-bold text-sm">#{{ order.id }} — {{ order.partner.brand_name if order.partner else '—' }}</p>
                 <p class="text-xs text-slate-400 mb-2">📍 {{ order.delivery_address }}</p>
                 <ul class="text-xs text-slate-300 space-y-0.5 mb-2">
@@ -364,7 +367,13 @@
                     <li>• {{ item.product_name }} — {{ item.quantity }} ta</li>
                     {% endfor %}
                 </ul>
-                <p class="text-sm font-bold mb-2 text-amber-300">Yig'ib olish kerak: {{ "%.0f"|format(order.total_price + order.delivery_fee) }} so'm (naqd)</p>
+                {% if order.payment_method == 'cash' %}
+                <p class="text-sm font-bold mb-1 text-amber-300">Yig'ib olish kerak: {{ "%.0f"|format(order.total_price + order.delivery_fee) }} so'm (naqd)</p>
+                {% else %}
+                <p class="text-sm font-bold mb-1 text-sky-300">💳 Karta orqali to'langan — pul yig'ilmaydi</p>
+                {% endif %}
+                <p class="text-xs mb-2 text-emerald-300 font-semibold">Sizning haqingiz: {{ ((order.delivery_fee or 0) * pct)|round|int }} so'm</p>
+                <button type="button" data-zmn="open" data-id="{{ order.id }}" class="btn-accept btn-press w-full text-white py-3 rounded-xl text-sm font-extrabold mb-2">🧭 Navigatorni ochish (to'liq ekran)</button>
                 {% set p_lat = order.partner.latitude if order.partner else None %}
                 {% set p_lng = order.partner.longitude if order.partner else None %}
                 {% if p_lat is not none or order.delivery_latitude is not none %}
@@ -393,7 +402,12 @@
                 <div class="row-lift rounded-xl p-3" style="background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.08);">
                     <p class="font-bold text-sm">#{{ order.id }} — {{ order.partner.brand_name if order.partner else '—' }}</p>
                     <p class="text-xs text-slate-400 mb-1">📍 {{ order.delivery_address }}</p>
-                    <p class="text-xs text-emerald-400 font-semibold mb-1">Yetkazish haqingiz: taxminan {{ "%.0f"|format(order.delivery_fee * 0.8) }} so'm</p>
+                    <p class="text-xs text-slate-300 mb-1">🧾 Taom: {{ "%.0f"|format(order.total_price or 0) }} so'm · Yetkazish: {{ "%.0f"|format(order.delivery_fee or 0) }} so'm</p>
+                    <p class="text-xs text-emerald-400 font-semibold mb-1">Yetkazish haqingiz: taxminan {{ "%.0f"|format((order.delivery_fee or 0) * (courier_pct if courier_pct else 0.8)) }} so'm</p>
+                    <p class="text-[11px] text-slate-400 mb-1" data-dist-order="{{ order.id }}"
+                       data-p-lat="{{ order.partner.latitude if order.partner and order.partner.latitude is not none else '' }}" data-p-lng="{{ order.partner.longitude if order.partner and order.partner.longitude is not none else '' }}"
+                       data-c-lat="{{ order.delivery_latitude if order.delivery_latitude is not none else '' }}" data-c-lng="{{ order.delivery_longitude if order.delivery_longitude is not none else '' }}"
+                       data-my-lat="{{ courier_profile.latitude if courier_profile and courier_profile.latitude is not none else '' }}" data-my-lng="{{ courier_profile.longitude if courier_profile and courier_profile.longitude is not none else '' }}"></p>
                     {% set need = order_holds.get(order.id, 0) %}
                     {% if need > 0 %}
                     <p class="text-[11px] text-slate-400 mb-2">💵 Naqd to'lov — balansdan {{ "%.0f"|format(need) }} so'm yechiladi</p>
@@ -613,6 +627,38 @@
             startLiveLocationTracking();
         }
     </script>
+
+    <!-- ================= TO'LIQ EKRAN NAVIGATOR ================= -->
+    <div id="zmn" class="zmn" role="dialog" aria-modal="true">
+        <div id="zmn-map"></div>
+        <div class="zmn-top">
+            <div class="zmn-instr-card">
+                <div id="zmn-arrow" class="zmn-arrow">⬆️</div>
+                <div class="zmn-instr-txt"><div id="zmn-instr">…</div><div id="zmn-next" class="zmn-next"></div></div>
+                <button type="button" data-zmn="close" class="zmn-x" aria-label="Yopish">✕</button>
+            </div>
+            <div class="zmn-phase-bar"><span id="zmn-step1" class="zmn-dot on"></span><span class="zmn-line"></span><span id="zmn-step2" class="zmn-dot"></span><span id="zmn-phase" class="zmn-phase-txt"></span></div>
+        </div>
+        <div class="zmn-fabs">
+            <button type="button" id="zmn-follow" data-zmn="follow" class="zmn-fab on" title="Joylashuvim">🎯</button>
+            <button type="button" data-zmn="all" class="zmn-fab" title="Hammasini ko'rsatish">🗺️</button>
+        </div>
+        <div class="zmn-sheet">
+            <div class="zmn-stats">
+                <div><div id="zmn-dist" class="zmn-big">—</div><div id="zmn-eta" class="zmn-sub"></div></div>
+                <div class="zmn-total" id="zmn-total"></div>
+            </div>
+            <div id="zmn-addr" class="zmn-addr"></div>
+            <div id="zmn-prices" class="zmn-prices"></div>
+            <button type="button" id="zmn-arrived" data-zmn="arrived" class="zmn-arrived hidden"></button>
+            <div class="zmn-btns">
+                <a id="zmn-call" class="zmn-call" href="#">📞</a>
+                <button type="button" id="zmn-act" data-zmn="act" class="zmn-act p1"></button>
+            </div>
+            <div class="zmn-ext"><span>Tashqi navigator:</span><a id="zmn-ext-g" target="_blank" rel="noopener">Google</a><a id="zmn-ext-y" target="_blank" rel="noopener">Yandex</a><a id="zmn-ext-2" target="_blank" rel="noopener">2GIS</a></div>
+        </div>
+    </div>
+    <script src="/static/js/courier-nav.js"></script>
 
     <!-- ================= FAOL BUYURTMA UCHUN MINI-XARITA (do'kon → mijoz) ================= -->
     <script>

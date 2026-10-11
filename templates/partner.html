@@ -6,6 +6,8 @@
     <title>{{ partner.brand_name }} — Hamkor Kabineti</title><link rel="icon" type="image/png" href="/static/images/favicon.png"><link rel="apple-touch-icon" href="/static/images/apple-touch-icon.png">
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <script src="/static/js/ui-mode.js"></script>
+    <script src="/static/js/i18n.js"></script>
+    <script src="/static/js/zm-ui.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Leaflet — buyurtmani olib ketgan kuryerni jonli kuzatish uchun -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -93,6 +95,8 @@
         ::-webkit-scrollbar-thumb { background: rgba(255,255,255,.15); border-radius: 10px; }
     </style>
     <link rel="stylesheet" href="/static/css/light-mode.css">
+    <link rel="stylesheet" href="/static/css/themes.css">
+    <script src="/static/js/receipt-printer.js" defer></script>
 </head>
 <body class="min-h-screen relative text-white" data-ui="glass" data-panel="partner">
     <script>
@@ -126,21 +130,7 @@
             <div id="live-clock" class="text-[11px] font-mono text-slate-400 hidden sm:block glass rounded-full px-2.5 py-1"></div>
             <div class="flex items-center gap-2">
                 <button type="button" data-mode-toggle class="glass btn-press rounded-lg w-8 h-8 flex items-center justify-center text-sm" aria-label="Rejim"></button>
-                <div class="relative">
-                    <button onclick="document.getElementById('theme-menu').classList.toggle('hidden')" class="text-xs bg-white/8 border border-white/10 px-2.5 py-1.5 rounded-lg">🎨</button>
-                    <div id="theme-menu" class="hidden absolute right-0 mt-2 glass-strong rounded-xl shadow-lg p-2.5 flex gap-2 z-20">
-                        <button onclick="setTheme('#6366f1','#4338ca')" class="w-6 h-6 rounded-full bg-indigo-500 border-2 border-white/50 shadow"></button>
-                        <button onclick="setTheme('#10b981','#047857')" class="w-6 h-6 rounded-full bg-emerald-500 border-2 border-white/50 shadow"></button>
-                        <button onclick="setTheme('#f43f5e','#be123c')" class="w-6 h-6 rounded-full bg-rose-500 border-2 border-white/50 shadow"></button>
-                        <button onclick="setTheme('#f59e0b','#b45309')" class="w-6 h-6 rounded-full bg-amber-500 border-2 border-white/50 shadow"></button>
-                        <button onclick="setTheme('#38bdf8','#0369a1')" class="w-6 h-6 rounded-full bg-sky-500 border-2 border-white/50 shadow"></button>
-                        <span class="w-px bg-white/20 mx-1 only-dark"></span>
-                        <button onclick="setPanelBg('obsidian')" title="Obsidian" class="only-dark w-6 h-6 rounded-md border-2 border-white/50" style="background:linear-gradient(135deg,#6366f1,#05060a)"></button>
-                        <button onclick="setPanelBg('aurora')" title="Aurora" class="only-dark w-6 h-6 rounded-md border-2 border-white/50" style="background:linear-gradient(135deg,#14b8a6,#03110f)"></button>
-                        <button onclick="setPanelBg('sunset')" title="Sunset" class="only-dark w-6 h-6 rounded-md border-2 border-white/50" style="background:linear-gradient(135deg,#f43f5e,#0e0610)"></button>
-                        <button onclick="setPanelBg('midnight')" title="Midnight" class="only-dark w-6 h-6 rounded-md border-2 border-white/50" style="background:linear-gradient(135deg,#3b82f6,#040816)"></button>
-                    </div>
-                </div>
+                <button type="button" data-zm-settings="all" class="glass btn-press" aria-label="Mavzu va til"></button>
                 <a href="/logout" class="text-[11px] text-slate-400 hover:text-white transition-colors underline underline-offset-2">Chiqish</a>
             </div>
         </div>
@@ -179,17 +169,23 @@
         <button onclick="showTab('settings')" data-tab-btn="settings" class="tab-btn px-4 py-3 text-sm whitespace-nowrap font-semibold">⚙️ Sozlamalar</button>
     </div>
 
-    <div class="container mx-auto p-4 space-y-4 max-w-3xl relative z-10">
+    <div class="container zm-wide mx-auto p-4 space-y-4 max-w-3xl relative z-10">
 
         <!-- BUGUNGI BUYURTMALAR -->
         <div id="tab-orders" class="tab-page fade-up glass p-5 rounded-2xl">
             <h2 class="text-base font-extrabold mb-4 text-grad">📦 Bugungi Buyurtmalar</h2>
-            <div class="space-y-3">
+            <div id="orders-grid">
                 {% for order in today_orders %}
-                <div class="rounded-xl p-3.5 {% if order.status.value == 'created' %}order-card-new{% endif %}" style="background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.09);">
+                <div class="rounded-xl p-3.5 {% if order.status.value == 'created' %}order-card-new{% endif %}" style="background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.09);"
+                     data-order-id="{{ order.id }}" data-time="{{ order.created_at|uzb_time('%d.%m.%Y %H:%M') }}" data-brand="{{ partner.brand_name }}"
+                     data-client-name="{{ order.client.full_name if order.client else '' }}" data-client-phone="{{ order.client.phone_number if order.client else '' }}"
+                     data-address="{{ order.delivery_address }}" data-comment="{{ order.client_comment or '' }}" data-delivery-fee="{{ order.delivery_fee or 0 }}"
+                     data-discount="{{ order.discount_amount or 0 }}" data-total="{{ order.total_price or 0 }}"
+                     data-payment="{{ {'cash': 'Naqd', 'p2p': 'Karta (P2P)', 'card': 'Karta'}.get(order.payment_method, order.payment_method) }}">
                     <div class="flex justify-between items-start mb-2">
                         <div>
                             <span class="font-bold text-sm">#{{ order.id }}</span>
+                            <button type="button" onclick="ZMPrinter.printCard(this)" class="btn-press ml-2 text-[11px] px-2 py-0.5 rounded-md" style="background:rgba(148,163,184,.18)" title="Chek">🖨 Chek</button>
                             <span class="text-xs text-slate-500 ml-2">{{ order.created_at|uzb_time('%H:%M') }}</span>
                         </div>
                         <span class="px-2.5 py-0.5 text-[10px] font-bold rounded-full" style="background:color-mix(in srgb, var(--accent) 20%, transparent); color:#c7d2fe;">
@@ -206,7 +202,7 @@
                     {% endif %}
                     <ul class="text-xs text-slate-400 space-y-0.5 mb-2">
                         {% for item in order.items %}
-                        <li>• {{ item.product_name }} — {{ item.quantity }} x {{ item.unit_price }} so'm</li>
+                        <li data-name="{{ item.product_name }}" data-qty="{{ item.quantity }}" data-price="{{ item.unit_price }}">• {{ item.product_name }} — {{ item.quantity }} x {{ item.unit_price }} so'm</li>
                         {% endfor %}
                     </ul>
                     <p class="text-sm font-bold mb-2 text-slate-100">Jami: {{ order.total_price }} so'm</p>
@@ -237,7 +233,7 @@
                     {% endif %}
                 </div>
                 {% else %}
-                <p class="text-sm text-slate-500 text-center py-8">Bugun hali buyurtma yo'q</p>
+                <p class="zm-empty text-sm text-slate-500 text-center py-8">Bugun hali buyurtma yo'q</p>
                 {% endfor %}
             </div>
         </div>
@@ -283,7 +279,7 @@
 
             <div class="glass p-5 rounded-2xl">
                 <h2 class="text-base font-extrabold mb-4 text-grad">📋 Menyu</h2>
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
                     {% for product in products %}
                     <div class="product-card rounded-xl p-3 flex flex-col gap-2" style="background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.09);">
                         <div class="flex gap-2.5">
@@ -433,6 +429,13 @@
             <h2 class="text-base font-extrabold mb-1 text-grad">⚙️ Do'kon Sozlamalari</h2>
             <p class="text-xs text-slate-500 mb-4">Nomi, manzili, joylashuvi va yangi buyurtma signalini shu yerdan o'zgartirasiz. Komissiya, ish vaqti va shahar — faqat egasi tomonidan o'zgartiriladi.</p>
 
+            <!-- CHEK PRINTER (planshet / telefon / kompyuter) -->
+            <div class="mb-6 pb-5" style="border-bottom:1px solid rgba(255,255,255,.08);">
+                <h3 class="text-sm font-extrabold mb-1">🖨 Chek printer</h3>
+                <p class="text-xs text-slate-500 mb-3">Buyurtma qabul qilinganda chek avtomatik chiqadi. Sozlama shu qurilma (planshet/telefon/kompyuter) uchun alohida saqlanadi.</p>
+                <div id="printer-settings"></div>
+            </div>
+
             <form action="/partner/settings/update" method="POST" class="js-haptic-form space-y-4">
                 <div>
                     <label class="block text-xs font-semibold text-slate-400 mb-1">Do'kon nomi</label>
@@ -524,13 +527,6 @@
 
     <script>
 
-        // ---- FON MAVZUSI (Obsidian / Aurora / Sunset / Midnight) ----
-        function setPanelBg(name) {
-            document.documentElement.setAttribute('data-bg', name === 'obsidian' ? '' : name);
-            if (name === 'obsidian') document.documentElement.removeAttribute('data-bg');
-            try { localStorage.setItem('panel_bg', name === 'obsidian' ? '' : name); } catch (e) {}
-        }
-
         // ---- BO'LIMLAR (tab) ----
         function showTab(tabName) {
             document.querySelectorAll('.tab-page').forEach(el => el.classList.add('hidden'));
@@ -538,14 +534,6 @@
             document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
             document.querySelector(`[data-tab-btn="${tabName}"]`).classList.add('active');
             localStorage.setItem('partner_active_tab', tabName);
-        }
-
-        // ---- MAVZU (aksent rang) ----
-        function setTheme(main, dark) {
-            document.documentElement.style.setProperty('--accent', main);
-            document.documentElement.style.setProperty('--accent-dark', dark);
-            localStorage.setItem('partner_theme', JSON.stringify({ main, dark }));
-            document.getElementById('theme-menu').classList.add('hidden');
         }
 
         // ---- JONLI SOAT ----
@@ -794,12 +782,7 @@
         }
 
         document.addEventListener('DOMContentLoaded', () => {
-            const savedTheme = localStorage.getItem('partner_theme');
-            if (savedTheme) {
-                const { main, dark } = JSON.parse(savedTheme);
-                document.documentElement.style.setProperty('--accent', main);
-                document.documentElement.style.setProperty('--accent-dark', dark);
-            }
+            if (window.ZMPrinter) { ZMPrinter.bindAutoPrint(document); ZMPrinter.mountSettings(document.getElementById('printer-settings')); }
             showTab(localStorage.getItem('partner_active_tab') || 'orders');
             updateLiveClock();
             setInterval(updateLiveClock, 1000);

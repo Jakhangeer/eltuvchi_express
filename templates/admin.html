@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ZooMo — Admin Panel</title><link rel="icon" type="image/png" href="/static/images/favicon.png"><link rel="apple-touch-icon" href="/static/images/apple-touch-icon.png">
     <script src="/static/js/ui-mode.js"></script>
+    <script src="/static/js/i18n.js"></script>
+    <script src="/static/js/zm-ui.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -71,8 +73,6 @@
             position: relative;
             z-index: 1;
         }
-        body.dark .theme-title { background: linear-gradient(135deg, #a5b4fc, #6ee7b7); -webkit-background-clip: text; background-clip: text; color: transparent !important; }
-        body.dark .theme-stat-number { background: linear-gradient(135deg, #c7d2fe, #a5b4fc); -webkit-background-clip: text; background-clip: text; color: transparent !important; }
 
         /* ---- Header — shaffof, porlovchi gradient ---- */
         body.dark #main-header {
@@ -219,6 +219,7 @@
         .chart-wrap { position: relative; height: 240px; }
     </style>
     <link rel="stylesheet" href="/static/css/light-mode.css">
+    <link rel="stylesheet" href="/static/css/themes.css">
 </head>
 <body id="app-body" class="bg-gray-100 text-gray-800 transition-colors duration-300"
       data-active-city-id="{{ active_city_id if active_city_id is not none else '' }}"
@@ -248,15 +249,7 @@
             </div>
             {% endif %}
             <button type="button" data-mode-toggle class="uim-btn" aria-label="Rejim"></button>
-            <div class="flex items-center gap-2 bg-white/10 p-1.5 rounded-lg border border-white/20">
-                <span class="text-xs font-semibold px-1">Mavzu:</span>
-                <button onclick="setTheme('indigo')" class="w-5 h-5 rounded-full bg-blue-600 border-2 border-white"></button>
-                <button onclick="setTheme('emerald')" class="w-5 h-5 rounded-full bg-emerald-600 border-2 border-white"></button>
-                <button onclick="setTheme('sky')" class="w-5 h-5 rounded-full bg-sky-600 border-2 border-white"></button>
-                <button onclick="setTheme('rose')" class="w-5 h-5 rounded-full bg-rose-600 border-2 border-white"></button>
-                <button onclick="setTheme('amber')" class="w-5 h-5 rounded-full bg-amber-500 border-2 border-white"></button>
-                <button onclick="setTheme('dark')" class="w-5 h-5 rounded-full bg-gray-900 border-2 border-white"></button>
-            </div>
+            <button type="button" data-zm-settings="all" aria-label="Mavzu va til"></button>
             <span class="bg-green-500 text-xs font-bold px-3 py-1 rounded-full">Tizim Faol</span>
             <div class="flex items-center gap-2 text-xs bg-white/10 px-3 py-1.5 rounded-lg border border-white/20">
                 <span>👤 {{ current_user.full_name }} ({% if is_owner %}Egasi{% else %}Operator{% endif %})</span>
@@ -2021,46 +2014,32 @@
             input.value = (weatherMultipliers[selected] !== undefined ? weatherMultipliers[selected] : 1.0).toFixed(1);
         }
 
-        const themes = {
-            indigo: { header: 'bg-indigo-700', text: 'text-indigo-700', btn: 'bg-indigo-600 hover:bg-indigo-700' },
-            emerald: { header: 'bg-emerald-700', text: 'text-emerald-700', btn: 'bg-emerald-600 hover:bg-emerald-700' },
-            sky: { header: 'bg-sky-700', text: 'text-sky-700', btn: 'bg-sky-600 hover:bg-sky-700' },
-            rose: { header: 'bg-rose-700', text: 'text-rose-700', btn: 'bg-rose-600 hover:bg-rose-700' },
-            amber: { header: 'bg-amber-700', text: 'text-amber-700', btn: 'bg-amber-600 hover:bg-amber-700' },
-            dark: { header: 'bg-gray-900', text: 'text-indigo-400', btn: 'bg-indigo-600 hover:bg-indigo-500' }
-        };
+        // Eski mavzu nomlari endi shunchaki rang (accent) nomlari. HECH QANDAY elementning
+        // className'i qayta yozilmaydi — holat belgilari (rangli sarlavha, badge) saqlanadi.
+        const LEGACY_ACCENT = { indigo: 'indigo', emerald: 'emerald', sky: 'sky', rose: 'rose', amber: 'amber' };
 
         function setTheme(themeName) {
             const body = document.getElementById('app-body');
-            const header = document.getElementById('main-header');
-            const titles = document.querySelectorAll('.theme-title');
-            const buttons = document.querySelectorAll('.theme-btn');
-            const themeTexts = document.querySelectorAll('.theme-text');
-            const statNumbers = document.querySelectorAll('.theme-stat-number');
-            const cards = document.querySelectorAll('.card-bg');
-            if (!themes[themeName]) themeName = 'dark';
-            body.dataset.theme = themeName;  // CSS shu atribut bo'yicha har bir mavzuni bezaydi
-
-            // Light/Dark rejim bilan sinxronlash (ui-mode.js). __themeSync — qayta-qayta chaqirilib ketmasligi uchun.
-            if (themeName !== 'dark') localStorage.setItem('admin_light_theme', themeName);
-            if (window.UIMode) { window.__themeSync = true; UIMode.set(themeName === 'dark' ? 'dark' : 'light'); window.__themeSync = false; }
-
             if (themeName === 'dark') {
+                if (window.UIMode) UIMode.set('dark');
+                return;
+            }
+            if (themeName === 'light') { if (window.UIMode) UIMode.set('light'); return; }
+            if (window.ZMTheme) ZMTheme.setAccent(LEGACY_ACCENT[themeName] || themeName);
+        }
+
+        // Rejim (kunduzgi/tungi) → <body> sinfi; rang esa umumiy zm-ui.js orqali boshqariladi
+        function syncAdminMode(mode) {
+            const body = document.getElementById('app-body');
+            if (!body) return;
+            if (mode === 'dark') {
                 body.classList.add('dark', 'bg-gray-950', 'text-gray-100');
                 body.classList.remove('bg-gray-100', 'text-gray-800');
-                cards.forEach(card => card.classList.add('dark:bg-gray-900', 'dark:text-white'));
+                document.querySelectorAll('.card-bg').forEach(c => c.classList.add('dark:bg-gray-900', 'dark:text-white'));
             } else {
                 body.classList.remove('dark', 'bg-gray-950', 'text-gray-100');
                 body.classList.add('bg-gray-100', 'text-gray-800');
             }
-
-            header.className = `${themes[themeName].header} text-white p-4 shadow-md flex justify-between items-center transition-colors duration-300`;
-            titles.forEach(t => t.className = `theme-title text-lg font-bold mb-4 ${themes[themeName].text} transition-colors duration-300`);
-            themeTexts.forEach(t => t.className = `theme-text p-3 font-semibold ${themes[themeName].text}`);
-            statNumbers.forEach(t => t.className = `theme-stat-number text-3xl font-extrabold mt-1 ${themes[themeName].text}`);
-            buttons.forEach(b => b.className = `theme-btn ${themes[themeName].btn} text-white py-2 rounded-lg font-bold transition`);
-
-            localStorage.setItem('admin_theme', themeName);
         }
 
         function showPage(pageName) {
@@ -2677,23 +2656,12 @@
         }
 
         document.addEventListener('DOMContentLoaded', () => {
-            // Boshlang'ich mavzu: umumiy Light/Dark rejimga (ui-mode.js) mos tanlanadi
-            let savedTheme;
-            const _mode = window.UIMode ? UIMode.get() : 'dark';
-            if (_mode === 'dark') {
-                savedTheme = 'dark';
-            } else {
-                savedTheme = localStorage.getItem('admin_light_theme') || localStorage.getItem('admin_theme');
-                if (!savedTheme || savedTheme === 'dark' || !themes[savedTheme]) savedTheme = 'indigo';
-            }
-            setTheme(savedTheme);
+            // Boshlang'ich holat: rejim ui-mode.js dan, rang zm-ui.js dan
+            syncAdminMode(window.UIMode ? UIMode.get() : 'dark');
 
-            // Rejim tugmasi bosilganda: mavzu, grafik va xarita yangilanadi
+            // Rejim tugmasi bosilganda: <body> sinfi, grafik va xarita yangilanadi
             document.addEventListener('uimodechange', function (e) {
-                if (window.__themeSync) return;
-                const isDark = document.getElementById('app-body').classList.contains('dark');
-                if (e.detail.mode === 'dark' && !isDark) setTheme('dark');
-                else if (e.detail.mode === 'light' && isDark) setTheme(localStorage.getItem('admin_light_theme') || 'indigo');
+                syncAdminMode(e.detail.mode);
                 if (hourlyChartInstance) { hourlyChartInstance.destroy(); hourlyChartInstance = null; renderHourlyChart(); }
             });
             applyWeatherMultiplier();

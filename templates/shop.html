@@ -20,6 +20,8 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
     <script src="/static/js/ui-mode.js"></script>
+    <script src="/static/js/i18n.js"></script>
+    <script src="/static/js/zm-ui.js"></script>
     <style>
         body.theme-default { background-color: #f8fafc; color: #0f172a; }
         body.theme-dark { background-color: #05060a; color: #f8fafc; }
@@ -178,6 +180,7 @@
         body.theme-dark .bg-slate-500\/10 { background-color: rgba(255,255,255,.06) !important; }
     </style>
     <link rel="stylesheet" href="/static/css/light-mode.css">
+    <link rel="stylesheet" href="/static/css/themes.css">
     <link rel="stylesheet" href="/static/css/splash.css">
 </head>
 <body id="main-body" class="theme-default min-h-screen antialiased selection:bg-amber-500 selection:text-white pb-32 transition-colors duration-300">
@@ -213,6 +216,7 @@
                     <span id="fav-badge" class="hidden absolute -top-1 -right-1 bg-rose-500 text-white text-[9px] font-bold w-4 h-4 rounded-full flex items-center justify-center">0</span>
                 </button>
                 <button type="button" data-mode-toggle class="bg-slate-100 hover:bg-slate-200 text-slate-700 w-9 h-9 rounded-2xl flex items-center justify-center transition-all active:scale-95 text-sm" aria-label="Rejim"></button>
+                <button type="button" data-zm-settings="lang" class="bg-slate-100 hover:bg-slate-200 text-slate-700 w-9 h-9 rounded-2xl flex items-center justify-center transition-all active:scale-95 text-sm" style="border:0;background:rgba(148,163,184,.18);color:inherit" aria-label="Til">🌐</button>
                 <button onclick="toggleThemeMenu()" class="bg-slate-100 hover:bg-slate-200 text-slate-700 w-9 h-9 rounded-2xl flex items-center justify-center transition-all active:scale-95">
                     <i class="fa-solid fa-palette text-sm"></i>
                 </button>
@@ -263,18 +267,25 @@
          funksiyalar #app.innerHTML'ni to'liq almashtirib turadi; agar shu
          oyna #app ichida bo'lganida, sahifa almashganda u ham yo'qolib
          qolardi. -->
-    <div id="tracking-overlay" class="hidden fixed inset-0 z-40 bg-slate-900/95 flex flex-col">
-        <div class="flex items-center justify-between p-4 border-b border-white/10">
-            <div>
-                <h2 class="text-sm font-black text-white">🛵 Buyurtma #<span id="tracking-order-id"></span></h2>
-                <p id="tracking-courier-info" class="text-[11px] text-slate-400 mt-0.5">Kuryer qidirilmoqda...</p>
+    <div id="tracking-overlay" class="hidden zm-fs">
+        <div id="tracking-map" class="zm-fs-map"></div>
+        <div class="zm-fs-top">
+            <div class="zm-fs-card">
+                <div style="min-width:0;flex:1">
+                    <h2 class="text-sm font-black text-white">🛵 Buyurtma #<span id="tracking-order-id"></span></h2>
+                    <p id="tracking-courier-info" class="text-[11px] text-slate-300 mt-0.5">Kuryer qidirilmoqda...</p>
+                </div>
+                <button onclick="closeOrderTracking()" class="zm-fs-x" aria-label="Yopish"><i class="fa-solid fa-xmark"></i></button>
             </div>
-            <button onclick="closeOrderTracking()" class="text-white bg-white/10 w-8 h-8 rounded-full flex items-center justify-center"><i class="fa-solid fa-xmark"></i></button>
         </div>
-        <div id="tracking-map" class="flex-1"></div>
-        <div class="p-3 bg-slate-900 border-t border-white/10 text-center">
-            <p id="tracking-status-text" class="text-[11px] text-slate-400">Joylashuv har 6 soniyada yangilanadi</p>
+        <div class="zm-fs-bottom">
+            <div class="flex justify-between items-end gap-3">
+                <div><div id="tracking-dist" class="text-2xl font-black text-white leading-none">—</div><div id="tracking-eta" class="text-[12px] text-slate-300 font-bold mt-1"></div></div>
+                <a id="tracking-call" href="#" class="hidden zm-fs-call">📞 Kuryerga qo'ng'iroq</a>
+            </div>
+            <p id="tracking-status-text" class="text-[11px] text-slate-400 mt-2">Joylashuv har 6 soniyada yangilanadi</p>
         </div>
+    </div>
     </div>
 
     <!-- Savat Paneli -->
@@ -383,6 +394,8 @@
             trackingOrderId = orderId;
             document.getElementById('tracking-order-id').textContent = orderId;
             document.getElementById('tracking-overlay').classList.remove('hidden');
+            document.body.style.overflow = 'hidden';
+            trackingUserMoved = false;
 
             if (!trackingMap && typeof L !== 'undefined') {
                 trackingMap = L.map('tracking-map').setView([41.5504, 60.6318], 13);
@@ -402,6 +415,7 @@
                 L.control.layers({ '🌑 Tungi': darkLayer, '☀️ Yorug‘': lightLayer, '🗺️ Sxema': streetsLayer, '🛰️ Sputnik': satelliteLayer }, {}, { position: 'topright', collapsed: true }).addTo(trackingMap);
                 if (window.UIMode) { UIMode.attachMapTheme(trackingMap, darkLayer, lightLayer); } else { darkLayer.addTo(trackingMap); }
             }
+            if (trackingMap && !trackingMap.__zmDrag) { trackingMap.__zmDrag = true; trackingMap.on('dragstart zoomstart', () => { trackingUserMoved = true; }); }
             setTimeout(() => { if (trackingMap) trackingMap.invalidateSize(); }, 100);
 
             pollOrderTracking();
@@ -409,10 +423,35 @@
             trackingPollTimer = setInterval(pollOrderTracking, 6000);
         }
 
+        let trackingClientMarker = null, trackingRouteLine = null, trackingUserMoved = false, trackingRouteAt = 0;
+        function updateTrackingRoute(from, to) {
+            const km = (m) => m < 950 ? Math.round(m / 10) * 10 + ' m' : (m / 1000).toFixed(1) + ' km';
+            const now = Date.now();
+            if (now - trackingRouteAt < 12000) return;
+            trackingRouteAt = now;
+            fetch(`https://router.project-osrm.org/route/v1/driving/${from[1]},${from[0]};${to[1]},${to[0]}?overview=full&geometries=geojson`)
+                .then(r => r.ok ? r.json() : null).then(d => {
+                    if (!d || !d.routes || !d.routes[0]) throw new Error('no route');
+                    const rt = d.routes[0];
+                    if (trackingRouteLine) trackingMap.removeLayer(trackingRouteLine);
+                    trackingRouteLine = L.polyline(rt.geometry.coordinates.map(c => [c[1], c[0]]), { color: '#38bdf8', weight: 6, opacity: .9 }).addTo(trackingMap);
+                    document.getElementById('tracking-dist').textContent = km(rt.distance);
+                    document.getElementById('tracking-eta').textContent = '≈ ' + Math.max(1, Math.round(rt.duration / 60)) + ' daqiqa';
+                }).catch(() => {
+                    const R = 6371000, r = Math.PI / 180, dLat = (to[0] - from[0]) * r, dLng = (to[1] - from[1]) * r;
+                    const x = Math.sin(dLat / 2) ** 2 + Math.cos(from[0] * r) * Math.cos(to[0] * r) * Math.sin(dLng / 2) ** 2;
+                    const m = 2 * R * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x)) * 1.3;
+                    document.getElementById('tracking-dist').textContent = '~' + km(m);
+                    document.getElementById('tracking-eta').textContent = '≈ ' + Math.max(1, Math.round(m / 400)) + ' daqiqa';
+                });
+        }
+
         function closeOrderTracking() {
             document.getElementById('tracking-overlay').classList.add('hidden');
             if (trackingPollTimer) { clearInterval(trackingPollTimer); trackingPollTimer = null; }
             trackingOrderId = null;
+            trackingUserMoved = false;
+            document.body.style.overflow = '';
         }
 
         // Kuryerning transport turiga qarab xaritadagi belgisi o'zgaradi
@@ -467,8 +506,20 @@
                     }
                     const bounds = [pos];
                     if (trackingPartnerMarker) bounds.push(trackingPartnerMarker.getLatLng());
-                    if (bounds.length > 1) trackingMap.fitBounds(bounds, { padding: [50, 80] });
-                    else trackingMap.setView(pos, 15);
+                    if (data.delivery_location) {
+                        const dp = [data.delivery_location.lat, data.delivery_location.lng];
+                        if (!trackingClientMarker) {
+                            trackingClientMarker = L.marker(dp, { icon: L.divIcon({ html: '<div style="background:#2563eb;width:32px;height:32px;border-radius:50%;border:3px solid #fff;display:flex;align-items:center;justify-content:center;font-size:16px;box-shadow:0 4px 12px rgba(0,0,0,.5)">🏠</div>', className: '', iconSize: [32, 32], iconAnchor: [16, 16] }) }).addTo(trackingMap).bindPopup('Siz');
+                        }
+                        bounds.push(dp);
+                        updateTrackingRoute(pos, dp);
+                    }
+                    if (!trackingUserMoved) {
+                        if (bounds.length > 1) trackingMap.fitBounds(bounds, { padding: [110, 110] });
+                        else trackingMap.setView(pos, 15);
+                    }
+                    const callEl = document.getElementById('tracking-call');
+                    if (callEl && data.courier_phone) { callEl.href = 'tel:' + data.courier_phone; callEl.classList.remove('hidden'); }
                     statusEl.textContent = '📍 Joylashuv yangilandi — ' + new Date().toLocaleTimeString('uz-UZ');
                 } else {
                     statusEl.textContent = "Kuryerning GPS signali hozircha yo'q — biroz kuting";
