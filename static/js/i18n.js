@@ -88,7 +88,9 @@
         else {
             var nk = normKey(core), hit = dict[nk];
             if (hit !== undefined) res = hit.indexOf('{n}') > -1 ? fill(hit, nums(core)) : hit;
-            else if (/[:.…!?]$/.test(core) && dict[normKey(core.replace(/[:.…!?]+$/, ''))] !== undefined) {
+            else if (core.length > 2 && core === core.toUpperCase() && core !== core.toLowerCase() && dict[normKey(core.charAt(0) + core.slice(1).toLowerCase())] !== undefined) {
+                res = t(core.charAt(0) + core.slice(1).toLowerCase()).toUpperCase();
+            } else if (/[:.…!?]$/.test(core) && dict[normKey(core.replace(/[:.…!?]+$/, ''))] !== undefined) {
                 res = t(core.replace(/[:.…!?]+$/, '')) + core.match(/[:.…!?]+$/)[0];
             } else {
                 var c2 = apos(core).replace(/\s+/g, ' ');

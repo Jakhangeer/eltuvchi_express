@@ -13,6 +13,7 @@
  *       ZMPrinter.mountSettings(el)  ·  ZMPrinter.bindAutoPrint(rootEl)
  */
 (function () {
+    var IS_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
     'use strict';
     var KEY = 'zm_printer';
     var BLE_SERVICES = [
@@ -130,7 +131,7 @@
 
     /* ==================== TRANSPORTLAR ==================== */
     async function bleEnsure(interactive) {
-        if (!navigator.bluetooth) throw new Error(T('Bu brauzer Bluetooth printerni qo\'llab-quvvatlamaydi (Chrome yoki Edge kerak)'));
+        if (!navigator.bluetooth) throw new Error(T(IS_IOS ? 'iPhone/iPad da Bluetooth printer uchun App Store\'dan bepul «Bluefy» brauzerini o\'rnatib, shu sahifani o\'sha yerda oching. Yoki «Tizim» (AirPrint) ni tanlang.' : 'Bu brauzer Bluetooth printerni qo\'llab-quvvatlamaydi (Chrome yoki Edge kerak)'));
         if (bleChar && bleDevice && bleDevice.gatt.connected) return;
         if (!bleDevice && navigator.bluetooth.getDevices) {
             try {
@@ -283,7 +284,7 @@
                 '<div class="zmp-row"><label>' + T('Nusxalar soni') + '</label><select data-k="copies">' + [1, 2, 3].map(function (n) { return '<option' + (S.copies == n ? ' selected' : '') + '>' + n + '</option>'; }).join('') + '</select></div>' +
                 '<label class="zmp-chk"><input type="checkbox" data-k="auto"' + (S.auto ? ' checked' : '') + '> ' + T('Buyurtma qabul qilinganda avtomatik chek chiqarish') + '</label>' +
                 '<div class="zmp-grid2"><button type="button" data-act="connect" class="zmp-b on">' + T('Printerni ulash') + '</button><button type="button" data-act="test" class="zmp-b">' + T('Sinov cheki') + '</button></div>' +
-                '<p class="zmp-hint">' + T('Bluetooth/USB — Chrome yoki Edge brauzerida ishlaydi. iPhone/iPad uchun «Tizim» (AirPrint) ni tanlang. Android\'da klassik Bluetooth printer uchun RawBT ilovasini o\'rnating.') + '</p>';
+                (IS_IOS ? '<p class="zmp-hint">⚠️ ' + T('iPhone/iPad da Safari va Chrome Bluetooth printerni qo\'llamaydi. Bepul «Bluefy» brauzerini o\'rnating yoki «Tizim» (AirPrint) ni tanlang.') + '</p>' : '') + '<p class="zmp-hint">' + T('Bluetooth/USB — Chrome yoki Edge brauzerida ishlaydi. iPhone/iPad uchun «Tizim» (AirPrint) ni tanlang. Android\'da klassik Bluetooth printer uchun RawBT ilovasini o\'rnating.') + '</p>';
             if (window.ZMI18n && ZMI18n.translate) ZMI18n.translate(el);
         }
         el.addEventListener('click', function (e) {

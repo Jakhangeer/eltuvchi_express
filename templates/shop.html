@@ -676,7 +676,7 @@
                                 <span class="font-bold text-title">${Number(order.total_amount).toLocaleString()} so'm</span>
                             </div>
                             ${order.courier_name ? `<div class="text-[10px] text-amber-600 mt-1 font-medium"><i class="fa-solid fa-motorcycle mr-1"></i> Kuryer: ${order.courier_name}</div>` : ''}
-                            ${order.needs_receipt ? `<div class="mt-2 rounded-lg border p-2" style="border-color:#fcd34d;background:#fffbeb;"><p class="text-[10px] font-bold text-amber-900 mb-1">🧾 To'lov chekini yuboring</p><input type="file" id="receipt-file-${order.id}" accept="image/png,image/jpeg,image/webp" class="w-full text-[10px] mb-1"><button onclick="uploadReceipt(${order.id}, this)" class="w-full bg-amber-500 text-white text-[11px] font-bold py-1.5 rounded-lg">📤 Chekni yuborish</button></div>` : ''}
+                            ${order.needs_receipt ? `<div class="mt-2 rounded-lg border p-2 zm-note-amber"><p class="text-[10px] font-bold text-amber-900 mb-1">🧾 To'lov chekini yuboring</p><input type="file" id="receipt-file-${order.id}" accept="image/png,image/jpeg,image/webp" class="w-full text-[10px] mb-1"><button onclick="uploadReceipt(${order.id}, this)" class="w-full bg-amber-500 text-white text-[11px] font-bold py-1.5 rounded-lg">📤 Chekni yuborish</button></div>` : ''}
                             ${order.receipt_pending ? `<div class="text-[10px] text-amber-600 mt-1 font-bold">⏳ Chek ko'rib chiqilmoqda</div>` : ''}
                             ${order.status === 'on_the_way' ? `<button onclick="openOrderTracking(${order.id})" class="w-full mt-2 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white text-[11px] font-bold py-2 rounded-lg transition-all flex items-center justify-center gap-1.5"><i class="fa-solid fa-location-crosshairs"></i> Kuryerni jonli kuzatish</button>` : ''}
                         </div>`;
@@ -1099,6 +1099,41 @@
             bar.classList.remove("hidden");
         }
 
+        // ---- Yetkazish narxi (masofa/km bo'yicha, serverdan) ----
+        let deliveryQuote = null;
+        let cartBaseTotal = 0;
+        function formatKm(km) { return (Math.round(km * 10) / 10).toString().replace(".", ",") + " km"; }
+        function updateFeeUI() {
+            const feeRow = document.getElementById("delivery-fee-row");
+            const totalEl = document.getElementById("final-total-val");
+            const show = orderType === "delivery" && deliveryQuote;
+            const fee = show ? (deliveryQuote.delivery_fee || 0) : 0;
+            if (feeRow) {
+                feeRow.classList.toggle("hidden", !show);
+                const v = document.getElementById("delivery-fee-val"); if (v) v.textContent = fee.toLocaleString() + " so'm";
+                const n = document.getElementById("delivery-fee-note");
+                if (n) {
+                    if (show && deliveryQuote.by_distance) {
+                        n.textContent = "📏 " + formatKm(deliveryQuote.distance_km) + " · " + (deliveryQuote.base_radius || 0) + " km gacha " + Math.round(deliveryQuote.base_price || 0).toLocaleString() + " so'm, keyin har km " + Math.round(deliveryQuote.extra_price || 0).toLocaleString() + " so'm";
+                    } else if (show && deliveryQuote.km_pricing_enabled) {
+                        n.textContent = "📍 Aniq narx joylashuvingiz aniqlangach hisoblanadi";
+                    } else { n.textContent = ""; }
+                }
+            }
+            if (totalEl) totalEl.textContent = (cartBaseTotal + fee).toLocaleString() + " so'm";
+        }
+        async function refreshQuote() {
+            if (orderType !== "delivery" || !currentPartnerId) { deliveryQuote = null; updateFeeUI(); return; }
+            try {
+                deliveryQuote = await api("/delivery-quote", {
+                    partner_id: currentPartnerId,
+                    lat: userLocation ? userLocation.lat : null,
+                    lng: userLocation ? userLocation.lon : null,
+                });
+            } catch (e) { console.error("Narx hisoblashda xatolik:", e); }
+            updateFeeUI();
+        }
+
         // SAVATCHA OYNASI (Alohida keshbek bloki va to'lov turlari bilan)
         function openCart() {
             const items = Object.values(cart);
@@ -1251,9 +1286,16 @@
                             <span>-${cashbackDiscount.toLocaleString()} so'm</span>
                         </div>
                         ` : ''}
+                        <div id="delivery-fee-row" class="${orderType === 'delivery' && deliveryQuote ? '' : 'hidden'}">
+                            <div class="flex justify-between items-center text-xs text-sub">
+                                <span>Yetkazish narxi:</span>
+                                <span id="delivery-fee-val">0 so'm</span>
+                            </div>
+                            <div id="delivery-fee-note" class="text-[10px] text-sub opacity-80"></div>
+                        </div>
                         <div class="flex justify-between items-center font-bold pt-1">
                             <span class="text-xs text-sub">Jami to'lov:</span>
-                            <span class="text-base text-amber-600 font-black">${finalTotal.toLocaleString()} so'm</span>
+                            <span id="final-total-val" class="text-base text-amber-600 font-black">${finalTotal.toLocaleString()} so'm</span>
                         </div>
                     </div>
                 </div>
@@ -1262,6 +1304,10 @@
                     <i class="fa-solid fa-circle-check text-amber-400"></i>
                     <span class="text-xs">Buyurtmani tasdiqlash</span>
                 </button>`;
+
+            cartBaseTotal = finalTotal;
+            updateFeeUI();
+            refreshQuote();
 
             const list = document.getElementById("cart-items");
             items.forEach(i => {
@@ -1319,22 +1365,50 @@
         }
 
         function getLocation() {
-            const status = document.getElementById("location-status");
-            if (tg && tg.LocationManager) {
-                tg.LocationManager.getLocation((data) => {
-                    if (data) {
-                        userLocation = { lat: data.latitude, lon: data.longitude };
-                        if (status) status.textContent = "📍 Geolokatsiya aniqlandi!";
-                    }
-                });
-            } else if (navigator.geolocation) {
-                navigator.geolocation.getCurrentPosition(pos => {
-                    userLocation = { lat: pos.coords.latitude, lon: pos.coords.longitude };
-                    if (status) status.textContent = "📍 Geolokatsiya aniqlandi!";
-                });
-            } else {
-                alert("Geolokatsiya qo'llab-quvvatlanmaydi.");
-            }
+            const status = () => document.getElementById("location-status");
+            const say = (t, ok) => { const el = status(); if (el) { el.textContent = t; el.style.color = ok ? "" : "#ef4444"; } };
+            let done = false;
+            const setLoc = (lat, lon) => {
+                if (done) return; done = true;
+                userLocation = { lat: lat, lon: lon };
+                say("📍 Geolokatsiya aniqlandi!", true);
+                refreshQuote();
+            };
+            const browserGeo = () => {
+                if (done) return;
+                if (!navigator.geolocation) { say("Geolokatsiya qo'llab-quvvatlanmaydi.", false); return; }
+                navigator.geolocation.getCurrentPosition(
+                    pos => setLoc(pos.coords.latitude, pos.coords.longitude),
+                    err => {
+                        if (done) return;
+                        say(err && err.code === 1
+                            ? "Joylashuvga ruxsat berilmagan. Telegram/telefon sozlamalaridan ruxsat bering va qayta bosing."
+                            : "Joylashuvni aniqlab bo'lmadi. GPS yoqilganini tekshiring va qayta urinib ko'ring.", false);
+                    },
+                    { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+                );
+            };
+            say("📍 Joylashuv aniqlanmoqda...", true);
+            const LM = tg && tg.LocationManager;
+            if (!LM) { browserGeo(); return; }
+            const ask = () => {
+                if (LM.isLocationAvailable === false) { browserGeo(); return; }
+                if (LM.isAccessRequested && LM.isAccessGranted === false) {
+                    say("Joylashuvga ruxsat berilmagan. Sozlamalar ochilmoqda — ruxsat bering va qayta bosing.", false);
+                    try { LM.openSettings(); } catch (e) {}
+                    browserGeo();
+                    return;
+                }
+                try {
+                    LM.getLocation(data => {
+                        if (data && data.latitude != null) setLoc(data.latitude, data.longitude);
+                        else browserGeo();
+                    });
+                } catch (e) { browserGeo(); }
+            };
+            try { if (LM.isInited) ask(); else LM.init(ask); } catch (e) { browserGeo(); }
+            // Telegram javob bermasa — brauzer geolokatsiyasiga o'tamiz
+            setTimeout(() => { if (!done) browserGeo(); }, 6000);
         }
 
         function toggleCashbackUse(checked) {

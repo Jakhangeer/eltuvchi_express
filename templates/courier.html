@@ -103,6 +103,21 @@
     <link rel="stylesheet" href="/static/css/themes.css?v=3">
 </head>
 <body class="min-h-screen relative text-white" data-ui="glass" data-panel="courier" data-courier-online="{{ 'true' if (courier_profile and courier_profile.is_online) else 'false' }}">
+{% macro earn_box(calc, estimated_note=true) -%}
+{%- if calc -%}
+<div class="rounded-lg p-2 mb-2 text-[11px] leading-relaxed" style="background:rgba(16,185,129,.1);border:1px solid rgba(16,185,129,.25)">
+  <div class="flex justify-between"><span class="text-slate-300">Yetkazish haqidan ulush</span><span class="text-emerald-300 font-semibold">{{ "{:,.0f}".format(calc.base).replace(",", " ") }} so'm</span></div>
+  {%- if calc.pickup_km is not none %}
+  <div class="flex justify-between"><span class="text-slate-300">🧭 Olib borish: {{ "%.1f"|format(calc.pickup_km) }} km{% if calc.pickup_estimated %} (taxminiy){% endif %}</span><span class="text-emerald-300 font-semibold">+{{ "{:,.0f}".format(calc.pickup_bonus).replace(",", " ") }} so'm</span></div>
+  {%- endif %}
+  {%- if calc.dist_km is not none %}
+  <div class="flex justify-between"><span class="text-slate-300">📏 Mijozgacha: {{ "%.1f"|format(calc.dist_km) }} km</span><span class="text-emerald-300 font-semibold">+{{ "{:,.0f}".format(calc.delivery_bonus).replace(",", " ") }} so'm</span></div>
+  {%- endif %}
+  <div class="flex justify-between border-t border-white/10 mt-1 pt-1"><span class="font-bold text-slate-100">Sizning jami haqingiz</span><span class="font-extrabold text-emerald-300">{{ "{:,.0f}".format(calc.total).replace(",", " ") }} so'm</span></div>
+</div>
+{%- endif -%}
+{%- endmacro %}
+
     <script>
         const tg = window.Telegram?.WebApp;
         if (tg) { tg.ready(); tg.expand(); }
@@ -358,7 +373,7 @@
                  data-c-lat="{{ order.delivery_latitude if order.delivery_latitude is not none else '' }}" data-c-lng="{{ order.delivery_longitude if order.delivery_longitude is not none else '' }}"
                  data-address="{{ order.delivery_address }}" data-client-name="{{ order.client.full_name if order.client else '' }}" data-client-phone="{{ order.client.phone_number if order.client else '' }}"
                  data-partner-phone="{{ partner_phones.get(order.partner.user_id, '') if order.partner else '' }}"
-                 data-total="{{ order.total_price or 0 }}" data-fee="{{ order.delivery_fee or 0 }}" data-earn="{{ ((order.delivery_fee or 0) * pct)|round|int }}"
+                 data-total="{{ order.total_price or 0 }}" data-fee="{{ order.delivery_fee or 0 }}" data-earn="{{ order_calc[order.id].total if order_calc and order.id in order_calc else ((order.delivery_fee or 0) * pct)|round|int }}"
                  data-cash="{{ '1' if order.payment_method == 'cash' else '0' }}" data-comment="{{ order.client_comment or '' }}">
                 <p class="font-bold text-sm">#{{ order.id }} — {{ order.partner.brand_name if order.partner else '—' }}</p>
                 <p class="text-xs text-slate-400 mb-2">📍 {{ order.delivery_address }}</p>
@@ -372,7 +387,7 @@
                 {% else %}
                 <p class="text-sm font-bold mb-1 text-sky-300">💳 Karta orqali to'langan — pul yig'ilmaydi</p>
                 {% endif %}
-                <p class="text-xs mb-2 text-emerald-300 font-semibold">Sizning haqingiz: {{ ((order.delivery_fee or 0) * pct)|round|int }} so'm</p>
+                {% if order_calc and order.id in order_calc %}{{ earn_box(order_calc[order.id]) }}{% else %}<p class="text-xs mb-2 text-emerald-300 font-semibold">Sizning haqingiz: {{ ((order.delivery_fee or 0) * pct)|round|int }} so'm</p>{% endif %}
                 <button type="button" data-zmn="open" data-id="{{ order.id }}" class="btn-accept btn-press w-full text-white py-3 rounded-xl text-sm font-extrabold mb-2">🧭 Navigatorni ochish (to'liq ekran)</button>
                 {% set p_lat = order.partner.latitude if order.partner else None %}
                 {% set p_lng = order.partner.longitude if order.partner else None %}
@@ -403,7 +418,7 @@
                     <p class="font-bold text-sm">#{{ order.id }} — {{ order.partner.brand_name if order.partner else '—' }}</p>
                     <p class="text-xs text-slate-400 mb-1">📍 {{ order.delivery_address }}</p>
                     <p class="text-xs text-slate-300 mb-1">🧾 Taom: {{ "%.0f"|format(order.total_price or 0) }} so'm · Yetkazish: {{ "%.0f"|format(order.delivery_fee or 0) }} so'm</p>
-                    <p class="text-xs text-emerald-400 font-semibold mb-1">Yetkazish haqingiz: taxminan {{ "%.0f"|format((order.delivery_fee or 0) * (courier_pct if courier_pct else 0.8)) }} so'm</p>
+                    {% if order_calc and order.id in order_calc %}{{ earn_box(order_calc[order.id]) }}{% else %}<p class="text-xs text-emerald-400 font-semibold mb-1">Yetkazish haqingiz: taxminan {{ "%.0f"|format((order.delivery_fee or 0) * (courier_pct if courier_pct else 0.8)) }} so'm</p>{% endif %}
                     <p class="text-[11px] text-slate-400 mb-1" data-dist-order="{{ order.id }}"
                        data-p-lat="{{ order.partner.latitude if order.partner and order.partner.latitude is not none else '' }}" data-p-lng="{{ order.partner.longitude if order.partner and order.partner.longitude is not none else '' }}"
                        data-c-lat="{{ order.delivery_latitude if order.delivery_latitude is not none else '' }}" data-c-lng="{{ order.delivery_longitude if order.delivery_longitude is not none else '' }}"
@@ -597,7 +612,12 @@
         // ishlamay qoldirmaydi.
         const COURIER_IS_ONLINE = document.body.getAttribute('data-courier-online') === 'true';
 
-        function sendLocation(lat, lng) {
+        let _lastSent = 0, _lastPos = null;
+        function sendLocation(lat, lng, force) {
+            _lastPos = [lat, lng];
+            const now = Date.now();
+            if (!force && now - _lastSent < 3000) return;   // serverni ortiqcha yuklamaslik: 3 soniyada 1 marta
+            _lastSent = now;
             const fd = new FormData();
             fd.append('lat', lat);
             fd.append('lng', lng);
@@ -625,6 +645,8 @@
 
         if (COURIER_IS_ONLINE) {
             startLiveLocationTracking();
+            // Harakatlanmasa ham har 10 soniyada oxirgi joylashuvni yuboramiz — admin xaritasida "signal eski" bo'lib qolmasin
+            setInterval(function () { if (_lastPos && !document.hidden) sendLocation(_lastPos[0], _lastPos[1], true); }, 10000);
         }
     </script>
 

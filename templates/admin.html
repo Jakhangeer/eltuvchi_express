@@ -357,6 +357,48 @@
                         </div>
                     </div>
                     <p class="text-[11px] text-gray-500 -mt-2">Kuryer/hamkor o'z kabinetidan ko'pi bilan nechta plastik karta qo'sha olishini shu yerdan belgilaysiz. Sizning o'z (P2P) kartalaringizga bu cheklov tegmaydi.</p>
+                    <!-- ===== MASOFA (KM) BO'YICHA HISOB-KITOB (yangi) ===== -->
+                    <div class="rounded-xl border-2 border-dashed p-3 space-y-3 dark:border-gray-700" style="border-color:var(--accent)">
+                        <input type="hidden" name="km_form" value="1">
+                        <label class="flex items-center gap-2 text-sm font-bold cursor-pointer">
+                            <input type="checkbox" name="km_pricing_enabled" value="1" {% if system_setting and system_setting.km_pricing_enabled %}checked{% endif %} class="w-4 h-4">
+                            📏 Yetkazish narxini km bo'yicha hisoblash
+                        </label>
+                        <p class="text-[11px] text-gray-500 -mt-1">Yoqilsa: hamkor → mijoz masofasi bo'yicha. O'chiq bo'lsa yoki mijoz joylashuvi yo'q bo'lsa — yuqoridagi "Asosiy Yetkazish Narxi" ishlatiladi.</p>
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-xs font-medium">Radius (km)</label>
+                                <input type="number" step="0.1" min="0" name="km_base_radius" value="{{ system_setting.km_base_radius if system_setting and system_setting.km_base_radius is not none else 3.0 }}" class="w-full mt-1 p-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium">Radius ichida narx (so'm)</label>
+                                <input type="number" step="100" min="0" name="km_base_price" value="{{ system_setting.km_base_price if system_setting and system_setting.km_base_price is not none else 10000 }}" class="w-full mt-1 p-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium">Keyingi har 1 km (so'm)</label>
+                                <input type="number" step="100" min="0" name="km_extra_price" value="{{ system_setting.km_extra_price if system_setting and system_setting.km_extra_price is not none else 2000 }}" class="w-full mt-1 p-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium">Yo'l koeffitsienti</label>
+                                <input type="number" step="0.05" min="1" max="3" name="km_road_factor" value="{{ system_setting.km_road_factor if system_setting and system_setting.km_road_factor is not none else 1.3 }}" class="w-full mt-1 p-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700">
+                            </div>
+                        </div>
+                        <p class="text-[11px] text-gray-500 -mt-1">Masalan: 3 km gacha 10 000, keyin har km 2 000. Masofa to'g'ri chiziqdan × koeffitsient (1.3) bilan yo'l masofasiga yaqinlashtiriladi. Ob-havo koeffitsienti ham qo'llanadi.</p>
+                        <div class="border-t pt-3 dark:border-gray-700">
+                            <p class="text-xs font-bold mb-2">🛵 Kuryerga qo'shimcha haq (ulushga qo'shiladi)</p>
+                            <div class="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label class="block text-xs font-medium">Buyurtmani olishga borish — har km (so'm)</label>
+                                    <input type="number" step="100" min="0" name="courier_pickup_per_km" value="{{ system_setting.courier_pickup_per_km if system_setting and system_setting.courier_pickup_per_km is not none else 0 }}" class="w-full mt-1 p-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-medium">Mijozgacha yetkazish — har km (so'm)</label>
+                                    <input type="number" step="100" min="0" name="courier_delivery_per_km" value="{{ system_setting.courier_delivery_per_km if system_setting and system_setting.courier_delivery_per_km is not none else 0 }}" class="w-full mt-1 p-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700">
+                                </div>
+                            </div>
+                            <p class="text-[11px] text-gray-500 mt-1">Kuryer buyurtmani qabul qilganda uning joylashuvidan hamkorgacha masofa, hamda hamkordan mijozgacha masofa bo'yicha shu summalar kuryer daromadiga qo'shiladi. 0 bo'lsa — qo'shilmaydi.</p>
+                        </div>
+                    </div>
                     <div>
                         <label class="block text-sm font-medium">Ob-havo Sharoiti</label>
                         <select id="weather-select" name="weather_condition" onchange="applyWeatherMultiplier()" class="w-full mt-1 p-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700">
@@ -634,15 +676,22 @@
         <!-- COURIERS -->
 
         <!-- JONLI XARITA -->
-        <div class="card-bg bg-white p-4 rounded-xl shadow-md mb-6">
-            <div class="flex items-center justify-between mb-3">
+        <div id="admin-map-card" class="card-bg bg-white p-4 rounded-xl shadow-md mb-6">
+            <div class="flex items-center justify-between mb-3 gap-2 flex-wrap">
                 <h2 class="theme-title text-lg font-bold text-indigo-700">🗺️ Kuryerlar — Jonli Xarita</h2>
-                <span class="text-xs font-semibold flex items-center gap-1.5">
-                    <span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
-                    <span id="courier-map-count" class="text-gray-500">yuklanmoqda...</span>
-                </span>
+                <div class="flex items-center gap-2">
+                    <span class="text-xs font-semibold flex items-center gap-1.5">
+                        <span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+                        <span id="courier-map-count" class="text-gray-500">yuklanmoqda...</span>
+                    </span>
+                    <button type="button" onclick="adminMapFit()" class="zm-map-btn" title="Hammasini ko'rsatish">🎯 <span class="zm-hide-sm">Hammasi</span></button>
+                    <button type="button" id="admin-map-fs-btn" onclick="toggleAdminMapFullscreen()" class="zm-map-btn" title="To'liq ekran">⛶ <span class="zm-hide-sm">To'liq ekran</span></button>
+                </div>
             </div>
-            <div id="courier-map" style="height: 380px; border-radius: 0.75rem;"></div>
+            <div id="admin-map-body" class="zm-map-body">
+                <div id="courier-map" style="height: 380px; border-radius: 0.75rem;"></div>
+                <div id="admin-map-list" class="zm-map-list"></div>
+            </div>
             <p class="text-[11px] text-gray-400 mt-2">🟢 kuryer bo'sh · 🔴 yo'lda · 🏪 hamkor/do'kon · 📦 faol buyurtma (mijoz manzili). Yuqori o'ngdagi qatlam tugmasi orqali sputnik (yo'ldosh) ko'rinishga o'tish mumkin. Xarita har 5 soniyada o'zi yangilanadi.</p>
         </div>
 
@@ -2166,8 +2215,25 @@
             if (window.UIMode) { UIMode.attachMapTheme(courierMap, darkLayer, lightLayer); } else { darkLayer.addTo(courierMap); }
         }
 
-        function courierDivIcon(transport, busy) {
-            const color = busy ? '#dc2626' : '#16a34a';
+        // ---- To'liq ekran va "hammasini ko'rsatish" ----
+        let adminMapBounds = [];
+        function adminMapFit() {
+            if (courierMap && adminMapBounds.length) courierMap.fitBounds(adminMapBounds, { padding: [40, 40], maxZoom: 16 });
+        }
+        function toggleAdminMapFullscreen(force) {
+            const card = document.getElementById('admin-map-card');
+            if (!card) return;
+            const on = typeof force === 'boolean' ? force : !card.classList.contains('zm-map-full');
+            card.classList.toggle('zm-map-full', on);
+            document.body.style.overflow = on ? 'hidden' : '';
+            const btn = document.getElementById('admin-map-fs-btn');
+            if (btn) btn.innerHTML = on ? '✕ <span class="zm-hide-sm">Yopish</span>' : '⛶ <span class="zm-hide-sm">To\'liq ekran</span>';
+            setTimeout(() => { if (courierMap) { courierMap.invalidateSize(); if (on) adminMapFit(); } }, 80);
+        }
+        document.addEventListener('keydown', e => { if (e.key === 'Escape') toggleAdminMapFullscreen(false); });
+
+        function courierDivIcon(transport, busy, stale) {
+            const color = stale ? '#94a3b8' : (busy ? '#dc2626' : '#16a34a');
             return L.divIcon({
                 html: `<div style="background:${color}; width:28px; height:28px; border-radius:50%; display:flex; align-items:center; justify-content:center; border:2px solid #fff; box-shadow:0 2px 6px rgba(0,0,0,.4); font-size:14px;">${transportEmoji(transport)}</div>`,
                 className: '', iconSize: [28, 28], iconAnchor: [14, 14],
@@ -2188,12 +2254,174 @@
             });
         }
 
-        function refreshCourierLocations() {
+        // ---- JONLI XARITA (real vaqt): kuryerlar harakati, hamkorlar, mijoz manzillari ----
+        const mapLayers = {};            // courier / partner / client / route
+        const mapFilters = { courier: true, partner: true, client: true };
+        const courierTrails = {};        // {id: [[lat,lng],...]}
+        const trailLines = {};
+        const routeLines = {};
+        const markerAnim = {};           // silliq harakat
+        let lastMapData = null;
+        let mapPollTimer = null;
+        let mapLastOk = 0;
+
+        function ensureMapLayers() {
+            if (!courierMap || mapLayers.courier) return;
+            ['route', 'partner', 'client', 'courier'].forEach(k => { mapLayers[k] = L.layerGroup().addTo(courierMap); });
+            // Legend (xarita ichida, pastki chap)
+            const legend = L.control({ position: 'bottomleft' });
+            legend.onAdd = function () {
+                const d = L.DomUtil.create('div', 'zm-map-legend');
+                d.innerHTML = '<label><input type="checkbox" data-f="courier" checked> 🛵 Kuryerlar <b id="ml-c">0</b></label>' +
+                              '<label><input type="checkbox" data-f="partner" checked> 🏪 Hamkorlar <b id="ml-p">0</b></label>' +
+                              '<label><input type="checkbox" data-f="client" checked> 📦 Mijozlar <b id="ml-o">0</b></label>' +
+                              '<div class="zm-ml-sub">🟢 bo\'sh · 🔴 yo\'lda · ⚪ signal eski</div>';
+                L.DomEvent.disableClickPropagation(d);
+                d.querySelectorAll('input').forEach(i => i.addEventListener('change', () => {
+                    mapFilters[i.dataset.f] = i.checked;
+                    if (lastMapData) renderLiveMap(lastMapData, false);
+                }));
+                return d;
+            };
+            legend.addTo(courierMap);
+        }
+
+        function animateMarker(id, marker, to) {
+            const from = marker.getLatLng();
+            if (Math.abs(from.lat - to[0]) < 1e-7 && Math.abs(from.lng - to[1]) < 1e-7) return;
+            if (markerAnim[id]) cancelAnimationFrame(markerAnim[id]);
+            const t0 = performance.now(), dur = 2500;
+            const step = now => {
+                const k = Math.min(1, (now - t0) / dur);
+                const e = k < .5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
+                marker.setLatLng([from.lat + (to[0] - from.lat) * e, from.lng + (to[1] - from.lng) * e]);
+                if (k < 1) markerAnim[id] = requestAnimationFrame(step); else delete markerAnim[id];
+            };
+            markerAnim[id] = requestAnimationFrame(step);
+        }
+
+        function ageText(sec) {
+            if (sec == null) return '—';
+            if (sec < 60) return sec + ' soniya oldin';
+            if (sec < 3600) return Math.round(sec / 60) + ' daqiqa oldin';
+            return Math.round(sec / 3600) + ' soat oldin';
+        }
+
+        function renderLiveMap(data, fit) {
+            if (!courierMap) return;
+            ensureMapLayers();
+            const bounds = [];
+            adminMapBounds = bounds;
+
+            // ---- KURYERLAR ----
+            const seenC = new Set();
+            data.couriers.forEach(c => {
+                seenC.add(c.courier_id);
+                bounds.push([c.lat, c.lng]);
+                const popup = `<b>${esc(c.full_name)}</b> ${transportEmoji(c.transport_type)}<br>${esc(c.phone_number)}<br>` +
+                    (c.busy ? `🛵 Buyurtma #${c.active_order_id}<br>📍 ${esc(c.active_order_address || '')}` : "🟢 Bo'sh") +
+                    `<br><span style="color:#64748b;font-size:11px">📡 ${ageText(c.age_seconds)}${c.stale ? ' (signal eski)' : ''}</span>`;
+                const icon = courierDivIcon(c.transport_type, c.busy, c.stale);
+                let m = courierMarkers[c.courier_id];
+                if (m) {
+                    animateMarker('c' + c.courier_id, m, [c.lat, c.lng]);
+                    m.setIcon(icon); m.getPopup().setContent(popup);
+                } else {
+                    m = L.marker([c.lat, c.lng], { icon: icon, zIndexOffset: 1000 }).bindPopup(popup);
+                    courierMarkers[c.courier_id] = m;
+                }
+                if (mapFilters.courier) { if (!mapLayers.courier.hasLayer(m)) m.addTo(mapLayers.courier); } else mapLayers.courier.removeLayer(m);
+
+                // iz (so'nggi 25 nuqta)
+                const tr = courierTrails[c.courier_id] = courierTrails[c.courier_id] || [];
+                const last = tr[tr.length - 1];
+                if (!last || last[0] !== c.lat || last[1] !== c.lng) tr.push([c.lat, c.lng]);
+                if (tr.length > 25) tr.shift();
+                if (trailLines[c.courier_id]) trailLines[c.courier_id].setLatLngs(tr);
+                else trailLines[c.courier_id] = L.polyline(tr, { color: '#6366f1', weight: 3, opacity: .45 }).addTo(mapLayers.courier);
+                if (!mapFilters.courier) mapLayers.courier.removeLayer(trailLines[c.courier_id]); else if (!mapLayers.courier.hasLayer(trailLines[c.courier_id])) trailLines[c.courier_id].addTo(mapLayers.courier);
+
+                // yo'l chizig'i: kuryer -> mijoz
+                if (c.busy && c.dest_lat != null && c.dest_lng != null) {
+                    const pts = [[c.lat, c.lng], [c.dest_lat, c.dest_lng]];
+                    if (routeLines[c.courier_id]) routeLines[c.courier_id].setLatLngs(pts);
+                    else routeLines[c.courier_id] = L.polyline(pts, { color: '#dc2626', weight: 2.5, dashArray: '6 8', opacity: .8 });
+                    if (!mapLayers.route.hasLayer(routeLines[c.courier_id])) routeLines[c.courier_id].addTo(mapLayers.route);
+                } else if (routeLines[c.courier_id]) { mapLayers.route.removeLayer(routeLines[c.courier_id]); }
+            });
+            Object.keys(courierMarkers).forEach(id => {
+                if (!seenC.has(Number(id))) {
+                    mapLayers.courier.removeLayer(courierMarkers[id]); delete courierMarkers[id];
+                    if (trailLines[id]) { mapLayers.courier.removeLayer(trailLines[id]); delete trailLines[id]; }
+                    if (routeLines[id]) { mapLayers.route.removeLayer(routeLines[id]); delete routeLines[id]; }
+                    delete courierTrails[id];
+                }
+            });
+
+            // ---- HAMKORLAR ----
+            const seenP = new Set();
+            data.partners.forEach(p => {
+                seenP.add(p.partner_id);
+                bounds.push([p.lat, p.lng]);
+                const popup = `<b>🏪 ${esc(p.name)}</b><br>${esc(p.category || '')}<br>${esc(p.address || '')}<br>` + (p.is_open ? "🟢 Ochiq" : "🔴 Yopiq");
+                let m = partnerMarkers[p.partner_id];
+                if (m) { m.setIcon(shopDivIcon(p.is_open)); m.getPopup().setContent(popup); }
+                else { m = L.marker([p.lat, p.lng], { icon: shopDivIcon(p.is_open) }).bindPopup(popup); partnerMarkers[p.partner_id] = m; }
+                if (mapFilters.partner) { if (!mapLayers.partner.hasLayer(m)) m.addTo(mapLayers.partner); } else mapLayers.partner.removeLayer(m);
+            });
+            Object.keys(partnerMarkers).forEach(id => { if (!seenP.has(Number(id))) { mapLayers.partner.removeLayer(partnerMarkers[id]); delete partnerMarkers[id]; } });
+
+            // ---- MIJOZLAR (faol buyurtma manzillari) ----
+            const seenO = new Set();
+            data.active_clients.forEach(o => {
+                seenO.add(o.order_id);
+                bounds.push([o.lat, o.lng]);
+                const stLabel = STATUS_LABELS[o.status] || o.status;
+                const popup = `<b>📦 Buyurtma #${o.order_id}</b> — ${esc(stLabel)}<br>${esc(o.client_name || '')}${o.client_phone ? ' · ' + esc(o.client_phone) : ''}<br>${esc(o.delivery_address || '')}<br>🏪 ${esc(o.partner_name || '')}`;
+                let m = clientMarkers[o.order_id];
+                if (m) { m.setLatLng([o.lat, o.lng]); m.getPopup().setContent(popup); }
+                else { m = L.marker([o.lat, o.lng], { icon: clientDivIcon() }).bindPopup(popup); clientMarkers[o.order_id] = m; }
+                if (mapFilters.client) { if (!mapLayers.client.hasLayer(m)) m.addTo(mapLayers.client); } else mapLayers.client.removeLayer(m);
+            });
+            Object.keys(clientMarkers).forEach(id => { if (!seenO.has(Number(id))) { mapLayers.client.removeLayer(clientMarkers[id]); delete clientMarkers[id]; } });
+
+            // hisoblagichlar
+            const set = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
+            set('ml-c', data.couriers.length); set('ml-p', data.partners.length); set('ml-o', data.active_clients.length);
+            renderMapList(data);
+
+            if (fit && courierMapFirstLoad && bounds.length > 0) {
+                courierMap.fitBounds(bounds, { padding: [30, 30] });
+                courierMapFirstLoad = false;
+            }
+        }
+
+        // To'liq ekran rejimidagi yon ro'yxat: kuryerlar va ularning holati
+        function renderMapList(data) {
+            const el = document.getElementById('admin-map-list');
+            if (!el) return;
+            const rows = data.couriers.slice().sort((a, b) => (b.busy - a.busy) || String(a.full_name).localeCompare(String(b.full_name)));
+            el.innerHTML = '<div class="zm-ml-title">🛵 Kuryerlar (' + rows.length + ')</div>' + (rows.length ? rows.map(c =>
+                `<button type="button" class="zm-ml-row" onclick="focusCourier(${c.courier_id})">
+                    <span class="zm-dot ${c.stale ? 'st' : (c.busy ? 'bz' : 'fr')}"></span>
+                    <span class="zm-ml-name">${esc(c.full_name)}</span>
+                    <span class="zm-ml-meta">${c.busy ? '#' + c.active_order_id : "bo'sh"} · ${ageText(c.age_seconds)}</span>
+                </button>`).join('') : '<div class="zm-ml-empty">Hozircha online kuryer yo\'q</div>');
+        }
+        function focusCourier(id) {
+            const m = courierMarkers[id];
+            if (m && courierMap) { courierMap.setView(m.getLatLng(), Math.max(courierMap.getZoom(), 15)); m.openPopup(); }
+        }
+
+        function refreshCourierLocations(force) {
+            if (document.hidden && !force) return;
             const url = '/admin/couriers/live-locations' + (ADMIN_ACTIVE_CITY_ID !== null ? ('?city_id=' + ADMIN_ACTIVE_CITY_ID) : '');
-            fetch(url, { credentials: 'same-origin' })
+            fetch(url, { credentials: 'same-origin', cache: 'no-store' })
                 .then(res => res.ok ? res.json() : null)
                 .then(data => {
                     if (!data) return;
+                    mapLastOk = Date.now();
+                    lastMapData = data;
 
                     document.querySelectorAll('.gps-dot').forEach(dot => {
                         dot.classList.remove('bg-green-500', 'bg-red-500');
@@ -2209,82 +2437,17 @@
                     });
 
                     const countEl = document.getElementById('courier-map-count');
-                    if (countEl) countEl.textContent = `${data.couriers.length} ta online kuryer · ${data.partners.length} ta hamkor · ${data.active_clients.length} ta faol buyurtma`;
+                    if (countEl) countEl.textContent = `${data.couriers.length} ta kuryer · ${data.partners.length} ta hamkor · ${data.active_clients.length} ta faol buyurtma · ${new Date().toLocaleTimeString('uz-UZ')}`;
 
-                    if (!courierMap) return;
-                    const bounds = [];
-
-                    // ---- KURYERLAR ----
-                    const seenCouriers = new Set();
-                    data.couriers.forEach(c => {
-                        seenCouriers.add(c.courier_id);
-                        bounds.push([c.lat, c.lng]);
-                        const popupText = `<b>${esc(c.full_name)}</b> ${transportEmoji(c.transport_type)}<br>${esc(c.phone_number)}<br>` +
-                            (c.busy ? `🛵 Buyurtma #${c.active_order_id}<br>📍 ${esc(c.active_order_address || '')}` : "🟢 Bo'sh");
-                        if (courierMarkers[c.courier_id]) {
-                            courierMarkers[c.courier_id].setLatLng([c.lat, c.lng]);
-                            courierMarkers[c.courier_id].setIcon(courierDivIcon(c.transport_type, c.busy));
-                            courierMarkers[c.courier_id].getPopup().setContent(popupText);
-                        } else {
-                            courierMarkers[c.courier_id] = L.marker([c.lat, c.lng], { icon: courierDivIcon(c.transport_type, c.busy) })
-                                .addTo(courierMap).bindPopup(popupText);
-                        }
-                    });
-                    Object.keys(courierMarkers).forEach(id => {
-                        if (!seenCouriers.has(Number(id))) {
-                            courierMap.removeLayer(courierMarkers[id]);
-                            delete courierMarkers[id];
-                        }
-                    });
-
-                    // ---- HAMKORLAR / DO'KONLAR (joylashuvi statik, faqat belgi qo'yiladi) ----
-                    const seenPartners = new Set();
-                    data.partners.forEach(p => {
-                        seenPartners.add(p.partner_id);
-                        bounds.push([p.lat, p.lng]);
-                        const popupText = `<b>🏪 ${esc(p.name)}</b><br>${esc(p.category || '')}<br>${esc(p.address || '')}<br>` + (p.is_open ? "🟢 Ochiq" : "🔴 Yopiq");
-                        if (partnerMarkers[p.partner_id]) {
-                            partnerMarkers[p.partner_id].setIcon(shopDivIcon(p.is_open));
-                            partnerMarkers[p.partner_id].getPopup().setContent(popupText);
-                        } else {
-                            partnerMarkers[p.partner_id] = L.marker([p.lat, p.lng], { icon: shopDivIcon(p.is_open) })
-                                .addTo(courierMap).bindPopup(popupText);
-                        }
-                    });
-                    Object.keys(partnerMarkers).forEach(id => {
-                        if (!seenPartners.has(Number(id))) {
-                            courierMap.removeLayer(partnerMarkers[id]);
-                            delete partnerMarkers[id];
-                        }
-                    });
-
-                    // ---- FAOL BUYURTMALAR — MIJOZ YETKAZISH NUQTASI ----
-                    const seenClients = new Set();
-                    data.active_clients.forEach(o => {
-                        seenClients.add(o.order_id);
-                        const popupText = `<b>📦 Buyurtma #${o.order_id}</b><br>${esc(o.client_name || '')}<br>${esc(o.delivery_address || '')}<br>🏪 ${esc(o.partner_name || '')}`;
-                        if (clientMarkers[o.order_id]) {
-                            clientMarkers[o.order_id].setLatLng([o.lat, o.lng]);
-                            clientMarkers[o.order_id].getPopup().setContent(popupText);
-                        } else {
-                            clientMarkers[o.order_id] = L.marker([o.lat, o.lng], { icon: clientDivIcon() })
-                                .addTo(courierMap).bindPopup(popupText);
-                        }
-                    });
-                    Object.keys(clientMarkers).forEach(id => {
-                        if (!seenClients.has(Number(id))) {
-                            courierMap.removeLayer(clientMarkers[id]);
-                            delete clientMarkers[id];
-                        }
-                    });
-
-                    if (courierMapFirstLoad && bounds.length > 0) {
-                        courierMap.fitBounds(bounds, { padding: [30, 30] });
-                        courierMapFirstLoad = false;
-                    }
+                    renderLiveMap(data, true);
                 })
-                .catch(e => console.error('Kuryerlar xaritasini yangilashda xatolik', e));
+                .catch(e => {
+                    console.error('Kuryerlar xaritasini yangilashda xatolik', e);
+                    const countEl = document.getElementById('courier-map-count');
+                    if (countEl && Date.now() - mapLastOk > 15000) countEl.textContent = '⚠️ Aloqa uzildi — qayta ulanmoqda...';
+                });
         }
+        document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshCourierLocations(true); });
 
         function showCourierOnMap(courierId) {
             showPage('kuryerlar');
@@ -2672,7 +2835,7 @@
 
             if (document.getElementById('courier-map')) initCourierMap();
             refreshCourierLocations();
-            setInterval(refreshCourierLocations, 5000);
+            setInterval(refreshCourierLocations, 3000);
 
             refreshOrders();
             setInterval(refreshOrders, 8000);

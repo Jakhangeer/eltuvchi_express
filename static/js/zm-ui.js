@@ -5,6 +5,17 @@
  * JS API: ZMTheme.setAccent('emerald') | ZMTheme.get() | ZMTheme.ACCENTS
  */
 (function () {
+    // Zaxira: themes.css yuklanmagan/eskirgan keshda bo'lsa ham tugma va oyna ishlasin
+    (function () {
+        try {
+            var CRIT = ".zm-set-btn { display: inline-flex; align-items: center; justify-content: center; width: 38px; height: 38px; flex-shrink: 0; border-radius: 12px; border: 1px solid rgba(255,255,255,.28); background: rgba(255,255,255,.14); color: #fff; font-size: 17px; line-height: 1; cursor: pointer; -webkit-tap-highlight-color: transparent; transition: transform .15s ease, background-color .2s ease; } .zm-set-btn:hover { background: rgba(255,255,255,.26); } .zm-set-btn:active { transform: scale(.92); } .zm-set-btn.zm-fab { position: fixed; top: 12px; right: 12px; z-index: 9990; background: rgba(255,255,255,.9); color: #0F172A; border-color: rgba(148,163,184,.4); box-shadow: 0 4px 20px rgba(0,0,0,.12); } html[data-mode=\"dark\"] .zm-set-btn.zm-fab { background: rgba(30,32,48,.9); color: #fff; border-color: rgba(255,255,255,.14); } .zm-pop-back { position: fixed; inset: 0; z-index: 99998; background: rgba(2,6,23,.35); display: none; } .zm-pop-back.open { display: block; } .zm-pop { position: fixed; z-index: 99999; width: min(330px, calc(100vw - 20px)); max-height: calc(100vh - 24px); overflow: auto; background: #fff; color: #0F172A; border: 1px solid #E2E8F0; border-radius: 18px; padding: 14px; box-shadow: 0 24px 60px -12px rgba(15,23,42,.35); font-family: 'Plus Jakarta Sans', 'Inter', -apple-system, sans-serif; display: none; text-align: left; } .zm-pop.open { display: block; animation: zmPop .18s ease both; } @keyframes zmPop { from { opacity: 0; transform: translateY(-6px) scale(.98); } to { opacity: 1; transform: none; } } html[data-mode=\"dark\"] .zm-pop { background: #14151f; color: #e5e7eb; border-color: rgba(255,255,255,.1); } .zm-pop h4 { font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; opacity: .6; margin: 12px 2px 7px; } .zm-pop h4:first-child { margin-top: 0; } .zm-row { display: flex; gap: 6px; } .zm-seg { flex: 1; padding: 9px 6px; border-radius: 11px; border: 1px solid rgba(148,163,184,.35); background: transparent; color: inherit; font-weight: 700; font-size: 13px; cursor: pointer; } .zm-seg.on { background: linear-gradient(135deg, var(--accent), var(--accent-dark)); color: #fff; border-color: transparent; } .zm-sw { display: grid; grid-template-columns: repeat(5, 1fr); gap: 9px; padding: 2px; } .zm-sw button { aspect-ratio: 1; border-radius: 50%; border: 3px solid transparent; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.25), inset 0 0 0 2px rgba(255,255,255,.55); transition: transform .12s ease; } .zm-sw button:hover { transform: scale(1.1); } .zm-sw button.on { border-color: #0F172A; transform: scale(1.08); } html[data-mode=\"dark\"] .zm-sw button.on { border-color: #fff; } .zm-bgs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; } .zm-bgs button { height: 40px; border-radius: 10px; border: 2px solid transparent; cursor: pointer; font-size: 10px; font-weight: 800; color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.7); } .zm-bgs button.on { border-color: var(--accent); } .zm-langs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; } .zm-langs button { text-align: left; padding: 8px 10px; border-radius: 10px; border: 1px solid rgba(148,163,184,.35); background: transparent; color: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; } .zm-langs button.on { background: var(--accent-soft); border-color: var(--accent); font-weight: 800; } @media (max-width: 520px) { .zm-pop { left: 10px !important; right: 10px !important; top: auto !important; bottom: 10px; width: auto; } }";
+            var st = document.createElement('style'); st.id = 'zm-critical'; st.textContent = CRIT;
+            (document.head || document.documentElement).appendChild(st);
+            var has = false, ls = document.getElementsByTagName('link');
+            for (var i = 0; i < ls.length; i++) if ((ls[i].getAttribute('href') || '').indexOf('themes.css') > -1) has = true;
+            if (!has) { var l = document.createElement('link'); l.rel = 'stylesheet'; l.href = '/static/css/themes.css?v=3'; (document.head || document.documentElement).appendChild(l); }
+        } catch (e) {}
+    })();
     'use strict';
     var KEY = 'zm_accent', root = document.documentElement;
     window.UI_MODE_NO_FAB = true; // ui-mode.js ning o'z suzuvchi tugmasi o'rniga umumiy oyna ishlatiladi
@@ -140,9 +151,16 @@
         for (var i = 0; i < mounts.length; i++) (function (m) {
             m.classList.add('zm-set-btn'); m.setAttribute('type', 'button');
             if (!m.textContent.trim()) m.textContent = '🎨';
-            m.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); open(m, m.getAttribute('data-zm-settings') || 'all'); });
         })(mounts[i]);
         apply(read());
     }
+    // Delegatsiya: tugma keyin qo'shilsa yoki boshqa skript bosishni to'ssa ham ishlaydi
+    document.addEventListener('click', function (e) {
+        var m = e.target && e.target.closest ? e.target.closest('[data-zm-settings]') : null;
+        if (!m) return;
+        e.preventDefault(); e.stopPropagation();
+        if (pop && pop.classList.contains('open') && curBtn === m) { close(); return; }
+        open(m, m.getAttribute('data-zm-settings') || 'all');
+    }, true);
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();

@@ -262,6 +262,12 @@ class Order(Base):
     # bo'lsa — NULL qoladi, xarita shunchaki bu buyurtmani ko'rsatmaydi.
     delivery_latitude = Column(Float, nullable=True)
     delivery_longitude = Column(Float, nullable=True)
+    # Masofa (km): hamkor -> mijoz va kuryer -> hamkor (qabul qilinganda) hamda
+    # shularga tegishli kuryerga qo'shimcha haq (buyurtma yaratilgan paytdagi narxlarda qotiriladi)
+    distance_km = Column(Float, nullable=True)
+    pickup_distance_km = Column(Float, nullable=True)
+    courier_km_bonus = Column(Float, nullable=True, default=0.0)
+    courier_pickup_bonus = Column(Float, nullable=True, default=0.0)
 
     # ---- P2P (KARTADAN-KARTAGA) TO'LOV TEKSHIRUVI ----
     # payment_method == "p2p" bo'lgan buyurtmalar uchun: mijoz pulni
@@ -339,6 +345,23 @@ class SystemSetting(Base):
     weather_condition = Column(Enum(WeatherCondition), default=WeatherCondition.CLEAR)
     weather_multiplier = Column(Float, default=1.0)
     auto_weather_pricing = Column(Boolean, default=True)
+
+    # ---- MASOFA (KM) BO'YICHA HISOB-KITOB (admin belgilaydi) ----
+    # Yoqilganda mijozning yetkazish narxi: hamkor -> mijoz masofasi
+    # km_base_radius km gacha km_base_price, undan keyingi HAR km uchun
+    # km_extra_price qo'shiladi. O'chiq bo'lsa yoki koordinata yo'q bo'lsa —
+    # eski tekis narx (base_delivery_fee) ishlatiladi.
+    km_pricing_enabled = Column(Boolean, default=False)
+    km_base_radius = Column(Float, default=3.0)
+    km_base_price = Column(Float, default=10000.0)
+    km_extra_price = Column(Float, default=2000.0)
+    # To'g'ri chiziq masofasini yo'l masofasiga aylantiruvchi koeffitsient
+    km_road_factor = Column(Float, default=1.3)
+    # Kuryerga QO'SHIMCHA haq (yetkazish narxidan olinadigan ulushga qo'shiladi):
+    #  - courier_delivery_per_km: hamkor -> mijoz masofasining har km uchun
+    #  - courier_pickup_per_km: kuryer -> hamkor (buyurtmani olishga borish) har km uchun
+    courier_delivery_per_km = Column(Float, default=0.0)
+    courier_pickup_per_km = Column(Float, default=0.0)
 
     # Yetkazish narxining necha foizi kuryerga tegishli ekani (qolgani egasiga qoladi).
     # Masalan 80.0 = yetkazish narxining 80%i kuryerga, 20%i egasiga.

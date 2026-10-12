@@ -16,7 +16,7 @@ from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, text, extract, or_, inspect as sa_inspect
+from sqlalchemy import select, func, text, extract, or_, and_, inspect as sa_inspect
 from sqlalchemy.schema import CreateColumn
 from sqlalchemy.orm import selectinload
 
@@ -1055,7 +1055,7 @@ async def admin_dashboard(
                 commission = o.total_price * rate
                 partner_pay += o.total_price - commission
                 commission_income += commission
-                c_pay = o.delivery_fee * courier_pct
+                c_pay = _courier_earning(o, courier_pct)
                 courier_pay += c_pay
                 delivery_income += o.delivery_fee - c_pay
 
@@ -1248,6 +1248,14 @@ async def update_settings(
     courier_share_percent: float = Form(...),
     max_cards_per_courier: int = Form(3),
     max_cards_per_partner: int = Form(3),
+    km_form: Optional[str] = Form(None),
+    km_pricing_enabled: Optional[str] = Form(None),
+    km_base_radius: Optional[float] = Form(None),
+    km_base_price: Optional[float] = Form(None),
+    km_extra_price: Optional[float] = Form(None),
+    km_road_factor: Optional[float] = Form(None),
+    courier_delivery_per_km: Optional[float] = Form(None),
+    courier_pickup_per_km: Optional[float] = Form(None),
     db: AsyncSession = Depends(get_db),
 ):
     try:
@@ -1282,6 +1290,23 @@ async def update_settings(
         setting.courier_share_percent = courier_share_percent
         setting.max_cards_per_courier = max_cards_per_courier
         setting.max_cards_per_partner = max_cards_per_partner
+
+    # ---- Masofa (km) sozlamalari — mavjud sozlamalar yonida YANGI blok ----
+    if km_form:
+        for label, val in (("Radius", km_base_radius), ("Radius ichidagi narx", km_base_price),
+                           ("Har keyingi km narxi", km_extra_price), ("Kuryer: yetkazish km haqi", courier_delivery_per_km),
+                           ("Kuryer: olib borish km haqi", courier_pickup_per_km)):
+            if val is not None and val < 0:
+                raise HTTPException(status_code=400, detail=f"{label} manfiy bo'lishi mumkin emas")
+        if km_road_factor is not None and not (1.0 <= km_road_factor <= 3.0):
+            raise HTTPException(status_code=400, detail="Yo'l koeffitsienti 1.0 dan 3.0 gacha bo'lishi kerak")
+        setting.km_pricing_enabled = bool(km_pricing_enabled)
+        if km_base_radius is not None: setting.km_base_radius = km_base_radius
+        if km_base_price is not None: setting.km_base_price = km_base_price
+        if km_extra_price is not None: setting.km_extra_price = km_extra_price
+        if km_road_factor is not None: setting.km_road_factor = km_road_factor
+        if courier_delivery_per_km is not None: setting.courier_delivery_per_km = courier_delivery_per_km
+        if courier_pickup_per_km is not None: setting.courier_pickup_per_km = courier_pickup_per_km
 
     await db.commit()
     return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
@@ -1508,7 +1533,7 @@ async def apply_cod_delivery_financials(db: AsyncSession, order: Order) -> None:
     setting = await _get_or_create_setting(db)
     courier_pct = setting.courier_share_percent / 100
 
-    courier_earning = order.delivery_fee * courier_pct
+    courier_earning = _courier_earning(order, courier_pct)
     courier_owes = (order.total_price + order.delivery_fee) - courier_earning
 
     # YANGI MODEL (oldindan to'ldiriladigan balans):
@@ -1722,6 +1747,87 @@ COURIER_LOCATION_FRESHNESS_MINUTES = 15
 MAP_LOCATION_FRESHNESS_MINUTES = 2
 
 
+# ==================== MASOFA (KM) BO'YICHA NARX VA KURYER HAQI ====================
+def _road_km(setting, lat1, lon1, lat2, lon2) -> Optional[float]:
+    """Ikki nuqta orasidagi TAXMINIY yo'l masofasi (km) — to'g'ri chiziq x admin
+    belgilagan koeffitsient. Koordinata yo'q/noto'g'ri bo'lsa None."""
+    try:
+        if None in (lat1, lon1, lat2, lon2):
+            return None
+        lat1, lon1, lat2, lon2 = float(lat1), float(lon1), float(lat2), float(lon2)
+    except (TypeError, ValueError):
+        return None
+    if (lat1 == 0 and lon1 == 0) or (lat2 == 0 and lon2 == 0):
+        return None
+    factor = (getattr(setting, "km_road_factor", None) or 1.3) if setting else 1.3
+    return round(_haversine_km(lat1, lon1, lat2, lon2) * max(factor, 1.0), 2)
+
+
+def _round100(x: float) -> float:
+    return float(round(x / 100.0) * 100)
+
+
+def compute_delivery_fee(setting, distance_km: Optional[float]) -> float:
+    """Mijoz to'laydigan yetkazish narxi. Km tizimi yoqilgan va masofa ma'lum
+    bo'lsa: radius ichida belgilangan summa, undan keyingi har km uchun qo'shimcha.
+    Aks holda eski tekis narx. Ob-havo koeffitsienti ikkala holatda ham qo'llanadi."""
+    if not setting:
+        return 10000.0
+    weather = setting.weather_multiplier or 1.0
+    flat = (setting.base_delivery_fee or 0.0) * weather
+    if not getattr(setting, "km_pricing_enabled", False) or distance_km is None:
+        return flat
+    radius = setting.km_base_radius or 0.0
+    base = setting.km_base_price or 0.0
+    extra = setting.km_extra_price or 0.0
+    fee = base + max(0.0, distance_km - radius) * extra
+    return _round100(fee * weather)
+
+
+def compute_courier_km_bonus(setting, distance_km: Optional[float]) -> float:
+    """Mijoz qanchalik uzoqda bo'lsa, kuryerga shunchalik qo'shimcha haq (hamkor -> mijoz)."""
+    if not setting or distance_km is None:
+        return 0.0
+    return _round100(distance_km * (getattr(setting, "courier_delivery_per_km", 0.0) or 0.0))
+
+
+def compute_courier_pickup_bonus(setting, pickup_km: Optional[float]) -> float:
+    """Kuryer buyurtmani olish uchun boradigan masofa uchun haq (kuryer -> hamkor)."""
+    if not setting or pickup_km is None:
+        return 0.0
+    return _round100(pickup_km * (getattr(setting, "courier_pickup_per_km", 0.0) or 0.0))
+
+
+def _courier_earning(order, courier_pct: float) -> float:
+    """Kuryerning shu buyurtmadan JAMI daromadi: yetkazish narxidagi ulush + masofa uchun qo'shimcha haqlar."""
+    return (
+        (order.delivery_fee or 0.0) * courier_pct
+        + (getattr(order, "courier_km_bonus", 0.0) or 0.0)
+        + (getattr(order, "courier_pickup_bonus", 0.0) or 0.0)
+    )
+
+
+async def _apply_pickup_bonus(db: AsyncSession, order: Order, courier_id: int, setting=None):
+    """Kuryer buyurtmani olganda — uning oxirgi joylashuvidan hamkorgacha masofani hisoblab, haqni yozib qo'yadi."""
+    try:
+        setting = setting or await _get_or_create_setting(db)
+        cp = (await db.execute(select(CourierProfile).where(CourierProfile.user_id == courier_id))).scalars().first()
+        partner = order.partner if "partner" in order.__dict__ else (
+            await db.execute(select(PartnerProfile).where(PartnerProfile.id == order.partner_id))
+        ).scalars().first()
+        if not cp or not partner:
+            return
+        km = _road_km(setting, cp.latitude, cp.longitude, partner.latitude, partner.longitude)
+        if km is None:
+            return
+        order.pickup_distance_km = km
+        order.courier_pickup_bonus = compute_courier_pickup_bonus(setting, km)
+    except Exception as e:
+        print(f"[PICKUP BONUS XATOSI] {e!r}")
+
+
+
+
 def _courier_cash_hold(order: Order, courier_pct: float) -> float:
     """Shu buyurtmani yetkazish uchun kuryer balansida KAMIDA qancha pul
     bo'lishi kerak. Naqd buyurtmada = platforma ulushi (jami - kuryer haqi);
@@ -1730,7 +1836,7 @@ def _courier_cash_hold(order: Order, courier_pct: float) -> float:
         return 0.0
     fee = order.delivery_fee or 0
     total = (order.total_price or 0) + fee
-    return max(0.0, total - fee * courier_pct)
+    return max(0.0, total - _courier_earning(order, courier_pct))
 
 
 async def _courier_reserved_hold(db: AsyncSession, courier_id: int, courier_pct: float) -> float:
@@ -1813,6 +1919,7 @@ async def auto_assign_nearest_courier(db: AsyncSession, order: Order) -> Optiona
 
     order.courier_id = nearest.id
     order.status = OrderStatus.ON_THE_WAY
+    await _apply_pickup_bonus(db, order, nearest.id)
     await db.commit()
     return nearest
 
@@ -2071,6 +2178,8 @@ async def update_order_status_and_courier(
 
     if courier_id:
         order.courier_id = courier_id
+        if not order.courier_pickup_bonus:
+            await _apply_pickup_bonus(db, order, courier_id)
 
     # Avtomatik moliyaviy hisob-kitob — FAQAT buyurtma ENDI, shu safar
     # birinchi marta "Yetkazildi" bo'layotgan bo'lsa (aks holda takroriy
@@ -2148,6 +2257,8 @@ async def update_order_status_json(
 
     if courier_id:
         order.courier_id = courier_id
+        if not order.courier_pickup_bonus:
+            await _apply_pickup_bonus(db, order, courier_id)
 
     if order.status == OrderStatus.DELIVERED and old_status != OrderStatus.DELIVERED:
         await apply_cod_delivery_financials(db, order)
@@ -2458,16 +2569,23 @@ async def couriers_live_locations(
     freshness_cutoff = datetime.utcnow() - timedelta(minutes=MAP_LOCATION_FRESHNESS_MINUTES)
 
     # ---- 1) KURYERLAR ----
+    # ONLINE va joylashuvi yangi kuryerlar + yo'lda buyurtmasi bor kuryerlar
+    # (signali biroz eskirgan bo'lsa ham — "stale" belgisi bilan, xaritadan yo'qolib qolmasin).
+    busy_courier_ids = select(Order.courier_id).where(
+        Order.status == OrderStatus.ON_THE_WAY, Order.courier_id.is_not(None)
+    )
     courier_stmt = (
         select(User)
         .join(CourierProfile, CourierProfile.user_id == User.id)
         .options(selectinload(User.courier_profile))
         .where(
             User.is_active == True,
-            CourierProfile.is_online == True,
             CourierProfile.latitude.is_not(None),
             CourierProfile.longitude.is_not(None),
-            CourierProfile.location_updated_at >= freshness_cutoff,
+            or_(
+                and_(CourierProfile.is_online == True, CourierProfile.location_updated_at >= freshness_cutoff),
+                User.id.in_(busy_courier_ids),
+            ),
         )
     )
     if active_city_id is not None:
@@ -2484,10 +2602,12 @@ async def couriers_live_locations(
         for o in orders_result.scalars().all():
             active_orders_map[o.courier_id] = o
 
+    now_utc = datetime.utcnow()
     couriers_data = []
     for c in couriers:
         cp = c.courier_profile
         active_order = active_orders_map.get(c.id)
+        age = (now_utc - cp.location_updated_at).total_seconds() if cp.location_updated_at else None
         couriers_data.append({
             "courier_id": c.id,
             "full_name": c.full_name,
@@ -2496,9 +2616,14 @@ async def couriers_live_locations(
             "lat": cp.latitude,
             "lng": cp.longitude,
             "updated_at": cp.location_updated_at.isoformat() if cp.location_updated_at else None,
+            "age_seconds": int(age) if age is not None else None,
+            "stale": (age is None or age > MAP_LOCATION_FRESHNESS_MINUTES * 60),
+            "online": bool(cp.is_online),
             "busy": active_order is not None,
             "active_order_id": active_order.id if active_order else None,
             "active_order_address": active_order.delivery_address if active_order else None,
+            "dest_lat": active_order.delivery_latitude if active_order else None,
+            "dest_lng": active_order.delivery_longitude if active_order else None,
         })
 
     # ---- 2) HAMKORLAR / DO'KONLAR ----
@@ -2546,11 +2671,16 @@ async def couriers_live_locations(
             "delivery_address": o.delivery_address,
             "lat": o.delivery_latitude,
             "lng": o.delivery_longitude,
+            "courier_id": o.courier_id,
+            "client_phone": o.client.phone_number if o.client else None,
         }
         for o in active_orders
     ]
 
-    return JSONResponse({"couriers": couriers_data, "partners": partners_data, "active_clients": clients_data})
+    return JSONResponse({
+        "couriers": couriers_data, "partners": partners_data, "active_clients": clients_data,
+        "server_time": datetime.utcnow().isoformat(),
+    })
 
 
 @couriers_router.post("/create")
@@ -4697,6 +4827,35 @@ async def shop_partners(city_id: int, db: AsyncSession = Depends(get_db)):
     ]
 
 
+class DeliveryQuoteBody(BaseModel):
+    init_data: str
+    partner_id: int
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+
+
+@shop_router.post("/delivery-quote")
+async def shop_delivery_quote(body: DeliveryQuoteBody, db: AsyncSession = Depends(get_db)):
+    """Savatda mijozga yetkazish narxini (masofa bo'yicha) ko'rsatish uchun.
+    Buyurtma yaratilganda narx baribir serverda QAYTA hisoblanadi."""
+    _get_telegram_user_or_403(body.init_data)
+    setting = await _get_or_create_setting(db)
+    partner = (await db.execute(select(PartnerProfile).where(PartnerProfile.id == body.partner_id))).scalars().first()
+    if not partner:
+        raise HTTPException(status_code=404, detail="Do'kon topilmadi")
+    km = _road_km(setting, partner.latitude, partner.longitude, body.lat, body.lng)
+    fee = compute_delivery_fee(setting, km)
+    return {
+        "delivery_fee": fee,
+        "distance_km": km,
+        "by_distance": bool(getattr(setting, "km_pricing_enabled", False) and km is not None),
+        "km_pricing_enabled": bool(getattr(setting, "km_pricing_enabled", False)),
+        "base_radius": setting.km_base_radius,
+        "base_price": setting.km_base_price,
+        "extra_price": setting.km_extra_price,
+    }
+
+
 @shop_router.get("/products")
 async def shop_products(partner_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
@@ -4815,6 +4974,15 @@ async def shop_create_order(body: ShopOrderBody, db: AsyncSession = Depends(get_
         except (TypeError, ValueError):
             delivery_lat, delivery_lng = None, None
 
+    # ---- MASOFA (KM) BO'YICHA NARX: hamkor -> mijoz ----
+    distance_km = None
+    courier_km_bonus = 0.0
+    if (body.order_type or "delivery") == "delivery":
+        distance_km = _road_km(setting, partner.latitude, partner.longitude, delivery_lat, delivery_lng)
+        if distance_km is not None:
+            delivery_fee = compute_delivery_fee(setting, distance_km)
+            courier_km_bonus = compute_courier_km_bonus(setting, distance_km)
+
     payment_method = body.payment_method or "cash"
 
     # ---- P2P TO'LOV: avval FAOL karta borligini tekshiramiz ----
@@ -4837,6 +5005,8 @@ async def shop_create_order(body: ShopOrderBody, db: AsyncSession = Depends(get_
         delivery_address=body.delivery_address,
         delivery_latitude=delivery_lat,
         delivery_longitude=delivery_lng,
+        distance_km=distance_km,
+        courier_km_bonus=courier_km_bonus,
         client_comment=body.comment,
         order_type=body.order_type or "delivery",
         payment_method=payment_method,
@@ -5458,6 +5628,29 @@ async def courier_dashboard(
     reserved = await _courier_reserved_hold(db, current_user.id, courier_pct)
     free_balance = ((courier_profile.balance if courier_profile else 0) or 0) - reserved
     order_holds = {o.id: _courier_cash_hold(o, courier_pct) for o in available_orders}
+    # ---- Har buyurtma uchun kuryer daromadi: ulush + masofa (km) uchun qo'shimcha haqlar ----
+    order_calc = {}
+    for o in list(my_active_orders) + list(available_orders):
+        base = (o.delivery_fee or 0.0) * courier_pct
+        dist = o.distance_km
+        if dist is None and o.partner:
+            dist = _road_km(setting, o.partner.latitude, o.partner.longitude, o.delivery_latitude, o.delivery_longitude)
+        d_bonus = o.courier_km_bonus or 0.0
+        if not d_bonus and dist is not None and o.status == OrderStatus.LOOKING_FOR_COURIER:
+            d_bonus = compute_courier_km_bonus(setting, dist)
+        pk = o.pickup_distance_km
+        p_bonus = o.courier_pickup_bonus or 0.0
+        estimated = False
+        if pk is None and o.partner and courier_profile:
+            pk = _road_km(setting, courier_profile.latitude, courier_profile.longitude, o.partner.latitude, o.partner.longitude)
+            if pk is not None:
+                p_bonus = compute_courier_pickup_bonus(setting, pk)
+                estimated = True
+        order_calc[o.id] = {
+            "base": round(base), "dist_km": dist, "delivery_bonus": round(d_bonus),
+            "pickup_km": pk, "pickup_bonus": round(p_bonus), "pickup_estimated": estimated,
+            "total": round(base + d_bonus + p_bonus),
+        }
     topup_card = await _get_topup_card_info(db)
     my_receipts = (await db.execute(
         select(PaymentReceipt).options(selectinload(PaymentReceipt.user), selectinload(PaymentReceipt.partner))
@@ -5474,6 +5667,7 @@ async def courier_dashboard(
             "courier_profile": courier_profile,
             "available_orders": available_orders,
             "order_holds": order_holds,
+            "order_calc": order_calc,
             "free_balance": free_balance,
             "reserved_hold": reserved,
             "topup_card": topup_card,
@@ -5709,6 +5903,7 @@ async def courier_accept_order(
     # NAQD buyurtma: balans yetishi shart (yo'ldagi boshqa naqd buyurtmalar band qilgan summa ayiriladi).
     setting = await _get_or_create_setting(db)
     courier_pct = (setting.courier_share_percent or 0) / 100
+    await _apply_pickup_bonus(db, order, current_user.id, setting)
     need = _courier_cash_hold(order, courier_pct)
     if need > 0:
         reserved = await _courier_reserved_hold(db, current_user.id, courier_pct)

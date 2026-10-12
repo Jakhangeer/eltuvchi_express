@@ -256,3 +256,39 @@ body.zmn-lock { overflow: hidden; }
 .zm-fs-x { width: 38px; height: 38px; border-radius: 12px; border: 0; background: rgba(255,255,255,.12); color: #fff; font-size: 16px; cursor: pointer; }
 .zm-fs-bottom { position: absolute; left: 0; right: 0; bottom: 0; z-index: 1000; background: rgba(15,17,28,.96); border-top-left-radius: 22px; border-top-right-radius: 22px; padding: 14px 16px max(14px, env(safe-area-inset-bottom)); max-width: 720px; margin: 0 auto; box-shadow: 0 -10px 34px rgba(0,0,0,.5); }
 .zm-fs-call { background: #16a34a; color: #fff; font-weight: 800; font-size: 13px; padding: 11px 16px; border-radius: 14px; text-decoration: none; }
+
+/* Eslatma qutisi (chek yuborish) — kunduzi och sariq, tunda to'q sariq tusli */
+.zm-note-amber { border-color: #fcd34d; background: #fffbeb; }
+body.theme-dark .zm-note-amber, body.dark .zm-note-amber { border-color: rgba(245,158,11,.4) !important; background: rgba(245,158,11,.12) !important; }
+body.theme-dark input[type="file"], body.theme-dark input, body.theme-dark select, body.theme-dark textarea { color-scheme: dark; }
+body.theme-dark .bg-slate-900, body.theme-dark .bg-slate-800 { background-color: #1e2235 !important; }
+
+/* ---- Admin jonli xarita: to'liq ekran ---- */
+.zm-map-btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 10px; font-size: 12px; font-weight: 700; cursor: pointer;
+    border: 1px solid rgba(148,163,184,.4); background: transparent; color: inherit; transition: background-color .15s ease, transform .1s ease; }
+.zm-map-btn:hover { background: rgba(148,163,184,.15); }
+.zm-map-btn:active { transform: scale(.96); }
+#admin-map-card.zm-map-full { position: fixed; inset: 0; z-index: 9500; margin: 0 !important; border-radius: 0 !important; display: flex; flex-direction: column;
+    padding: max(10px, env(safe-area-inset-top)) 10px max(10px, env(safe-area-inset-bottom)); width: 100vw; height: 100dvh; }
+#admin-map-card.zm-map-full #courier-map { flex: 1 1 auto; height: auto !important; min-height: 0; border-radius: 12px !important; }
+#admin-map-card.zm-map-full .zm-map-body { flex: 1 1 auto; min-height: 0; display: flex; gap: 10px; }
+#admin-map-card.zm-map-full .zm-map-list { display: block; }
+#admin-map-card.zm-map-full .leaflet-control-layers { margin-top: 10px; }
+@media (max-width: 520px) { .zm-hide-sm { display: none; } }
+
+.zm-map-body { position: relative; }
+.zm-map-list { display: none; width: 260px; flex: 0 0 260px; overflow-y: auto; border-radius: 12px; padding: 8px; background: rgba(148,163,184,.1); border: 1px solid rgba(148,163,184,.25); }
+@media (max-width: 760px) { #admin-map-card.zm-map-full .zm-map-body { flex-direction: column; } #admin-map-card.zm-map-full .zm-map-list { flex: 0 0 120px; width: auto; } }
+.zm-ml-title { font-size: 12px; font-weight: 800; margin: 2px 4px 6px; }
+.zm-ml-row { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; padding: 7px 8px; border-radius: 9px; border: 0; background: transparent; color: inherit; cursor: pointer; font-size: 12px; }
+.zm-ml-row:hover { background: rgba(148,163,184,.18); }
+.zm-ml-name { font-weight: 700; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.zm-ml-meta { font-size: 10px; opacity: .65; white-space: nowrap; }
+.zm-ml-empty { font-size: 12px; opacity: .6; padding: 8px; }
+.zm-dot { width: 9px; height: 9px; border-radius: 50%; flex: 0 0 9px; }
+.zm-dot.fr { background: #16a34a; } .zm-dot.bz { background: #dc2626; } .zm-dot.st { background: #94a3b8; }
+.zm-map-legend { background: rgba(255,255,255,.92); color: #0F172A; padding: 8px 10px; border-radius: 10px; font-size: 11px; font-weight: 600; box-shadow: 0 2px 10px rgba(0,0,0,.2); line-height: 1.7; }
+html[data-mode="dark"] .zm-map-legend { background: rgba(20,21,31,.92); color: #e5e7eb; }
+.zm-map-legend label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.zm-map-legend b { margin-left: auto; padding-left: 8px; }
+.zm-ml-sub { font-size: 10px; opacity: .7; border-top: 1px solid rgba(148,163,184,.3); margin-top: 3px; padding-top: 3px; }
