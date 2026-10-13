@@ -8,6 +8,7 @@
     <script src="/static/js/ui-mode.js?v=3"></script>
     <script src="/static/js/i18n.js?v=3"></script>
     <script src="/static/js/zm-ui.js?v=3"></script>
+    <script src="/static/js/zm-live.js?v=3"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Leaflet — faol buyurtmada do'kon (olib ketish) va mijoz (yetkazish) nuqtalarini xaritada ko'rsatish uchun -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -187,7 +188,7 @@
 
         <!-- BALANS (oldindan to'ldiriladigan hisob) -->
         {% set bal = (courier_profile.balance or 0) if courier_profile else 0 %}
-        <div class="glass fade-up stagger-1 rounded-2xl p-4" id="balance-card">
+        <div class="glass fade-up stagger-1 rounded-2xl p-4" id="balance-card" data-live="c-balance">
             <div class="flex justify-between items-center">
                 <span class="text-xs text-slate-400">💰 Sizning balansingiz</span>
                 <span class="text-xl font-extrabold {% if bal > 0 %}text-emerald-400{% elif bal < 0 %}text-rose-400{% else %}text-slate-300{% endif %}">
@@ -361,6 +362,7 @@
             </form>
         </div>
 
+        <div data-live="c-active">
         {% if my_active_orders %}
         <!-- HOZIR YETKAZAYOTGAN BUYURTMA -->
         <div class="active-order-card glass-strong fade-up stagger-2 p-5 rounded-2xl">
@@ -408,9 +410,10 @@
             {% endfor %}
         </div>
         {% endif %}
+        </div>
 
         <!-- BO'SH BUYURTMALAR -->
-        <div class="glass fade-up stagger-3 p-5 rounded-2xl">
+        <div class="glass fade-up stagger-3 p-5 rounded-2xl" data-live="c-available">
             <h2 class="text-base font-extrabold mb-3 flex items-center gap-2">📦 Yangi Buyurtmalar</h2>
             <div class="space-y-2">
                 {% for order in available_orders %}
@@ -446,7 +449,7 @@
         </div>
 
         <!-- TARIX -->
-        <div class="glass fade-up stagger-4 p-5 rounded-2xl">
+        <div class="glass fade-up stagger-4 p-5 rounded-2xl" data-live="c-history">
             <h2 class="text-base font-extrabold mb-3">📜 Yetkazilgan Buyurtmalar</h2>
             <div class="space-y-1 max-h-64 overflow-y-auto">
                 {% for order in history_orders %}
@@ -799,7 +802,10 @@
                 window.Telegram.WebApp.HapticFeedback.notificationOccurred('success');
             }
             if (overlay) overlay.classList.remove('hidden');
-            setTimeout(function () { window.location.reload(); }, 2200);
+            setTimeout(function () {
+                if (overlay) overlay.classList.add('hidden');
+                if (window.ZMLive) ZMLive.refresh(true); else window.location.reload();
+            }, 2200);
         }
 
         function pollForNewOrders() {
@@ -829,8 +835,14 @@
 
         if (COURIER_IS_ONLINE) {
             pollForNewOrders();
-            setInterval(pollForNewOrders, 8000);
+            setInterval(pollForNewOrders, 5000);
         }
+        if (window.ZMLive) ZMLive.start({ interval: 4000 });
+        // Yangi blok almashtirilgach: mini-xaritalar, masofalar va navigatorni qayta ulaymiz
+        document.addEventListener('zm:live-updated', function () {
+            try { initCourierOrderMaps(); } catch (e) {}
+            if (window.ZMNav && ZMNav.refreshUI) ZMNav.refreshUI();
+        });
     </script>
 </body>
 </html>

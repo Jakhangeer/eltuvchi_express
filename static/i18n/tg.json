@@ -952,5 +952,19 @@
 "Joylashuvga ruxsat berilmagan. Telegram/telefon sozlamalaridan ruxsat bering va qayta bosing.": "Иҷозат ба ҷойгиршавӣ дода нашудааст. Дар танзимоти Telegram/телефон иҷозат диҳед ва дубора пахш кунед.",
 "Joylashuvni aniqlab bo'lmadi. GPS yoqilganini tekshiring va qayta urinib ko'ring.": "Ҷойгиршавӣ муайян нашуд. GPS-ро санҷед ва дубора кӯшиш кунед.",
 "Joylashuvga ruxsat berilmagan. Sozlamalar ochilmoqda — ruxsat bering va qayta bosing.": "Иҷозат нест. Танзимот кушода мешавад — иҷозат диҳед ва дубора пахш кунед.",
-"To'liq ekran": "Экрани пурра"
+"To'liq ekran": "Экрани пурра",
+"Tungi rejimga o'tish": "Гузариш ба реҷаи шабона",
+"Kunduzgi rejimga o'tish": "Гузариш ба реҷаи рӯзона",
+"{n} ta mahsulot — {n} so'm": "{n} маҳсулот — {n} сум",
+"Masalan: Podyezd kodi 123...": "Масалан: рамзи даромадгоҳ 123...",
+"Kuryer: {n}": "Курьер: {n}",
+"Kutilmoqda": "Мунтазир аст",
+"ZooMo Hamkori": "Шарики ZooMo",
+"Buyurtmani jonli kuzatish": "Пайгирии зиндаи фармоиш",
+"❌ Buyurtma bekor qilindi": "❌ Фармоиш бекор шуд",
+"🕐 Buyurtma qabul qilinishi kutilmoqda": "🕐 Интизори қабули фармоиш",
+"✅ Do'kon buyurtmani qabul qildi": "✅ Муассиса фармоишро қабул кард",
+"🍳 Buyurtma tayyorlanmoqda": "🍳 Фармоиш омода карда истодааст",
+"🔎 Kuryer qidirilmoqda": "🔎 Курьер ҷустуҷӯ мешавад",
+"Buyurtma holati yangilandi": "Ҳолати фармоиш нав шуд"
 }

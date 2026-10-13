@@ -8,6 +8,7 @@
     <script src="/static/js/ui-mode.js?v=3"></script>
     <script src="/static/js/i18n.js?v=3"></script>
     <script src="/static/js/zm-ui.js?v=3"></script>
+    <script src="/static/js/zm-live.js?v=3"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Leaflet — buyurtmani olib ketgan kuryerni jonli kuzatish uchun -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -117,7 +118,7 @@
         </div>
         <div class="absolute bottom-20 left-0 right-0 text-center px-6">
             <p class="text-xl font-extrabold text-grad">Yangi buyurtma keldi!</p>
-            <button onclick="window.location.reload()" class="mt-4 btn-press accent-bg accent-glow text-white px-6 py-2.5 rounded-xl text-sm font-bold">Ko'rish →</button>
+            <button onclick="closeNewOrderAlert()" class="mt-4 btn-press accent-bg accent-glow text-white px-6 py-2.5 rounded-xl text-sm font-bold">Ko'rish →</button>
         </div>
     </div>
 
@@ -174,7 +175,7 @@
         <!-- BUGUNGI BUYURTMALAR -->
         <div id="tab-orders" class="tab-page fade-up glass p-5 rounded-2xl">
             <h2 class="text-base font-extrabold mb-4 text-grad">📦 Bugungi Buyurtmalar</h2>
-            <div id="orders-grid">
+            <div id="orders-grid" data-live="p-orders">
                 {% for order in today_orders %}
                 <div class="rounded-xl p-3.5 {% if order.status.value == 'created' %}order-card-new{% endif %}" style="background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.09);"
                      data-order-id="{{ order.id }}" data-time="{{ order.created_at|uzb_time('%d.%m.%Y %H:%M') }}" data-brand="{{ partner.brand_name }}"
@@ -241,7 +242,7 @@
         <!-- BUYURTMALAR TARIXI -->
         <div id="tab-history" class="tab-page fade-up glass p-5 rounded-2xl hidden">
             <h2 class="text-base font-extrabold mb-4 text-grad">📜 Buyurtmalar Tarixi</h2>
-            <div class="space-y-2 max-h-[32rem] overflow-y-auto">
+            <div class="space-y-2 max-h-[32rem] overflow-y-auto" data-live="p-history">
                 {% for order in history_orders %}
                 <div class="rounded-xl p-3 text-sm" style="background:rgba(255,255,255,.03); border:1px solid rgba(255,255,255,.08);">
                     <div class="flex justify-between items-center">
@@ -656,6 +657,15 @@
                 window.Telegram.WebApp.HapticFeedback.notificationOccurred('success');
             }
             if (overlay) overlay.classList.remove('hidden');
+            // Buyurtmalar ro'yxati sahifani yangilamasdan darhol yangilanadi
+            if (window.ZMLive) ZMLive.refresh(true);
+        }
+        function closeNewOrderAlert() {
+            const overlay = document.getElementById('new-order-alert-overlay');
+            if (overlay) overlay.classList.add('hidden');
+            if (window.ZMLive) ZMLive.refresh(true);
+            try { showTab('orders'); } catch (e) {}
+            window.scrollTo({ top: 0, behavior: 'smooth' });
         }
 
         // ==================== KURYERNI JONLI KUZATISH ====================
@@ -787,7 +797,8 @@
             updateLiveClock();
             setInterval(updateLiveClock, 1000);
             checkForNewOrders();
-            setInterval(checkForNewOrders, 15000);
+            setInterval(checkForNewOrders, 5000);
+            if (window.ZMLive) ZMLive.start({ interval: 4000 });
         });
     </script>
 </body>

@@ -939,5 +939,19 @@
 "Joylashuvga ruxsat berilmagan. Telegram/telefon sozlamalaridan ruxsat bering va qayta bosing.": "Location access denied. Allow it in Telegram/phone settings and tap again.",
 "Joylashuvni aniqlab bo'lmadi. GPS yoqilganini tekshiring va qayta urinib ko'ring.": "Could not detect location. Make sure GPS is on and try again.",
 "Joylashuvga ruxsat berilmagan. Sozlamalar ochilmoqda — ruxsat bering va qayta bosing.": "Location access denied. Opening settings — allow it and tap again.",
-"To'liq ekran": "Fullscreen"
+"To'liq ekran": "Fullscreen",
+"Tungi rejimga o'tish": "Switch to dark mode",
+"Kunduzgi rejimga o'tish": "Switch to light mode",
+"{n} ta mahsulot — {n} so'm": "{n} items — {n} UZS",
+"Masalan: Podyezd kodi 123...": "E.g. entrance code 123...",
+"Kuryer: {n}": "Courier: {n}",
+"Kutilmoqda": "Pending",
+"ZooMo Hamkori": "ZooMo Partner",
+"Buyurtmani jonli kuzatish": "Track order live",
+"❌ Buyurtma bekor qilindi": "❌ Order cancelled",
+"🕐 Buyurtma qabul qilinishi kutilmoqda": "🕐 Waiting for the order to be accepted",
+"✅ Do'kon buyurtmani qabul qildi": "✅ The venue accepted your order",
+"🍳 Buyurtma tayyorlanmoqda": "🍳 Your order is being prepared",
+"🔎 Kuryer qidirilmoqda": "🔎 Looking for a courier",
+"Buyurtma holati yangilandi": "Order status updated"
 }

@@ -952,5 +952,19 @@
 "Joylashuvga ruxsat berilmagan. Telegram/telefon sozlamalaridan ruxsat bering va qayta bosing.": "Нет доступа к геолокации. Разрешите её в настройках Telegram/телефона и нажмите снова.",
 "Joylashuvni aniqlab bo'lmadi. GPS yoqilganini tekshiring va qayta urinib ko'ring.": "Не удалось определить местоположение. Проверьте, что GPS включён, и попробуйте снова.",
 "Joylashuvga ruxsat berilmagan. Sozlamalar ochilmoqda — ruxsat bering va qayta bosing.": "Нет доступа к геолокации. Открываются настройки — разрешите и нажмите снова.",
-"To'liq ekran": "Во весь экран"
+"To'liq ekran": "Во весь экран",
+"Tungi rejimga o'tish": "Включить ночной режим",
+"Kunduzgi rejimga o'tish": "Включить дневной режим",
+"{n} ta mahsulot — {n} so'm": "{n} товаров — {n} сум",
+"Masalan: Podyezd kodi 123...": "Например: код подъезда 123...",
+"Kuryer: {n}": "Курьер: {n}",
+"Kutilmoqda": "Ожидается",
+"ZooMo Hamkori": "Партнёр ZooMo",
+"Buyurtmani jonli kuzatish": "Следить за заказом онлайн",
+"❌ Buyurtma bekor qilindi": "❌ Заказ отменён",
+"🕐 Buyurtma qabul qilinishi kutilmoqda": "🕐 Ожидаем принятия заказа",
+"✅ Do'kon buyurtmani qabul qildi": "✅ Заведение приняло заказ",
+"🍳 Buyurtma tayyorlanmoqda": "🍳 Заказ готовится",
+"🔎 Kuryer qidirilmoqda": "🔎 Ищем курьера",
+"Buyurtma holati yangilandi": "Статус заказа обновлён"
 }

@@ -292,3 +292,33 @@ html[data-mode="dark"] .zm-map-legend { background: rgba(20,21,31,.92); color: #
 .zm-map-legend label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
 .zm-map-legend b { margin-left: auto; padding-left: 8px; }
 .zm-ml-sub { font-size: 10px; opacity: .7; border-top: 1px solid rgba(148,163,184,.3); margin-top: 3px; padding-top: 3px; }
+
+/* Jonli yangilanishda (zm-live) almashtirilgan bloklarda kirish animatsiyasi qayta o'ynamasin */
+[data-live-swapped] .fade-up, [data-live-swapped] [class*="stagger-"], [data-live-swapped].fade-up { animation: none !important; opacity: 1 !important; transform: none !important; }
+
+/* Ikonkalar (Font Awesome) har qanday mavzuda o'z shriftini saqlasin — tungi rejimda shakli buzilmasin */
+.fa-solid, .fas, .fa { font-family: "Font Awesome 6 Free" !important; font-weight: 900 !important; font-style: normal; }
+.fa-regular, .far { font-family: "Font Awesome 6 Free" !important; font-weight: 400 !important; font-style: normal; }
+.fa-brands, .fab { font-family: "Font Awesome 6 Brands" !important; font-weight: 400 !important; font-style: normal; }
+
+/* Mijoz sarlavhasidagi tugmalar — barchasi bir xil o'lchamda va shaklda */
+#app-header .zm-set-btn, #app-header [data-mode-toggle], #app-header button.w-9 {
+    width: 36px !important; height: 36px !important; min-width: 36px; border-radius: 16px !important; flex: 0 0 36px;
+    font-size: 14px; line-height: 1; padding: 0;
+    border: 0 !important; background: #f1f5f9; color: #334155; box-shadow: none;
+}
+#app-header .zm-set-btn:hover, #app-header [data-mode-toggle]:hover, #app-header button.w-9:hover { background: #e2e8f0; }
+body.theme-dark #app-header .zm-set-btn, body.theme-dark #app-header [data-mode-toggle], body.theme-dark #app-header button.w-9 {
+    background: rgba(255,255,255,.08) !important; color: #e2e8f0 !important;
+}
+body.theme-dark #app-header button i { color: inherit; }
+body.theme-dark #app-header button i.text-rose-500 { color: #fb7185 !important; }
+#app-header .zm-set-btn:not(.hidden), #app-header [data-mode-toggle]:not(.hidden), #app-header button.w-9:not(.hidden) { display: inline-flex; align-items: center; justify-content: center; }
+
+/* Admin xaritasi to'liq ekranda: yopish tugmasi doim ko'rinadi (suzuvchi) */
+.zm-map-close-fab { position: fixed; top: max(12px, env(safe-area-inset-top)); right: 12px; z-index: 100001; width: 44px; height: 44px; border-radius: 14px; border: 1px solid rgba(148,163,184,.5);
+    background: rgba(15,23,42,.88); color: #fff; font-size: 20px; font-weight: 800; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 6px 20px rgba(0,0,0,.35); }
+html[data-mode="light"] .zm-map-close-fab { background: rgba(255,255,255,.95); color: #0f172a; }
+#admin-map-card.zm-map-full { z-index: 100000; background: var(--card-bg-solid, #fff); }
+html[data-mode="dark"] #admin-map-card.zm-map-full { background: #0f1018; }
+#admin-map-card.zm-map-full .leaflet-top.leaflet-right { margin-top: 56px; }

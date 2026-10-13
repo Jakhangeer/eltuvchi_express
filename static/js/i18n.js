@@ -18,7 +18,7 @@
     /* ---------- normalizatsiya ---------- */
     function apos(s) { return s.replace(/\\'/g, "'").replace(/[ʻʼ‘’`´]/g, "'"); }
     function normKey(s) {
-        s = apos(s).replace(/\s+/g, ' ').trim();
+        s = apos(s).replace(/…/g, '...').replace(/\s+/g, ' ').trim();
         return s.replace(/(^|[^A-Za-z\d])\d[\d\s.,]*\d(?![A-Za-z])|(^|[^A-Za-z\d])\d(?![A-Za-z\d])/g, function (m, a, b) { return (a || b || '') + '{n}'; });
     }
     function nums(s) {
@@ -131,8 +131,9 @@
     }
     function walk(node) {
         if (node.nodeType === 3) { txtNode(node); return; }
-        if (node.nodeType !== 1 || SKIP[node.nodeName]) return;
+        if (node.nodeType !== 1 || node.nodeName === 'SCRIPT' || node.nodeName === 'STYLE') return;
         attrs(node);
+        if (SKIP[node.nodeName]) return;
         for (var c = node.firstChild; c; c = c.nextSibling) walk(c);
     }
     function translate(rootEl) {

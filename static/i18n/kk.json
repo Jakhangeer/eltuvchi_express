@@ -952,5 +952,19 @@
 "Joylashuvga ruxsat berilmagan. Telegram/telefon sozlamalaridan ruxsat bering va qayta bosing.": "Геолокацияға рұқсат жоқ. Telegram/телефон баптауларынан рұқсат беріп, қайта басыңыз.",
 "Joylashuvni aniqlab bo'lmadi. GPS yoqilganini tekshiring va qayta urinib ko'ring.": "Орналасуды анықтау мүмкін болмады. GPS қосулы екенін тексеріп, қайта көріңіз.",
 "Joylashuvga ruxsat berilmagan. Sozlamalar ochilmoqda — ruxsat bering va qayta bosing.": "Геолокацияға рұқсат жоқ. Баптаулар ашылуда — рұқсат беріп, қайта басыңыз.",
-"To'liq ekran": "Толық экран"
+"To'liq ekran": "Толық экран",
+"Tungi rejimga o'tish": "Түнгі режимге өту",
+"Kunduzgi rejimga o'tish": "Күндізгі режимге өту",
+"{n} ta mahsulot — {n} so'm": "{n} өнім — {n} сум",
+"Masalan: Podyezd kodi 123...": "Мысалы: кіреберіс коды 123...",
+"Kuryer: {n}": "Курьер: {n}",
+"Kutilmoqda": "Күтілуде",
+"ZooMo Hamkori": "ZooMo серіктесі",
+"Buyurtmani jonli kuzatish": "Тапсырысты тікелей қадағалау",
+"❌ Buyurtma bekor qilindi": "❌ Тапсырыс бас тартылды",
+"🕐 Buyurtma qabul qilinishi kutilmoqda": "🕐 Тапсырыстың қабылдануы күтілуде",
+"✅ Do'kon buyurtmani qabul qildi": "✅ Мекеме тапсырысты қабылдады",
+"🍳 Buyurtma tayyorlanmoqda": "🍳 Тапсырыс дайындалуда",
+"🔎 Kuryer qidirilmoqda": "🔎 Курьер іздестірілуде",
+"Buyurtma holati yangilandi": "Тапсырыс күйі жаңартылды"
 }

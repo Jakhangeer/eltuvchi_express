@@ -63,7 +63,7 @@
            (endi STANDART tema) uchun kuchaytiriladi. Boshqa 3 tema
            (Standart/Oltin/Yashil) o'zgarishsiz, tanlov sifatida qoladi.
            ============================================================ */
-        body.theme-dark, body.theme-dark * { font-family: 'Plus Jakarta Sans', 'Inter', -apple-system, sans-serif; }
+        body.theme-dark, body.theme-dark *:not(i):not(.fa):not(.fas):not(.fa-solid):not(.fa-regular):not(.fa-brands) { font-family: 'Plus Jakarta Sans', 'Inter', -apple-system, sans-serif; }
         body.theme-dark {
             background:
                 radial-gradient(ellipse 800px 500px at 15% -5%, rgba(245,158,11,.10), transparent 60%),
@@ -216,7 +216,7 @@
                     <span id="fav-badge" class="hidden absolute -top-1 -right-1 bg-rose-500 text-white text-[9px] font-bold w-4 h-4 rounded-full flex items-center justify-center">0</span>
                 </button>
                 <button type="button" data-mode-toggle class="bg-slate-100 hover:bg-slate-200 text-slate-700 w-9 h-9 rounded-2xl flex items-center justify-center transition-all active:scale-95 text-sm" aria-label="Rejim"></button>
-                <button type="button" data-zm-settings="lang" class="bg-slate-100 hover:bg-slate-200 text-slate-700 w-9 h-9 rounded-2xl flex items-center justify-center transition-all active:scale-95 text-sm" style="border:0;background:rgba(148,163,184,.18);color:inherit" aria-label="Til">🌐</button>
+                <button type="button" data-zm-settings="lang" class="bg-slate-100 hover:bg-slate-200 text-slate-700 w-9 h-9 rounded-2xl flex items-center justify-center transition-all active:scale-95 text-sm" aria-label="Til">🌐</button>
                 <button onclick="toggleThemeMenu()" class="bg-slate-100 hover:bg-slate-200 text-slate-700 w-9 h-9 rounded-2xl flex items-center justify-center transition-all active:scale-95">
                     <i class="fa-solid fa-palette text-sm"></i>
                 </button>
@@ -420,9 +420,22 @@
 
             pollOrderTracking();
             if (trackingPollTimer) clearInterval(trackingPollTimer);
-            trackingPollTimer = setInterval(pollOrderTracking, 6000);
+            trackingPollTimer = setInterval(pollOrderTracking, 3000);
         }
 
+        let _mmAnim = null;
+        function smoothMoveMarker(marker, to) {
+            const from = marker.getLatLng();
+            if (Math.abs(from.lat - to[0]) < 1e-7 && Math.abs(from.lng - to[1]) < 1e-7) return;
+            if (_mmAnim) cancelAnimationFrame(_mmAnim);
+            const t0 = performance.now(), dur = 2500;
+            const step = now => {
+                const k = Math.min(1, (now - t0) / dur), e = k < .5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
+                marker.setLatLng([from.lat + (to[0] - from.lat) * e, from.lng + (to[1] - from.lng) * e]);
+                if (k < 1) _mmAnim = requestAnimationFrame(step);
+            };
+            _mmAnim = requestAnimationFrame(step);
+        }
         let trackingClientMarker = null, trackingRouteLine = null, trackingUserMoved = false, trackingRouteAt = 0;
         function updateTrackingRoute(from, to) {
             const km = (m) => m < 950 ? Math.round(m / 10) * 10 + ' m' : (m / 1000).toFixed(1) + ' km';
@@ -452,6 +465,11 @@
             trackingOrderId = null;
             trackingUserMoved = false;
             document.body.style.overflow = '';
+            // Keyingi buyurtma uchun xarita toza bo'lsin
+            try {
+                [trackingCourierMarker, trackingPartnerMarker, trackingClientMarker, trackingRouteLine].forEach(l => { if (l && trackingMap) trackingMap.removeLayer(l); });
+            } catch (e) {}
+            trackingCourierMarker = null; trackingPartnerMarker = null; trackingClientMarker = null; trackingRouteLine = null;
         }
 
         // Kuryerning transport turiga qarab xaritadagi belgisi o'zgaradi
@@ -479,11 +497,37 @@
                 const statusEl = document.getElementById('tracking-status-text');
                 if (!infoEl || !statusEl) return;
 
-                if (data.status !== 'on_the_way') {
-                    infoEl.textContent = data.status === 'delivered' ? "✅ Buyurtma yetkazildi!" : "Buyurtma holati o'zgardi";
+                if (data.status === 'delivered' || data.status === 'cancelled') {
+                    infoEl.textContent = data.status === 'delivered' ? "✅ Buyurtma yetkazildi!" : "❌ Buyurtma bekor qilindi";
                     statusEl.textContent = '';
                     if (trackingPollTimer) { clearInterval(trackingPollTimer); trackingPollTimer = null; }
                     if (data.status === 'delivered') setTimeout(closeOrderTracking, 2500);
+                    return;
+                }
+
+                // Kuryer buyurtmani olgunga qadar ham xaritada do'kon va manzil ko'rinadi, holat yangilanib turadi
+                const PRE_STATUS = {
+                    created: "🕐 Buyurtma qabul qilinishi kutilmoqda",
+                    accepted_by_partner: "✅ Do'kon buyurtmani qabul qildi",
+                    preparing: "🍳 Buyurtma tayyorlanmoqda",
+                    looking_for_courier: "🔎 Kuryer qidirilmoqda"
+                };
+                if (data.status !== 'on_the_way') {
+                    infoEl.textContent = PRE_STATUS[data.status] || "Buyurtma holati yangilandi";
+                    statusEl.textContent = '';
+                    if (trackingMap) {
+                        const pts = [];
+                        if (data.partner_location) {
+                            if (!trackingPartnerMarker) trackingPartnerMarker = L.marker([data.partner_location.lat, data.partner_location.lng], { icon: getShopIcon() }).addTo(trackingMap).bindPopup(escTrack(data.partner_name || "Do'kon"));
+                            pts.push([data.partner_location.lat, data.partner_location.lng]);
+                        }
+                        if (data.delivery_location) {
+                            const dp = [data.delivery_location.lat, data.delivery_location.lng];
+                            if (!trackingClientMarker) trackingClientMarker = L.marker(dp, { icon: L.divIcon({ html: '<div style="background:#2563eb;width:32px;height:32px;border-radius:50%;border:3px solid #fff;display:flex;align-items:center;justify-content:center;font-size:16px;box-shadow:0 4px 12px rgba(0,0,0,.5)">🏠</div>', className: '', iconSize: [32, 32], iconAnchor: [16, 16] }) }).addTo(trackingMap);
+                            pts.push(dp);
+                        }
+                        if (!trackingUserMoved && pts.length) { if (pts.length > 1) trackingMap.fitBounds(pts, { padding: [110, 110] }); else trackingMap.setView(pts[0], 15); }
+                    }
                     return;
                 }
 
@@ -499,7 +543,7 @@
                 if (data.courier_location) {
                     const pos = [data.courier_location.lat, data.courier_location.lng];
                     if (trackingCourierMarker) {
-                        trackingCourierMarker.setLatLng(pos);
+                        smoothMoveMarker(trackingCourierMarker, pos);
                         trackingCourierMarker.setIcon(getMotorbikeIcon(data.courier_transport));
                     } else {
                         trackingCourierMarker = L.marker(pos, { icon: getMotorbikeIcon(data.courier_transport) }).addTo(trackingMap);
@@ -678,7 +722,7 @@
                             ${order.courier_name ? `<div class="text-[10px] text-amber-600 mt-1 font-medium"><i class="fa-solid fa-motorcycle mr-1"></i> Kuryer: ${order.courier_name}</div>` : ''}
                             ${order.needs_receipt ? `<div class="mt-2 rounded-lg border p-2 zm-note-amber"><p class="text-[10px] font-bold text-amber-900 mb-1">🧾 To'lov chekini yuboring</p><input type="file" id="receipt-file-${order.id}" accept="image/png,image/jpeg,image/webp" class="w-full text-[10px] mb-1"><button onclick="uploadReceipt(${order.id}, this)" class="w-full bg-amber-500 text-white text-[11px] font-bold py-1.5 rounded-lg">📤 Chekni yuborish</button></div>` : ''}
                             ${order.receipt_pending ? `<div class="text-[10px] text-amber-600 mt-1 font-bold">⏳ Chek ko'rib chiqilmoqda</div>` : ''}
-                            ${order.status === 'on_the_way' ? `<button onclick="openOrderTracking(${order.id})" class="w-full mt-2 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white text-[11px] font-bold py-2 rounded-lg transition-all flex items-center justify-center gap-1.5"><i class="fa-solid fa-location-crosshairs"></i> Kuryerni jonli kuzatish</button>` : ''}
+                            ${['created','accepted_by_partner','preparing','looking_for_courier','on_the_way'].includes(order.status) ? `<button onclick="openOrderTracking(${order.id})" class="w-full mt-2 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white text-[11px] font-bold py-2 rounded-lg transition-all flex items-center justify-center gap-1.5"><i class="fa-solid fa-location-crosshairs"></i> Buyurtmani jonli kuzatish</button>` : ''}
                         </div>`;
                 }).join('');
             }

@@ -228,5 +228,12 @@
         });
     }
     document.addEventListener('DOMContentLoaded', fillDistances);
-    window.ZMNav = { open: open, close: close };
+    function autoOpenFirst() {
+        var first = document.querySelector('[data-nav-order]');
+        if (!first) return;
+        var id = first.getAttribute('data-nav-order'), seen = null;
+        try { seen = sessionStorage.getItem('zm_nav_auto_' + id); } catch (e) {}
+        if (!seen) setTimeout(function () { open(id); }, 400);
+    }
+    window.ZMNav = { open: open, close: close, refreshUI: function () { fillDistances(); autoOpenFirst(); } };
 })();

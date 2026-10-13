@@ -249,7 +249,7 @@
             e.preventDefault(); e.stopImmediatePropagation();
             var btn = f.querySelector('button[type="submit"]'), old = btn && btn.textContent;
             if (btn) { btn.disabled = true; btn.textContent = '🖨 …'; }
-            var done = function () { f.__zmPrinted = true; if (btn) { btn.disabled = false; btn.textContent = old; } f.submit(); };
+            var done = function () { f.__zmPrinted = true; if (btn) { btn.disabled = false; btn.textContent = old; } if (window.ZMLive && f.closest('[data-live]')) ZMLive.submitForm(f); else f.submit(); };
             var order; try { order = readCard(card); } catch (err) { return done(); }
             var guard = setTimeout(done, 9000); // printer javob bermasa ham buyurtma qabul qilinadi
             printOrder(order, { interactive: true }).then(function () { clearTimeout(guard); done(); }, function (err) {
