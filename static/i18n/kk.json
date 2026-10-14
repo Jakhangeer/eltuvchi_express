@@ -1043,5 +1043,13 @@
  "📣 AI xabarlari (bildirishnoma kampaniyalari)": "📣 AI хабарлары (хабарландыру науқандары)",
  "📣 AI xabarlari — bildirishnoma yozish": "📣 AI хабарлары — хабарландыру жазу",
  "Matnni o'zingiz yozasiz. «N soat kirmaganlarga» belgilansa AI avtomatik yuboradi (takror oralig'i bilan); bo'sh qoldirsangiz «Hozir yuborish» bilan butun auditoriyaga bir martalik boradi. Xabar Telegramda bildirishnoma bo'lib keladi.": "Мәтінді өзіңіз жазасыз. «N сағат кірмегендерге» белгіленсе, AI автоматты жібереді (қайталау аралығымен); бос қалдырсаңыз, «Қазір жіберу» бүкіл аудиторияға бір рет жібереді. Хабар Telegram-да хабарландыру болып келеді.",
- "➕ Xabar qo'shish": "➕ Хабар қосу"
+ "➕ Xabar qo'shish": "➕ Хабар қосу",
+ "Bu qurilmada ovoz yozish ishlamaydi. Klaviaturadagi 🎤 tugmasini bosib ayting yoki matn yozing.": "Бұл құрылғыда дауыс жазу жұмыс істемейді. Пернетақтадағы 🎤 басыңыз немесе жазыңыз.",
+ "Eshitilmoqda... gapiring": "Тыңдалып жатыр... сөйлеңіз",
+ "Mikrofonga ruxsat berilmagan. Brauzer/Telegram sozlamasidan ruxsat bering yoki klaviaturadagi 🎤 tugmasini bosing.": "Микрофонға рұқсат жоқ. Браузер/Telegram баптауларынан рұқсат беріңіз немесе пернетақтадағы 🎤 басыңыз.",
+ "Ovoz eshitilmadi. Qayta urinib ko'ring.": "Дыбыс естілмеді. Қайта көріңіз.",
+ "Ovoz xizmatiga ulanib bo'lmadi. Internetni tekshiring yoki matn yozing.": "Дауыс қызметіне қосылу мүмкін емес. Интернетті тексеріңіз немесе жазыңыз.",
+ "Ovoz yozish ishlamadi. Klaviaturadagi 🎤 tugmasini bosib ayting yoki matn yozing.": "Дауыс жазу істемеді. Пернетақтадағы 🎤 басыңыз немесе жазыңыз.",
+ "Mikrofon ishlamasa, klaviaturadagi 🎤 tugmasini bosib ayting.": "Микрофон істемесе, пернетақтадағы 🎤 басып сөйлеңіз.",
+ "Ovoz moduli yuklanmadi. Matn yozing.": "Дауыс модулі жүктелмеді. Жазыңыз."
 }

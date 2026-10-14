@@ -1043,5 +1043,13 @@
  "📣 AI xabarlari (bildirishnoma kampaniyalari)": "📣 Паёмҳои AI (маъракаҳои огоҳинома)",
  "📣 AI xabarlari — bildirishnoma yozish": "📣 Паёмҳои AI — навиштани огоҳинома",
  "Matnni o'zingiz yozasiz. «N soat kirmaganlarga» belgilansa AI avtomatik yuboradi (takror oralig'i bilan); bo'sh qoldirsangiz «Hozir yuborish» bilan butun auditoriyaga bir martalik boradi. Xabar Telegramda bildirishnoma bo'lib keladi.": "Матнро худатон менависед. Агар «N соат надаромадагон» қайд шавад, AI худкор мефиристад (бо фосилаи такрор); агар холӣ монад, «Ҳозир фиристодан» як бор ба тамоми аудитория мефиристад. Паём дар Telegram ҳамчун огоҳинома меояд.",
- "➕ Xabar qo'shish": "➕ Илова кардани паём"
+ "➕ Xabar qo'shish": "➕ Илова кардани паём",
+ "Bu qurilmada ovoz yozish ishlamaydi. Klaviaturadagi 🎤 tugmasini bosib ayting yoki matn yozing.": "Дар ин дастгоҳ сабти овоз кор намекунад. 🎤-и клавиатураро пахш кунед ё нависед.",
+ "Eshitilmoqda... gapiring": "Гӯш карда истодаам... гӯед",
+ "Mikrofonga ruxsat berilmagan. Brauzer/Telegram sozlamasidan ruxsat bering yoki klaviaturadagi 🎤 tugmasini bosing.": "Иҷозати микрофон нест. Дар танзимоти браузер/Telegram иҷозат диҳед ё 🎤-и клавиатураро пахш кунед.",
+ "Ovoz eshitilmadi. Qayta urinib ko'ring.": "Овоз шунида нашуд. Бори дигар кӯшиш кунед.",
+ "Ovoz xizmatiga ulanib bo'lmadi. Internetni tekshiring yoki matn yozing.": "Бо хидмати овоз пайваст шуда наметавонад. Интернетро санҷед ё нависед.",
+ "Ovoz yozish ishlamadi. Klaviaturadagi 🎤 tugmasini bosib ayting yoki matn yozing.": "Сабти овоз кор накард. 🎤-и клавиатураро пахш кунед ё нависед.",
+ "Mikrofon ishlamasa, klaviaturadagi 🎤 tugmasini bosib ayting.": "Агар микрофон кор накунад, 🎤-и клавиатураро пахш карда гӯед.",
+ "Ovoz moduli yuklanmadi. Matn yozing.": "Модули овоз бор нашуд. Нависед."
 }

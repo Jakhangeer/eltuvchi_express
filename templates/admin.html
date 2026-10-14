@@ -331,7 +331,7 @@
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
 
             {% if is_owner %}
-            <div class="card-bg bg-white p-6 rounded-xl shadow-md col-span-1">
+            <div class="card-bg bg-white p-6 rounded-xl shadow-md col-span-1 md:row-span-2 self-start">
                 <h2 class="theme-title text-lg font-bold mb-4 text-indigo-700">⚙️ Tizim Sozlamalari</h2>
                 <form action="/admin/settings" method="POST" class="space-y-4">
                     <div>
@@ -360,7 +360,7 @@
                     </div>
                     <p class="text-[11px] text-gray-500 -mt-2">Kuryer/hamkor o'z kabinetidan ko'pi bilan nechta plastik karta qo'sha olishini shu yerdan belgilaysiz. Sizning o'z (P2P) kartalaringizga bu cheklov tegmaydi.</p>
                     <!-- ===== MASOFA (KM) BO'YICHA HISOB-KITOB (yangi) ===== -->
-                    <div class="rounded-xl border-2 border-dashed p-3 space-y-3 dark:border-gray-700" style="border-color:var(--accent)">
+                    <details class="rounded-xl border-2 border-dashed p-3 dark:border-gray-700" style="border-color:var(--accent)"><summary class="text-sm font-extrabold cursor-pointer">📏 Km bo'yicha hisob-kitob</summary><div class="space-y-3 mt-2">
                         <input type="hidden" name="km_form" value="1">
                         <label class="flex items-center gap-2 text-sm font-bold cursor-pointer">
                             <input type="checkbox" name="km_pricing_enabled" value="1" {% if system_setting and system_setting.km_pricing_enabled %}checked{% endif %} class="w-4 h-4">
@@ -399,13 +399,12 @@
                                 </div>
                             </div>
                             <p class="text-[11px] text-gray-500 mt-1">Kuryer buyurtmani qabul qilganda uning joylashuvidan hamkorgacha masofa, hamda hamkordan mijozgacha masofa bo'yicha shu summalar kuryer daromadiga qo'shiladi. 0 bo'lsa — qo'shilmaydi.</p>
-                        </div>
+                    </div></details>
                     </div>
                     <!-- ===== ZOOMO AI (yoqish / o'chirish) ===== -->
                     {% set _ai = system_setting %}
-                    <div class="rounded-xl border-2 border-dashed p-3 space-y-2 dark:border-gray-700" style="border-color:var(--accent)">
+                    <details class="rounded-xl border-2 border-dashed p-3 dark:border-gray-700" style="border-color:var(--accent)"><summary class="text-sm font-extrabold cursor-pointer">🤖 ZooMo AI boshqaruvi</summary><div class="space-y-2 mt-2">
                         <input type="hidden" name="ai_form" value="1">
-                        <p class="text-sm font-extrabold">🤖 ZooMo AI</p>
                         <label class="flex items-center gap-2 text-sm font-bold cursor-pointer"><input type="checkbox" name="ai_enabled" value="1" {% if not _ai or _ai.ai_enabled is none or _ai.ai_enabled %}checked{% endif %} class="w-4 h-4"> Umumiy: AI yoqilgan (o'chirsangiz hammasi o'chadi)</label>
                         <div class="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-sm">
                             <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" name="ai_client_enabled" value="1" {% if not _ai or _ai.ai_client_enabled is none or _ai.ai_client_enabled %}checked{% endif %} class="w-4 h-4"> 🛍️ Mijoz paneli (niyatni anglash, ovozli buyurtma)</label>
@@ -440,11 +439,25 @@
                             <summary class="font-bold cursor-pointer">📺 LED reklamalarni boshqarish (faqat admin)</summary>
                             <p class="text-[11px] text-gray-500 mt-1">Hamkorlar reklama so'raydi. To'lov kelgach «Tasdiqlash» — AI navbatga qo'yadi (ko'proq to'lagan va kuryerga yaqin reklama ko'proq efir oladi).</p>
                             <div id="admin-led" class="mt-2 space-y-2"></div>
-                            <div class="flex gap-1.5 mt-2"><input id="admin-led-title" maxlength="60" placeholder="ZooMo umumiy reklama" class="flex-1 p-1.5 border rounded dark:bg-gray-800 dark:border-gray-700"><button type="button" onclick="adminLedAdd()" class="px-3 rounded bg-amber-500 text-white font-bold">➕</button></div>
+                            <div class="mt-2 p-2 rounded border dark:border-gray-700 space-y-1.5">
+                                <p class="font-bold">➕ O'z reklamangizni qo'shish</p>
+                                <input id="admin-led-title" maxlength="60" placeholder="Sarlavha (masalan: ZooMo — tez yetkazish)" class="w-full p-1.5 border rounded dark:bg-gray-800 dark:border-gray-700">
+                                <input id="admin-led-text" maxlength="120" placeholder="Matn (ixtiyoriy)" class="w-full p-1.5 border rounded dark:bg-gray-800 dark:border-gray-700">
+                                <div class="flex flex-wrap items-center gap-1.5" id="admin-led-palette">
+                                    {% for c in ['#f59e0b','#ef4444','#ec4899','#8b5cf6','#6366f1','#0ea5e9','#14b8a6','#10b981','#334155','#111827'] %}<button type="button" data-c="{{ c }}" class="w-6 h-6 rounded-full border-2 border-white shadow" style="background:{{ c }}"></button>{% endfor %}
+                                    <input type="color" id="admin-led-color" value="#f59e0b" class="w-8 h-7 p-0 border-0">
+                                </div>
+                                <div class="flex flex-wrap items-center gap-1.5">
+                                    <label>⏱ <input id="admin-led-sec" type="number" min="3" max="120" value="10" class="w-14 p-1 border rounded dark:bg-gray-800 dark:border-gray-700"> soniya</label>
+                                    <label>📏 <input id="admin-led-rad" type="number" min="0.5" max="30" step="0.5" value="30" class="w-14 p-1 border rounded dark:bg-gray-800 dark:border-gray-700"> km</label>
+                                    <label>📅 <input id="admin-led-days" type="number" min="1" max="365" placeholder="∞" class="w-14 p-1 border rounded dark:bg-gray-800 dark:border-gray-700"> kun</label>
+                                    <button type="button" onclick="adminLedAdd()" class="px-3 py-1 rounded bg-amber-500 text-white font-bold">➕ Qo'shish</button>
+                                </div>
+                            </div>
                             <p class="font-bold mt-3">🛵 Kuryerlarda LED yoqilgani</p>
                             <div id="admin-led-couriers" class="mt-1 space-y-1"></div>
                         </details>
-                    </div>
+                    </div></details>
                     <div>
                         <label class="block text-sm font-medium">Ob-havo Sharoiti</label>
                         <select id="weather-select" name="weather_condition" onchange="applyWeatherMultiplier()" class="w-full mt-1 p-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700">
@@ -467,7 +480,23 @@
                  Backend tarafida ham himoyalangan (qarang require_section) —
                  shuning uchun operator hatto to'g'ridan-to'g'ri manzilni
                  chaqirsa ham, yopiq bo'limga kira olmaydi. -->
-            <div class="card-bg bg-white p-6 rounded-xl shadow-md col-span-1 md:col-span-3">
+            <div class="card-bg bg-white p-6 rounded-xl shadow-md col-span-1 md:col-span-2">
+                <h2 class="theme-title text-lg font-bold mb-1 text-indigo-700">🔐 Maxfiy javob (qo'shimcha himoya)</h2>
+                <p class="text-xs text-gray-500 mb-3">Operatorlar panelga, hamkor/kuryerlar esa pul yechish va sozlamalarga kirishda maxfiy javob kiritadi. Unutganlarning javobini shu yerdan tiklang (ular qaytadan o'rnatadi).</p>
+                <div class="flex flex-wrap gap-2 items-center">
+                    <button type="button" onclick="ZMSec.manage()" class="px-3 py-2 rounded-lg bg-indigo-600 text-white text-xs font-bold">🔐 Mening maxfiy javoblarim</button>
+                    {% if is_owner %}
+                    <input id="sec-reset-phone" placeholder="Telefon raqami" class="p-2 border rounded text-xs dark:bg-gray-800 dark:border-gray-700">
+                    <button type="button" onclick="secReset()" class="px-3 py-2 rounded-lg bg-rose-600 text-white text-xs font-bold">♻️ Javobni tiklash</button>
+                    {% endif %}
+                </div>
+            </div>
+            <script>
+            function secReset(){var p=document.getElementById('sec-reset-phone').value.trim();if(!p)return;if(!confirm("Shu foydalanuvchining maxfiy javoblari o'chirilsinmi?"))return;
+                fetch('/security/reset',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone:p})}).then(function(r){return r.json().then(function(d){alert(r.ok?('Tiklandi: '+d.name):(d.detail||'Xatolik'));});});}
+            </script>
+
+            <div class="card-bg bg-white p-6 rounded-xl shadow-md col-span-1 md:col-span-2">
                 <h2 class="theme-title text-lg font-bold mb-1 text-indigo-700">🔐 Operator Ko'rish Huquqlari</h2>
                 <p class="text-xs text-gray-500 mb-4">Belgilangan bo'limlarni operatorlar (ADMIN roli) ko'ra oladi va o'zgartira oladi. Belgilanmagan bo'limlar ularga butunlay yashirin bo'ladi — hatto manzilni to'g'ridan-to'g'ri kiritishga urinishsa ham, ruxsat berilmaydi.</p>
                 <form action="/admin/finance/operator-permissions/update" method="POST" class="space-y-2">
@@ -1716,6 +1745,17 @@
                         <textarea name="text_content" rows="3" placeholder="Reklama matni..." class="w-full mt-1 p-2 border rounded-lg text-sm dark:bg-gray-800"></textarea>
                     </div>
                     <div>
+                        <label class="block text-xs font-medium">Banner rangi (matnli banner uchun)</label>
+                        <input type="hidden" name="bg_color" id="banner-color-val" value="#f59e0b">
+                        <div class="flex flex-wrap items-center gap-2 mt-1" id="banner-palette">
+                            {% for c in ['#f59e0b','#ef4444','#ec4899','#8b5cf6','#6366f1','#0ea5e9','#14b8a6','#10b981','#84cc16','#f97316','#334155','#111827'] %}
+                            <button type="button" data-c="{{ c }}" class="w-8 h-8 rounded-full border-2 border-white shadow" style="background:{{ c }};outline:2px solid transparent" aria-label="{{ c }}"></button>
+                            {% endfor %}
+                            <label class="text-xs flex items-center gap-1">Boshqa: <input type="color" id="banner-color-custom" value="#f59e0b" class="w-9 h-8 p-0 border-0"></label>
+                        </div>
+                        <div id="banner-preview" class="mt-2 rounded-lg p-3 text-white text-xs font-bold" style="background:#f59e0b">Banner ko'rinishi (namuna)</div>
+                    </div>
+                    <div>
                         <label class="block text-xs font-medium">Rasm (ixtiyoriy)</label>
                         <input type="file" name="banner_image" accept="image/png,image/jpeg,image/webp" class="w-full mt-1 p-2 border rounded-lg text-sm dark:bg-gray-800">
                     </div>
@@ -1744,6 +1784,12 @@
                             {% if banner.text_content %}<p class="text-xs text-gray-500 truncate">{{ banner.text_content }}</p>{% endif %}
                             <p class="text-[10px] text-gray-400">Tartib: {{ banner.display_order }}{% if banner.link_url %} · 🔗 {{ banner.link_url }}{% endif %}</p>
                         </div>
+                        {% if not banner.image_data %}
+                        <form action="/admin/banners/{{ banner.id }}/color" method="POST" class="flex items-center gap-1" title="Rangni o'zgartirish">
+                            <input type="color" name="bg_color" value="{{ banner.bg_color or '#f59e0b' }}" class="w-8 h-8 p-0 border-0 rounded">
+                            <button type="submit" class="text-xs px-2 py-1 rounded bg-gray-100 dark:bg-gray-700">🎨</button>
+                        </form>
+                        {% endif %}
                         <form action="/admin/banners/{{ banner.id }}/toggle" method="POST">
                             <button type="submit" class="text-xs px-2 py-1 rounded font-semibold {% if banner.is_active %}bg-green-100 text-green-800{% else %}bg-gray-200 text-gray-700{% endif %}">
                                 {% if banner.is_active %}Faol{% else %}O'chiq{% endif %}
@@ -2918,7 +2964,17 @@
         });
     </script>
 
-    <script src="/static/js/zm-ai.js?v=2"></script>
+    <script>
+    (function(){
+        function setC(c){var v=document.getElementById('banner-color-val');if(!v)return;v.value=c;document.getElementById('banner-preview').style.background=c;document.getElementById('banner-color-custom').value=c;
+            document.querySelectorAll('#banner-palette button').forEach(function(b){b.style.outline=b.dataset.c===c?'2px solid #4f46e5':'2px solid transparent';});}
+        document.addEventListener('click',function(e){var b=e.target.closest('#banner-palette button');if(b)setC(b.dataset.c);});
+        document.addEventListener('input',function(e){if(e.target.id==='banner-color-custom')setC(e.target.value);});
+        document.addEventListener('DOMContentLoaded',function(){setC('#f59e0b');});
+    })();
+    </script>
+    <script src="/static/js/zm-secure.js?v=1"></script>
+    <script src="/static/js/zm-ai.js?v=3"></script>
     {% if ai_help_on %}<script>document.addEventListener("DOMContentLoaded",function(){if(window.ZMAI)ZMAI.mountHelp({url:"/admin/ai/help"});});</script>{% endif %}
     <script>
     (function(){
@@ -2929,11 +2985,11 @@
             var el=document.getElementById('admin-led'); if(!el)return;
             el.innerHTML=(d.ads||[]).map(function(a){
                 var h='<div class="p-2 rounded border dark:border-gray-700" data-ad="'+a.id+'"><div class="flex items-center gap-2"><span style="width:12px;height:12px;border-radius:3px;background:'+e(a.bg_color)+'"></span><b class="flex-1 truncate">'+e(a.brand)+': '+e(a.title)+'</b><span>'+(a.is_active&&a.status==='approved'?ST.approved:(ST[a.status]||a.status))+'</span></div>'
-                 +'<div class="text-[11px] text-gray-500">'+e(a.text)+' · radius '+a.radius_km+' km'+(a.paid_amount?' · to\'langan '+Math.round(a.paid_amount)+' so\'m':'')+(a.expires_at?' · '+e(a.expires_at.slice(0,10))+' gacha':'')+'</div><div class="flex flex-wrap items-center gap-1.5 mt-1">';
+                 +'<div class="text-[11px] text-gray-500">'+e(a.text)+' · ⏱ '+(a.seconds?a.seconds+' s':'avto')+' · radius '+a.radius_km+' km'+(a.paid_amount?' · to\'langan '+Math.round(a.paid_amount)+' so\'m':'')+(a.expires_at?' · '+e(a.expires_at.slice(0,10))+' gacha':'')+'</div><div class="flex flex-wrap items-center gap-1.5 mt-1">';
                 if(a.status==='pending'||a.status==='rejected'||a.status==='expired'){
                     h+='<input type="number" min="1" max="365" value="7" data-f="days" class="w-14 p-1 border rounded dark:bg-gray-800 dark:border-gray-700" title="Kun"><input type="number" min="0" step="1000" placeholder="to\'lov so\'m" data-f="paid" class="w-24 p-1 border rounded dark:bg-gray-800 dark:border-gray-700"><button type="button" data-a="approve" class="px-2 py-1 rounded bg-emerald-600 text-white font-bold">✅ Tasdiqlash</button>'+(a.status==='pending'?'<button type="button" data-a="reject" class="px-2 py-1 rounded bg-rose-600 text-white">⛔</button>':'');
                 } else { h+='<button type="button" data-a="toggle" class="px-2 py-1 rounded bg-slate-500/20">'+(a.is_active?'⏸ O\'chirish':'▶️ Yoqish')+'</button>'; }
-                h+='<button type="button" data-a="radius" class="px-2 py-1 rounded bg-slate-500/20">📏 Radius</button><button type="button" data-a="delete" class="px-2 py-1 rounded bg-rose-500/20">🗑</button></div></div>';
+                h+='<button type="button" data-a="seconds" class="px-2 py-1 rounded bg-slate-500/20">⏱ Vaqt</button><button type="button" data-a="radius" class="px-2 py-1 rounded bg-slate-500/20">📏 Radius</button><button type="button" data-a="delete" class="px-2 py-1 rounded bg-rose-500/20">🗑</button></div></div>';
                 return h;}).join('')||'<p class="text-gray-500">Reklama yo\'q</p>';
             var ce=document.getElementById('admin-led-couriers');
             if(ce)ce.innerHTML=(d.couriers||[]).map(function(c){return '<label class="flex items-center gap-2"><input type="checkbox" data-c="'+c.id+'" '+(c.led_enabled?'checked':'')+'> '+e(c.name)+'</label>';}).join('')||'<p class="text-gray-500">Kuryer yo\'q</p>';
@@ -2943,12 +2999,15 @@
             if(a==='approve'){var days=parseInt(box.querySelector('[data-f=days]').value)||7,paid=parseFloat(box.querySelector('[data-f=paid]').value)||0;p=post('/admin/ai/led/'+id+'/approve',{days:days,paid_amount:paid});}
             else if(a==='reject'){p=post('/admin/ai/led/'+id+'/reject');}
             else if(a==='toggle'){p=post('/admin/ai/led/'+id+'/toggle');}
+            else if(a==='seconds'){var sv=prompt('Ekranda turish vaqti (soniya, 3–120; 0 = AI avto):','10');if(sv===null||sv==='')return;p=post('/admin/ai/led/'+id+'/update',{seconds:parseInt(sv)||0});}
             else if(a==='radius'){var r=prompt('Radius (km):','3');if(!r)return;p=post('/admin/ai/led/'+id+'/update',{radius_km:parseFloat(r)});}
             else if(a==='delete'){if(!confirm("O'chirilsinmi?"))return;p=post('/admin/ai/led/'+id+'/delete');}
             if(p)p.then(load).catch(function(x){alert(x.message);});});
         document.addEventListener('change',function(ev){var c=ev.target.closest('#admin-led-couriers input[data-c]');if(!c)return;post('/admin/ai/led/courier/'+c.dataset.c+'/toggle').catch(function(x){alert(x.message);});});
-        window.adminLedAdd=function(){var t=document.getElementById('admin-led-title').value.trim();if(!t)return;
-            post('/admin/ai/led',{title:t}).then(function(){document.getElementById('admin-led-title').value='';load();});};
+        function ledC(c){document.getElementById('admin-led-color').value=c;document.querySelectorAll('#admin-led-palette button').forEach(function(b){b.style.outline=b.dataset.c===c?'2px solid #4f46e5':'none';});}
+        document.addEventListener('click',function(ev){var b=ev.target.closest('#admin-led-palette button');if(b)ledC(b.dataset.c);});
+        window.adminLedAdd=function(){var g=function(i){return document.getElementById(i).value;},t=g('admin-led-title').trim();if(!t){alert('Sarlavhani yozing');return;}
+            post('/admin/ai/led',{title:t,text:g('admin-led-text'),bg_color:g('admin-led-color'),seconds:parseInt(g('admin-led-sec'))||null,radius_km:parseFloat(g('admin-led-rad'))||30,days:parseInt(g('admin-led-days'))||null}).then(function(){document.getElementById('admin-led-title').value='';document.getElementById('admin-led-text').value='';load();}).catch(function(x){alert(x.message);});};
         function loadAim(){fetch('/admin/ai/messages',{credentials:'same-origin'}).then(function(r){return r.ok?r.json():{messages:[]};}).then(function(d){
             var el=document.getElementById('aim-list');if(!el)return;var AU={client:'Mijozlar',courier:'Kuryerlar',partner:'Hamkorlar'};
             el.innerHTML=(d.messages||[]).map(function(m){return '<div class="p-2 rounded border dark:border-gray-700" data-aim="'+m.id+'"><div class="font-bold">'+e(m.text)+'</div><div class="text-[11px] text-gray-500">'+AU[m.audience]+' · '+(m.inactive_hours?(m.inactive_hours+' soat kirmaganlarga, har '+m.repeat_hours+' soatda bir'):'bir martalik')+' · yuborilgan: '+m.sent_count+' · '+(m.is_active?'faol':'to\'xtatilgan')+'</div><div class="flex gap-1.5 mt-1">'+(m.inactive_hours?'':'<button type="button" data-m="send" class="px-2 py-1 rounded bg-emerald-600 text-white font-bold">📤 Hozir yuborish</button>')+'<button type="button" data-m="toggle" class="px-2 py-1 rounded bg-slate-500/20">'+(m.is_active?'⏸':'▶️')+'</button><button type="button" data-m="delete" class="px-2 py-1 rounded bg-rose-500/20">🗑</button></div></div>';}).join('')||'<p class="text-gray-500">Xabar yo\'q</p>';});}

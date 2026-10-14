@@ -24,7 +24,7 @@ KB = {
  ("Buyurtmani kuzatish", ["kuzat", "kuryer qayerda", "xarita", "yo'lda", "tracking", "qayerda", "status", "holat"],
   "«Buyurtmalarim» da buyurtmani oching va «Buyurtmani jonli kuzatish» ni bosing. To'liq ekranli xaritada kuryer harakati, masofa va taxminiy vaqt ko'rinadi. Kuryer buyurtmani olgunga qadar do'kon va manzilingiz ko'rsatiladi."),
  ("Kechikish", ["kech", "uzoq", "sekin", "kutish", "ko'p vaqt", "задерж", "late"],
-  "Kuryer kutilganidan ko'proq kechiksa, Telegramda uzr xabari keladi (administrator yoqqan bo'lsa bonus/promo-kod ham). Shoshilinch bo'lsa buyurtma sahifasidagi kuryer raqamiga qo'ng'iroq qiling."),
+  "Kuryer kutilganidan ko'proq kechiksa, Telegramda uzr xabari keladi. Shoshilinch bo'lsa buyurtma sahifasidagi kuryer raqamiga qo'ng'iroq qiling."),
  ("Promo-kod va keshbek", ["promo", "kod", "chegirma", "keshbek", "cashback", "bonus", "skidka", "referal"],
   "Savatda «Promo-kod» maydoniga kodni yozing — chegirma hisoblanadi. Keshbek ballari avvalgi buyurtmalardan to'planadi va keyingi buyurtmada ishlatiladi. Do'stlaringizga referal kodingizni ulashsangiz bonus olasiz."),
  ("Sevimlilar", ["sevimli", "yurak", "❤", "saqla", "favorite"],

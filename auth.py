@@ -20,6 +20,11 @@ def verify_password(plain_password: str, password_hash: str) -> bool:
     return pwd_context.verify(plain_password, password_hash)
 
 
+class RedirectToGate(Exception):
+    """Operator (ADMIN) maxfiy javobini hali kiritmagan — /security/gate sahifasiga yo'naltiramiz."""
+    pass
+
+
 class RedirectToLogin(Exception):
     """/admin sahifasiga sessiyasiz kirilganda shu exception orqali /login'ga yo'naltiramiz."""
     pass
@@ -41,6 +46,10 @@ async def get_current_admin_user(request: Request, db: AsyncSession = Depends(ge
     if not user or not user.is_active or user.role not in (UserRole.OWNER, UserRole.ADMIN):
         request.session.clear()
         raise RedirectToLogin()
+
+    # Operator (ADMIN) uchun qo'shimcha himoya: maxfiy javob (egasi OWNER uchun shart emas)
+    if user.role == UserRole.ADMIN and request.session.get("sec_admin") != user.id:
+        raise RedirectToGate()
 
     return user
 

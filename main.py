@@ -70,7 +70,9 @@ from auth import (
     get_current_partner_user,
     get_current_courier_user,
     RedirectToLogin,
+    RedirectToGate,
 )
+from sec2fa import sec_router, secure_action
 
 # Buyurtma statuslarining o'zbekcha nomlari — bazada inglizcha (created, on_the_way...)
 # saqlanadi (bu — kod uchun barqaror kalit), lekin admin panelda o'zbekcha ko'rsatiladi.
@@ -427,6 +429,15 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 @app.exception_handler(RedirectToLogin)
 async def redirect_to_login_handler(request: Request, exc: RedirectToLogin):
     return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.exception_handler(RedirectToGate)
+async def redirect_to_gate_handler(request: Request, exc: RedirectToGate):
+    if request.method == "GET" and "application/json" not in (request.headers.get("accept") or "") \
+            and request.headers.get("x-requested-with") is None:
+        from urllib.parse import quote
+        return RedirectResponse(url="/security/gate?next=" + quote(request.url.path), status_code=status.HTTP_303_SEE_OTHER)
+    return JSONResponse(status_code=428, content={"detail": {"code": "sec_admin", "message": "Operator maxfiy javobini kiriting"}})
 
 
 # Statik fayllar va shablonlar
@@ -2008,9 +2019,11 @@ async def create_banner(
     link_url: str = Form(""),
     display_order: int = Form(0),
     banner_image: Optional[UploadFile] = File(None),
+    bg_color: str = Form(""),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_section("banner")),
 ):
+    bg_color = bg_color if re.fullmatch(r"#[0-9a-fA-F]{6}", bg_color or "") else None
     image_data, image_mime = None, None
     if banner_image and banner_image.filename:
         image_data, image_mime = await process_uploaded_image(banner_image)
@@ -2026,6 +2039,7 @@ async def create_banner(
             display_order=display_order,
             image_data=image_data,
             image_mime=image_mime,
+            bg_color=bg_color,
             is_active=True,
         ))
         await db.commit()
@@ -2047,6 +2061,18 @@ async def create_banner(
                 "migratsiya bazani sozlab qo'yishi kerak."
             ),
         )
+    return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.post("/admin/banners/{banner_id}/color")
+async def banner_set_color(banner_id: int, bg_color: str = Form(""), db: AsyncSession = Depends(get_db), current_user: User = Depends(require_section("banner"))):
+    banner = (await db.execute(select(Banner).where(Banner.id == banner_id))).scalars().first()
+    if not banner:
+        raise HTTPException(status_code=404, detail="Banner topilmadi")
+    if not re.fullmatch(r"#[0-9a-fA-F]{6}", bg_color or ""):
+        raise HTTPException(status_code=400, detail="Rang noto'g'ri")
+    banner.bg_color = bg_color
+    await db.commit()
     return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -4460,6 +4486,7 @@ async def shop_promotions(db: AsyncSession = Depends(get_db)):
                 "text": b.text_content,
                 "image_url": f"/media/banner/{b.id}" if b.image_data else None,
                 "link_url": b.link_url,
+                "bg_color": b.bg_color,
             }
             for b in banners
         ],
@@ -5271,7 +5298,7 @@ async def partner_list_cards(
     return {"cards": [_card_to_dict(c) for c in result.scalars().all()]}
 
 
-@partner_router.post("/cards")
+@partner_router.post("/cards", dependencies=[Depends(secure_action)])
 async def partner_add_card(
     card_number: str = Form(...),
     card_holder_name: str = Form(...),
@@ -5287,7 +5314,7 @@ async def partner_add_card(
     return RedirectResponse(url="/partner", status_code=status.HTTP_303_SEE_OTHER)
 
 
-@partner_router.post("/cards/{card_id}/delete")
+@partner_router.post("/cards/{card_id}/delete", dependencies=[Depends(secure_action)])
 async def partner_delete_card(
     card_id: int,
     db: AsyncSession = Depends(get_db),
@@ -5297,7 +5324,7 @@ async def partner_delete_card(
     return RedirectResponse(url="/partner", status_code=status.HTTP_303_SEE_OTHER)
 
 
-@partner_router.post("/withdraw")
+@partner_router.post("/withdraw", dependencies=[Depends(secure_action)])
 async def partner_request_withdrawal(
     amount: float = Form(...),
     card_id: int = Form(...),
@@ -5450,7 +5477,7 @@ async def partner_toggle_open(
     return RedirectResponse(url="/partner", status_code=status.HTTP_303_SEE_OTHER)
 
 
-@partner_router.post("/settings/update")
+@partner_router.post("/settings/update", dependencies=[Depends(secure_action)])
 async def partner_update_settings(
     brand_name: str = Form(...),
     address: str = Form(...),
@@ -5512,7 +5539,7 @@ def _clean_legal_details(
     }
 
 
-@partner_router.post("/legal")
+@partner_router.post("/legal", dependencies=[Depends(secure_action)])
 async def partner_update_legal(
     legal_name: str = Form(""),
     stir: str = Form(""),
@@ -5783,7 +5810,7 @@ async def courier_update_location(
     return JSONResponse({"ok": True})
 
 
-@courier_router_app.post("/settings/sound")
+@courier_router_app.post("/settings/sound", dependencies=[Depends(secure_action)])
 async def courier_update_sound(
     notification_sound: str = Form(...),
     db: AsyncSession = Depends(get_db),
@@ -5848,7 +5875,7 @@ async def courier_list_cards(
     return {"cards": [_card_to_dict(c) for c in result.scalars().all()]}
 
 
-@courier_router_app.post("/cards")
+@courier_router_app.post("/cards", dependencies=[Depends(secure_action)])
 async def courier_add_card(
     card_number: str = Form(...),
     card_holder_name: str = Form(...),
@@ -5864,7 +5891,7 @@ async def courier_add_card(
     return RedirectResponse(url="/courier", status_code=status.HTTP_303_SEE_OTHER)
 
 
-@courier_router_app.post("/cards/{card_id}/delete")
+@courier_router_app.post("/cards/{card_id}/delete", dependencies=[Depends(secure_action)])
 async def courier_delete_card(
     card_id: int,
     db: AsyncSession = Depends(get_db),
@@ -5874,7 +5901,7 @@ async def courier_delete_card(
     return RedirectResponse(url="/courier", status_code=status.HTTP_303_SEE_OTHER)
 
 
-@courier_router_app.post("/withdraw")
+@courier_router_app.post("/withdraw", dependencies=[Depends(secure_action)])
 async def courier_request_withdrawal(
     amount: float = Form(...),
     card_id: int = Form(...),
@@ -6504,14 +6531,18 @@ class LedAdBody(BaseModel):
     text: Optional[str] = ""
     bg_color: Optional[str] = "#f59e0b"
     radius_km: Optional[float] = 3.0
+    seconds: Optional[int] = None   # faqat admin (admin_led_create)
+    days: Optional[int] = None      # faqat admin: necha kun efirda
 
 
 class LedApproveBody(BaseModel):
     days: int = 7
     paid_amount: float = 0.0
+    seconds: Optional[int] = None
 
 
 class LedUpdateBody(BaseModel):
+    seconds: Optional[int] = None
     title: Optional[str] = None
     text: Optional[str] = None
     radius_km: Optional[float] = None
@@ -6528,7 +6559,7 @@ def _led_dict(a: LedAd) -> dict:
     return {"id": a.id, "title": a.title, "text": a.text or "", "bg_color": a.bg_color or "#f59e0b",
             "radius_km": a.radius_km or 3.0, "is_active": bool(a.is_active), "status": ("expired" if expired else (a.status or "pending")),
             "paid_amount": a.paid_amount or 0.0, "expires_at": a.expires_at.isoformat() if a.expires_at else None,
-            "admin_note": a.admin_note or "", "partner_id": a.partner_id,
+            "admin_note": a.admin_note or "", "partner_id": a.partner_id, "seconds": a.seconds,
             "brand": a.partner.brand_name if a.partner else "ZooMo"}
 
 
@@ -6611,7 +6642,7 @@ def _led_playlist(ads: list, now=None) -> list:
         pick["_cur"] -= total
         last = pick["id"]
         item = {k: v for k, v in pick.items() if not k.startswith("_")}
-        item["seconds"] = int(7 + min(5, round(pick["_w"])))
+        item["seconds"] = int(pick["seconds"]) if pick.get("seconds") else int(7 + min(5, round(pick["_w"])))
         out.append(item)
     return out
 
@@ -6666,8 +6697,10 @@ async def admin_led_list(db: AsyncSession = Depends(get_db), current_user: User 
 @ai_admin_router.post("/admin/ai/led")
 async def admin_led_create(body: LedAdBody, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_admin_user)):
     title, text, color, radius = _led_clean(body)
+    secs = min(max(int(body.seconds), 3), 120) if body.seconds else None
+    exp = datetime.utcnow() + timedelta(days=min(max(int(body.days), 1), 365)) if body.days else None
     db.add(LedAd(partner_id=None, title=title, text=text, bg_color=color, radius_km=30.0 if not body.radius_km else radius,
-                 status="approved", is_active=True))
+                 seconds=secs, expires_at=exp, status="approved", is_active=True))
     await db.commit()
     return {"ok": True}
 
@@ -6681,6 +6714,8 @@ async def admin_led_approve(ad_id: int, body: LedApproveBody, db: AsyncSession =
     ad.is_active = True
     ad.paid_amount = max(float(body.paid_amount or 0), 0.0)
     ad.expires_at = datetime.utcnow() + timedelta(days=days)
+    if body.seconds:
+        ad.seconds = min(max(int(body.seconds), 3), 120)
     await db.commit()
     return {"ok": True}
 
@@ -6715,6 +6750,8 @@ async def admin_led_update(ad_id: int, body: LedUpdateBody, db: AsyncSession = D
         ad.radius_km = min(max(body.radius_km, 0.5), 30.0)
     if body.bg_color and re.fullmatch(r"#[0-9a-fA-F]{6}", body.bg_color):
         ad.bg_color = body.bg_color
+    if body.seconds is not None:
+        ad.seconds = min(max(int(body.seconds), 3), 120) if body.seconds > 0 else None
     await db.commit()
     return {"ok": True}
 
@@ -6917,6 +6954,7 @@ async def admin_aim_send_now(mid: int, db: AsyncSession = Depends(get_db), curre
 
 
 # Routerlarni ulash
+app.include_router(sec_router)
 app.include_router(courier_router_app)
 app.include_router(ai_admin_router)
 app.include_router(partner_router)

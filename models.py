@@ -68,6 +68,9 @@ class User(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     # Oxirgi faollik (ilova/panelga kirgan vaqt) — AI xabarlari «N soat kirmaganlarga» uchun
     last_active_at = Column(DateTime, nullable=True)
+    # Qo'shimcha himoya (maxfiy javob): noto'g'ri urinishlar hisobi va vaqtincha bloklash
+    sec_fail_count = Column(Integer, default=0)
+    sec_locked_until = Column(DateTime, nullable=True)
 
     # Faqat OWNER/ADMIN (operator) rollari uchun ishlatiladi — mijoz/kuryer/hamkorda bo'sh qoladi
     password_hash = Column(String, nullable=True)
@@ -574,6 +577,7 @@ class Banner(Base):
     link_url = Column(String, nullable=True)
     is_active = Column(Boolean, default=True)
     display_order = Column(Integer, default=0)
+    bg_color = Column(String, nullable=True)  # matnli banner foni (#rrggbb)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -671,6 +675,7 @@ class LedAd(Base):
     paid_amount = Column(Float, default=0.0)     # admin tasdiqlaganda kiritadi (efir vaqtiga ta'sir qiladi)
     expires_at = Column(DateTime, nullable=True)
     admin_note = Column(String, nullable=True)
+    seconds = Column(Integer, nullable=True)     # admin belgilagan ekranda turish vaqti (soniya); bo'sh bo'lsa AI hisoblaydi
     is_active = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -702,3 +707,15 @@ class AIMessageLog(Base):
     message_id = Column(Integer, ForeignKey("ai_messages.id", ondelete="CASCADE"), index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     sent_at = Column(DateTime, default=datetime.utcnow)
+
+
+class SecurityAnswer(Base):
+    """Qo'shimcha himoya: foydalanuvchi tanlagan «sevimli ...» toifasi va o'zi o'ylab topgan maxfiy javobi.
+    Javob hech qachon ochiq saqlanmaydi (SHA-256 + bcrypt). Pul yechish, sozlamalar va operator kirishida so'raladi."""
+    __tablename__ = "security_answers"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    category = Column(String, nullable=False)
+    answer_hash = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)

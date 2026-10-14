@@ -1030,5 +1030,13 @@
  "📣 AI xabarlari (bildirishnoma kampaniyalari)": "📣 AI messages (notification campaigns)",
  "📣 AI xabarlari — bildirishnoma yozish": "📣 AI messages — write a notification",
  "Matnni o'zingiz yozasiz. «N soat kirmaganlarga» belgilansa AI avtomatik yuboradi (takror oralig'i bilan); bo'sh qoldirsangiz «Hozir yuborish» bilan butun auditoriyaga bir martalik boradi. Xabar Telegramda bildirishnoma bo'lib keladi.": "You write the text yourself. If “inactive for N hours” is set, AI sends it automatically (with a repeat interval); if left empty, “Send now” sends it once to the whole audience. The message arrives as a Telegram notification.",
- "➕ Xabar qo'shish": "➕ Add message"
+ "➕ Xabar qo'shish": "➕ Add message",
+ "Bu qurilmada ovoz yozish ishlamaydi. Klaviaturadagi 🎤 tugmasini bosib ayting yoki matn yozing.": "Voice input isn't available on this device. Tap the 🎤 on your keyboard or type.",
+ "Eshitilmoqda... gapiring": "Listening... speak now",
+ "Mikrofonga ruxsat berilmagan. Brauzer/Telegram sozlamasidan ruxsat bering yoki klaviaturadagi 🎤 tugmasini bosing.": "Microphone access denied. Allow it in browser/Telegram settings or tap the 🎤 on your keyboard.",
+ "Ovoz eshitilmadi. Qayta urinib ko'ring.": "No speech heard. Please try again.",
+ "Ovoz xizmatiga ulanib bo'lmadi. Internetni tekshiring yoki matn yozing.": "Can't reach the voice service. Check your internet or type instead.",
+ "Ovoz yozish ishlamadi. Klaviaturadagi 🎤 tugmasini bosib ayting yoki matn yozing.": "Voice input failed. Tap the 🎤 on your keyboard or type.",
+ "Mikrofon ishlamasa, klaviaturadagi 🎤 tugmasini bosib ayting.": "If the mic doesn't work, tap the 🎤 on your keyboard and speak.",
+ "Ovoz moduli yuklanmadi. Matn yozing.": "Voice module didn't load. Please type."
 }

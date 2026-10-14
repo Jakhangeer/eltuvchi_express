@@ -474,6 +474,13 @@
             </div>
         </div>
 
+        <!-- QO'SHIMCHA HIMOYA -->
+        <div class="glass fade-up stagger-5 p-5 rounded-2xl">
+            <h2 class="text-base font-extrabold mb-1">🔐 Qo'shimcha himoya</h2>
+            <p class="text-[11px] text-slate-500 mb-3">Pul yechish va sozlamalar uchun maxfiy javob. Faqat siz bilasiz.</p>
+            <button type="button" onclick="ZMSec.manage()" class="px-4 py-2 rounded-xl bg-amber-500 text-white text-xs font-bold">🔐 Maxfiy javoblarim</button>
+        </div>
+
         <!-- BILDIRISHNOMA OVOZI -->
         <div class="glass fade-up stagger-5 p-5 rounded-2xl">
             <h2 class="text-base font-extrabold mb-1">🔔 Bildirishnoma ovozi</h2>
@@ -855,7 +862,8 @@
             if (window.ZMNav && ZMNav.refreshUI) ZMNav.refreshUI();
         });
     </script>
-    <script src="/static/js/zm-ai.js?v=2"></script>
+    <script src="/static/js/zm-secure.js?v=1"></script>
+    <script src="/static/js/zm-ai.js?v=3"></script>
     {% if ai_help_on %}<script>document.addEventListener("DOMContentLoaded",function(){if(window.ZMAI)ZMAI.mountHelp({url:"/courier/ai/help"});});</script>{% endif %}
     <script>document.addEventListener("DOMContentLoaded",function(){var e=document.getElementById("zm-ai-courier");if(e&&window.ZMAI)ZMAI.mountCourier(e);});</script>
 </body>

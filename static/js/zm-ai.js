@@ -6,14 +6,41 @@
   function jget(u) { return fetch(u, { credentials: 'same-origin' }).then(function (r) { if (!r.ok) return r.json().then(function (e) { throw new Error(e.detail || 'Xatolik'); }); return r.json(); }); }
   function jpost(u, b) { return fetch(u, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b || {}) }).then(function (r) { if (!r.ok) return r.json().then(function (e) { throw new Error(e.detail || 'Xatolik'); }); return r.json(); }); }
 
-  function listen(cb) {
+  // Ovoz yozish: avval mikrofon ruxsati, holat va xatolar ko'rinadi. opts: {onState(msg), lang}
+  function listen(cb, opts) {
+    opts = opts || {};
+    var st = function (m) { try { (opts.onState || function () {})(m); } catch (e) {} };
     var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) { alert(T("Bu brauzerda ovoz yozish ishlamaydi. Matn yozing.")); return; }
-    var r = new SR(); var l = (localStorage.getItem('zm_lang') || 'uz');
-    r.lang = { uz: 'uz-UZ', uzc: 'uz-UZ', ru: 'ru-RU', en: 'en-US', kk: 'kk-KZ', tg: 'tg-TJ', ky: 'ky-KG' }[l] || 'uz-UZ';
-    r.onresult = function (e) { cb(e.results[0][0].transcript); };
-    r.onerror = function () {};
-    try { r.start(); } catch (e) {}
+    if (!SR) { st(T("Bu qurilmada ovoz yozish ishlamaydi. Klaviaturadagi 🎤 tugmasini bosib ayting yoki matn yozing.")); return; }
+    var l = 'uz'; try { l = localStorage.getItem('zm_lang') || 'uz'; } catch (e) {}
+    var langs = [opts.lang || { uz: 'uz-UZ', uzc: 'uz-UZ', ru: 'ru-RU', en: 'en-US', kk: 'kk-KZ', tg: 'tg-TJ', ky: 'ky-KG' }[l] || 'uz-UZ'];
+    if (langs[0] !== 'ru-RU') langs.push('ru-RU');
+    var got = false, idx = 0;
+    function run() {
+      var r = new SR(), heard = '';
+      r.lang = langs[idx]; r.interimResults = true; r.maxAlternatives = 1; r.continuous = false;
+      r.onstart = function () { st('🎙 ' + T("Eshitilmoqda... gapiring")); };
+      r.onresult = function (e) {
+        var t = ''; for (var i = 0; i < e.results.length; i++) t += e.results[i][0].transcript;
+        heard = t; st('🎙 ' + t);
+        if (e.results[e.results.length - 1].isFinal && !got) { got = true; cb(t); }
+      };
+      r.onerror = function (e) {
+        var c = e && e.error;
+        if (c === 'language-not-supported' && idx < langs.length - 1) { idx++; run(); return; }
+        if (c === 'not-allowed' || c === 'service-not-allowed') st('⚠️ ' + T("Mikrofonga ruxsat berilmagan. Brauzer/Telegram sozlamasidan ruxsat bering yoki klaviaturadagi 🎤 tugmasini bosing."));
+        else if (c === 'no-speech') st('⚠️ ' + T("Ovoz eshitilmadi. Qayta urinib ko'ring."));
+        else if (c === 'network') st('⚠️ ' + T("Ovoz xizmatiga ulanib bo'lmadi. Internetni tekshiring yoki matn yozing."));
+        else if (c !== 'aborted') st('⚠️ ' + T("Ovoz yozish ishlamadi. Klaviaturadagi 🎤 tugmasini bosib ayting yoki matn yozing."));
+      };
+      r.onend = function () { if (!got && heard) { got = true; cb(heard); } };
+      try { r.start(); } catch (e) { st('⚠️ ' + T("Ovoz yozish ishlamadi. Klaviaturadagi 🎤 tugmasini bosib ayting yoki matn yozing.")); }
+    }
+    function go() { run(); }
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      navigator.mediaDevices.getUserMedia({ audio: true }).then(function (s) { try { s.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {} go(); })
+        .catch(function () { st('⚠️ ' + T("Mikrofonga ruxsat berilmagan. Brauzer/Telegram sozlamasidan ruxsat bering yoki klaviaturadagi 🎤 tugmasini bosing.")); });
+    } else go();
   }
 
   // ---------- Ovozli navigatsiya (kuryer) ----------
@@ -92,7 +119,7 @@
       }).catch(function (e) { $('zai-cmd-res').style.color = '#dc2626'; $('zai-cmd-res').textContent = e.message; });
     }
     $('zai-send').onclick = send; $('zai-cmd').onkeydown = function (e) { if (e.key === 'Enter') send(); };
-    $('zai-mic').onclick = function () { listen(function (t) { $('zai-cmd').value = t; send(); }); };
+    $('zai-mic').onclick = function () { listen(function (t) { $('zai-cmd').value = t; send(); }, { onState: function (m) { $('zai-cmd').placeholder = m; } }); };
     if (!ledOn) return;
     var ST = { pending: '⏳ ' + T('To\'lov va admin tasdig\'i kutilmoqda'), approved: '✅ ' + T('Efirda'), rejected: '⛔ ' + T('Rad etildi'), expired: '⌛ ' + T('Muddati tugagan') };
     function loadLeds() {
@@ -149,7 +176,7 @@
     fab.onclick = function () { box.classList.toggle('open'); if (box.classList.contains('open') && first) { first = false; ask('', true); } if (box.classList.contains('open')) setTimeout(function () { inp.focus(); }, 50); };
     box.querySelector('.zmh-x').onclick = function () { box.classList.remove('open'); };
     box.querySelector('.zmh-go').onclick = send; inp.onkeydown = function (e) { if (e.key === 'Enter') send(); };
-    box.querySelector('.zmh-mic').onclick = function () { listen(function (t) { inp.value = t; send(); }); };
+    box.querySelector('.zmh-mic').onclick = function () { listen(function (t) { inp.value = t; send(); }, { onState: function (m) { inp.placeholder = m; } }); };
     chips.onclick = function (e) { var b = e.target.closest('.zmh-chip'); if (b) ask(b.dataset.t); };
   }
 

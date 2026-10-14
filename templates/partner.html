@@ -439,6 +439,12 @@
             <h2 class="text-base font-extrabold mb-1 text-grad">⚙️ Do'kon Sozlamalari</h2>
             <p class="text-xs text-slate-500 mb-4">Nomi, manzili, joylashuvi va yangi buyurtma signalini shu yerdan o'zgartirasiz. Komissiya, ish vaqti va shahar — faqat egasi tomonidan o'zgartiriladi.</p>
 
+            <div class="mb-6 pb-5" style="border-bottom:1px solid rgba(255,255,255,.08);">
+                <h3 class="text-sm font-extrabold mb-1">🔐 Qo'shimcha himoya</h3>
+                <p class="text-xs text-slate-500 mb-3">Pul yechish va sozlamalar uchun maxfiy javob. Faqat siz bilasiz.</p>
+                <button type="button" onclick="ZMSec.manage()" class="px-4 py-2 rounded-xl bg-amber-500 text-white text-xs font-bold">🔐 Maxfiy javoblarim</button>
+            </div>
+
             <!-- CHEK PRINTER (planshet / telefon / kompyuter) -->
             <div class="mb-6 pb-5" style="border-bottom:1px solid rgba(255,255,255,.08);">
                 <h3 class="text-sm font-extrabold mb-1">🖨 Chek printer</h3>
@@ -811,7 +817,8 @@
             if (window.ZMLive) ZMLive.start({ interval: 4000 });
         });
     </script>
-    <script src="/static/js/zm-ai.js?v=2"></script>
+    <script src="/static/js/zm-secure.js?v=1"></script>
+    <script src="/static/js/zm-ai.js?v=3"></script>
     {% if ai_help_on %}<script>document.addEventListener("DOMContentLoaded",function(){if(window.ZMAI)ZMAI.mountHelp({url:"/partner/ai/help"});});</script>{% endif %}
 </body>
 </html>

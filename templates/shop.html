@@ -303,6 +303,8 @@
                 <button type="button" onclick="aiVoice()" class="px-3 rounded-2xl bg-slate-100 text-slate-700" aria-label="Mikrofon">🎤</button>
                 <button type="button" onclick="aiAsk()" class="px-4 rounded-2xl bg-amber-500 text-white font-black text-sm">Topish</button>
             </div>
+            <p id="ai-voice-hint" class="hidden text-xs font-bold text-amber-700 mb-2"></p>
+            <p class="text-[10px] text-sub mb-2">Mikrofon ishlamasa, klaviaturadagi 🎤 tugmasini bosib ayting.</p>
             <div class="flex flex-wrap gap-1.5 mb-3 text-[11px] font-bold">
                 <button type="button" class="px-2.5 py-1 rounded-xl bg-amber-100 text-amber-800" onclick="aiQuick('Bugun judayam charchadim, shirin nimadir yegim kelyapti')">😮‍💨 Charchadim</button>
                 <button type="button" class="px-2.5 py-1 rounded-xl bg-amber-100 text-amber-800" onclick="aiQuick('Tomog‘im og‘riyapti')">🤒 Tomog'im og'riyapti</button>
@@ -325,7 +327,7 @@
         </div>
     </div>
 
-    <script src="/static/js/zm-ai.js?v=2"></script>
+    <script src="/static/js/zm-ai.js?v=3"></script>
     <script>
         const tg = window.Telegram?.WebApp;
         if (tg) { tg.ready(); tg.expand(); }
@@ -645,12 +647,11 @@
         function closeAI() { document.getElementById('ai-overlay').classList.add('hidden'); document.body.style.overflow = ''; }
         function aiQuick(t) { document.getElementById('ai-input').value = t; aiAsk(); }
         function aiVoice() {
-            const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-            if (!SR) { alert("Bu qurilmada ovoz yozish ishlamaydi. Matn yozing."); return; }
-            const r = new SR(); r.lang = 'uz-UZ';
-            r.onresult = (e) => { document.getElementById('ai-input').value = e.results[0][0].transcript; aiAsk(); };
-            r.onerror = () => {};
-            try { r.start(); } catch (e) {}
+            const inp = document.getElementById('ai-input');
+            const hint = document.getElementById('ai-voice-hint');
+            const show = (m) => { if (hint) { hint.textContent = m; hint.classList.remove('hidden'); } };
+            if (!window.ZMAI) { show("Ovoz moduli yuklanmadi. Matn yozing."); return; }
+            ZMAI.listen((t) => { inp.value = t; show('🎙 ' + t); aiAsk(); }, { onState: show });
         }
         async function aiAsk() {
             const q = document.getElementById('ai-input').value.trim();
@@ -958,8 +959,14 @@
                     ? `style="background-image:url('${b.image_url}');background-size:cover;background-position:center;"`
                     : "";
                 const clickAttr = b.link_url ? `onclick="window.open('${b.link_url}', '_blank')"` : "";
+                let colStyle = "";
+                if (!b.image_url) {
+                    const pal = ['#f59e0b', '#ef4444', '#8b5cf6', '#0ea5e9', '#10b981', '#ec4899', '#6366f1', '#14b8a6'];
+                    const c = b.bg_color || pal[(Number(b.id) || 0) % pal.length];
+                    colStyle = `style="background:${c};background-image:linear-gradient(135deg,${c},color-mix(in srgb,${c} 68%,#000))"`;
+                }
                 slidesHtml += `
-                    <div class="swiper-slide ${b.image_url ? '' : 'bg-gradient-to-r from-amber-500 to-amber-600'} p-5 text-white relative overflow-hidden ${b.link_url ? 'cursor-pointer' : ''}" ${bgStyle} ${clickAttr}>
+                    <div class="swiper-slide p-5 text-white relative overflow-hidden ${b.link_url ? 'cursor-pointer' : ''}" ${b.image_url ? bgStyle : colStyle} ${clickAttr}>
                         ${b.image_url ? '<div class="absolute inset-0 bg-black/20"></div>' : ''}
                         <div class="relative">
                             ${b.title ? `<span class="bg-white/20 text-[10px] font-bold px-2 py-0.5 rounded-md uppercase tracking-wider">${b.title}</span>` : ''}
