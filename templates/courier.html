@@ -11,8 +11,9 @@
     <script src="/static/js/zm-live.js?v=3"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Leaflet — faol buyurtmada do'kon (olib ketish) va mijoz (yetkazish) nuqtalarini xaritada ko'rsatish uchun -->
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css?v=1" />
+    <script src="/static/vendor/leaflet/leaflet.js?v=1"></script>
+    <script>window.L||document.write('<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"><\/script>');</script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -379,6 +380,11 @@
                  data-cash="{{ '1' if order.payment_method == 'cash' else '0' }}" data-comment="{{ order.client_comment or '' }}">
                 <p class="font-bold text-sm">#{{ order.id }} — {{ order.partner.brand_name if order.partner else '—' }}</p>
                 <p class="text-xs text-slate-400 mb-2">📍 {{ order.delivery_address }}</p>
+                <div class="flex flex-col gap-1.5 mb-2">
+                    {% if order.client and order.client.phone_number %}<a href="tel:{{ order.client.phone_number }}" class="flex items-center justify-between gap-2 px-3 py-2 rounded-xl text-sm font-bold" style="background:rgba(16,185,129,.15);border:1px solid rgba(16,185,129,.4);color:#34d399"><span>📞 Mijoz{% if order.client.full_name %}: {{ order.client.full_name }}{% endif %}</span><span class="font-mono">{{ order.client.phone_number }}</span></a>{% endif %}
+                    {% set _pph = partner_phones.get(order.partner.user_id, '') if order.partner else '' %}
+                    {% if _pph %}<a href="tel:{{ _pph }}" class="flex items-center justify-between gap-2 px-3 py-2 rounded-xl text-sm font-bold" style="background:rgba(245,158,11,.15);border:1px solid rgba(245,158,11,.4);color:#fbbf24"><span>📞 Do'kon: {{ order.partner.brand_name }}</span><span class="font-mono">{{ _pph }}</span></a>{% endif %}
+                </div>
                 <ul class="text-xs text-slate-300 space-y-0.5 mb-2">
                     {% for item in order.items %}
                     <li>• {{ item.product_name }} — {{ item.quantity }} ta</li>
@@ -411,6 +417,11 @@
         </div>
         {% endif %}
         </div>
+
+        {% if ai_on %}
+        <!-- ZOOMO AI -->
+        <div class="glass fade-up stagger-3 p-5 rounded-2xl" id="zm-ai-courier" data-led="{{ '1' if ai_led_on else '0' }}"></div>
+        {% endif %}
 
         <!-- BO'SH BUYURTMALAR -->
         <div class="glass fade-up stagger-3 p-5 rounded-2xl" data-live="c-available">
@@ -844,5 +855,8 @@
             if (window.ZMNav && ZMNav.refreshUI) ZMNav.refreshUI();
         });
     </script>
+    <script src="/static/js/zm-ai.js?v=2"></script>
+    {% if ai_help_on %}<script>document.addEventListener("DOMContentLoaded",function(){if(window.ZMAI)ZMAI.mountHelp({url:"/courier/ai/help"});});</script>{% endif %}
+    <script>document.addEventListener("DOMContentLoaded",function(){var e=document.getElementById("zm-ai-courier");if(e&&window.ZMAI)ZMAI.mountCourier(e);});</script>
 </body>
 </html>

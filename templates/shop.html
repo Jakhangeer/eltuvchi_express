@@ -13,8 +13,9 @@
     <script src="https://cdn.jsdelivr.net/npm/swiper@11/swiper-bundle.min.js"></script>
 
     <!-- Leaflet — kuryerni jonli kuzatish xaritasi uchun -->
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css?v=1" />
+    <script src="/static/vendor/leaflet/leaflet.js?v=1"></script>
+    <script>window.L||document.write('<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"><\/script>');</script>
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -220,6 +221,7 @@
                 <button onclick="toggleThemeMenu()" class="bg-slate-100 hover:bg-slate-200 text-slate-700 w-9 h-9 rounded-2xl flex items-center justify-center transition-all active:scale-95">
                     <i class="fa-solid fa-palette text-sm"></i>
                 </button>
+                <button id="ai-btn" type="button" onclick="openAI()" class="hidden bg-slate-100 hover:bg-slate-200 text-slate-700 w-9 h-9 rounded-2xl flex items-center justify-center transition-all active:scale-95 text-sm" aria-label="ZooMo AI">✨</button>
                 <button id="profile-btn" class="hidden bg-slate-100 hover:bg-slate-200 text-slate-700 w-9 h-9 rounded-2xl flex items-center justify-center transition-all active:scale-95" onclick="openProfile()">
                     <i class="fa-solid fa-user-gear text-sm"></i>
                 </button>
@@ -288,6 +290,28 @@
     </div>
     </div>
 
+    <!-- ZOOMO AI — alohida bo'lim (admin yoqib/o'chiradi) -->
+    <div id="ai-overlay" class="hidden fixed inset-0 z-[70] overflow-y-auto" style="background:rgba(15,23,42,.55)" onclick="if(event.target===this)closeAI()">
+        <div class="max-w-md mx-auto min-h-full bg-slate-50 card-bg p-4 pb-24" style="border-radius:0 0 1.5rem 1.5rem">
+            <div class="flex items-center justify-between mb-3">
+                <h2 class="text-lg font-black text-title">✨ ZooMo AI</h2>
+                <button type="button" onclick="closeAI()" class="w-9 h-9 rounded-2xl bg-slate-100 text-slate-700" aria-label="Yopish"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <p class="text-xs text-sub mb-3">Nima xohlayotganingizni yozing yoki ayting: «uchta lavash va bitta kola», «tomog'im og'riyapti», «charchadim, shirin nimadir».</p>
+            <div class="flex gap-2 mb-3">
+                <input id="ai-input" type="text" maxlength="300" placeholder="Nima yegingiz keldi?" class="flex-1 min-w-0 p-3 border rounded-2xl text-sm" onkeydown="if(event.key==='Enter')aiAsk()">
+                <button type="button" onclick="aiVoice()" class="px-3 rounded-2xl bg-slate-100 text-slate-700" aria-label="Mikrofon">🎤</button>
+                <button type="button" onclick="aiAsk()" class="px-4 rounded-2xl bg-amber-500 text-white font-black text-sm">Topish</button>
+            </div>
+            <div class="flex flex-wrap gap-1.5 mb-3 text-[11px] font-bold">
+                <button type="button" class="px-2.5 py-1 rounded-xl bg-amber-100 text-amber-800" onclick="aiQuick('Bugun judayam charchadim, shirin nimadir yegim kelyapti')">😮‍💨 Charchadim</button>
+                <button type="button" class="px-2.5 py-1 rounded-xl bg-amber-100 text-amber-800" onclick="aiQuick('Tomog‘im og‘riyapti')">🤒 Tomog'im og'riyapti</button>
+                <button type="button" class="px-2.5 py-1 rounded-xl bg-amber-100 text-amber-800" onclick="aiQuick('Yengil salat yegim keldi')">🥗 Yengil</button>
+            </div>
+            <div id="ai-results"></div>
+        </div>
+    </div>
+
     <!-- Savat Paneli -->
     <div id="cart-bar" class="hidden fixed bottom-4 left-4 right-4 max-w-md mx-auto bg-slate-900 text-white p-3.5 rounded-2xl shadow-2xl flex justify-between items-center cursor-pointer transition-all duration-300 active:scale-95 z-50 border border-slate-800" onclick="openCart()">
         <div class="flex items-center space-x-3">
@@ -301,6 +325,7 @@
         </div>
     </div>
 
+    <script src="/static/js/zm-ai.js?v=2"></script>
     <script>
         const tg = window.Telegram?.WebApp;
         if (tg) { tg.ready(); tg.expand(); }
@@ -563,7 +588,7 @@
                         else trackingMap.setView(pos, 15);
                     }
                     const callEl = document.getElementById('tracking-call');
-                    if (callEl && data.courier_phone) { callEl.href = 'tel:' + data.courier_phone; callEl.classList.remove('hidden'); }
+                    if (callEl && data.courier_phone) { callEl.href = 'tel:' + data.courier_phone; callEl.textContent = '📞 ' + data.courier_phone; callEl.classList.remove('hidden'); }
                     statusEl.textContent = '📍 Joylashuv yangilandi — ' + new Date().toLocaleTimeString('uz-UZ');
                 } else {
                     statusEl.textContent = "Kuryerning GPS signali hozircha yo'q — biroz kuting";
@@ -597,6 +622,81 @@
                 </div>`;
         }
 
+
+        // ==================== ZOOMO AI (mijoz) ====================
+        let aiItems = [];
+        let aiOrder = false; // AI orqali yig'ilgan buyurtma: faqat oldindan to'lov (karta) bilan
+        async function initAI() {
+            try {
+                const r = await fetch('/api/shop/ai/status');
+                const d = await r.json();
+                document.getElementById('ai-btn').classList.toggle('hidden', !d.enabled);
+                if (d.help && window.ZMAI) ZMAI.mountHelp({ url: '/api/shop/ai/help', bottom: 86, extra: () => ({ init_data: initData }) });
+            } catch (e) {}
+        }
+        function openAI() {
+            document.getElementById('ai-overlay').classList.remove('hidden'); document.body.style.overflow = 'hidden';
+            setTimeout(() => document.getElementById('ai-input').focus(), 50);
+            // Yaqin do'kon topish uchun joylashuv (ruxsat bo'lsa, jimgina)
+            if (!userLocation && navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(p => { userLocation = { lat: p.coords.latitude, lon: p.coords.longitude }; }, () => {}, { timeout: 8000, maximumAge: 60000 });
+            }
+        }
+        function closeAI() { document.getElementById('ai-overlay').classList.add('hidden'); document.body.style.overflow = ''; }
+        function aiQuick(t) { document.getElementById('ai-input').value = t; aiAsk(); }
+        function aiVoice() {
+            const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+            if (!SR) { alert("Bu qurilmada ovoz yozish ishlamaydi. Matn yozing."); return; }
+            const r = new SR(); r.lang = 'uz-UZ';
+            r.onresult = (e) => { document.getElementById('ai-input').value = e.results[0][0].transcript; aiAsk(); };
+            r.onerror = () => {};
+            try { r.start(); } catch (e) {}
+        }
+        async function aiAsk() {
+            const q = document.getElementById('ai-input').value.trim();
+            if (q.length < 2) return;
+            const box = document.getElementById('ai-results');
+            box.innerHTML = '<p class="text-xs text-sub text-center py-6">Qidirilmoqda...</p>';
+            try {
+                const d = await api('/ai/assist', { query: q, lat: userLocation ? userLocation.lat : null, lng: userLocation ? userLocation.lon : null });
+                aiItems = d.items || [];
+                if (!aiItems.length) { box.innerHTML = `<p class="text-xs text-sub text-center py-6">${escTrack(d.summary)}</p>`; return; }
+                const byP = {};
+                aiItems.forEach((it, i) => { (byP[it.partner_id] = byP[it.partner_id] || []).push([it, i]); });
+                let h = `<p class="text-xs font-bold text-title mb-2">${escTrack(d.summary)}</p>`;
+                Object.keys(byP).forEach(pid => {
+                    const rows = byP[pid];
+                    h += `<div class="card-bg border rounded-2xl p-3 mb-3"><div class="text-xs font-black text-amber-600 mb-2">🏪 ${escTrack(rows[0][0].partner_name)}${rows[0][0].distance_km != null ? ' · ' + rows[0][0].distance_km + ' km' : ''}</div>`;
+                    rows.forEach(([it, i]) => {
+                        h += `<label class="flex items-center gap-2 py-1.5 text-xs cursor-pointer"><input type="checkbox" class="w-4 h-4" data-ai="${i}" ${it.kind === 'addon' ? '' : 'checked'}>
+                            <span class="flex-1 min-w-0"><b class="text-title">${escTrack(it.name)}</b><span class="block text-[10px] text-sub">${escTrack(it.reason)}</span></span>
+                            <span class="font-black text-amber-600 whitespace-nowrap">${it.qty > 1 ? it.qty + ' × ' : ''}${Number(it.price).toLocaleString()} so'm</span></label>`;
+                    });
+                    h += '</div>';
+                });
+                if (!d.have_location) h += `<p class="text-[11px] text-sub mb-2">📍 Joylashuvingiz aniqlanmadi — yaqin do'konlarni topish uchun joylashuvga ruxsat bering.</p>`;
+                h += `<p class="text-[11px] text-sub mb-2">💳 Tasdiqlasangiz, savat to'lovga o'tadi. Buyurtma karta orqali to'lov tasdiqlangandan keyin amalga oshadi.</p>`;
+                h += `<button type="button" onclick="aiAddSelected()" class="w-full py-3 rounded-2xl bg-amber-500 text-white font-black text-sm">Tasdiqlayman — savatga o'tish</button>`;
+                box.innerHTML = h;
+            } catch (e) { box.innerHTML = `<p class="text-xs text-center py-6" style="color:#dc2626">${escTrack(e.message)}</p>`; }
+        }
+        async function aiAddSelected() {
+            const sel = [...document.querySelectorAll('#ai-results input[data-ai]:checked')].map(c => aiItems[Number(c.dataset.ai)]);
+            if (!sel.length) return;
+            const pid = sel[0].partner_id;
+            const same = sel.filter(x => x.partner_id === pid);
+            if (same.length < sel.length) alert("Bir buyurtmada faqat bitta do'kondan olish mumkin — birinchi do'kon mahsulotlari qo'shildi.");
+            if (currentPartnerId !== pid && Object.keys(cart).length && !confirm("Savatda boshqa do'kon mahsulotlari bor. Savat tozalansinmi?")) return;
+            if (currentPartnerId !== pid) cart = {};
+            try { await loadProducts(pid, sel[0].partner_name); } catch (e) { alert(e.message); return; }
+            same.forEach(x => { const p = products.find(q => q.id === x.product_id); if (p) cart[p.id] = { product: p, qty: x.qty || 1 }; });
+            aiOrder = true;
+            paymentMethod = 'p2p';
+            updateCartBar();
+            closeAI();
+            setPayment('p2p');
+        }
+
         async function init() {
             setTimeout(() => {
                 const splash = document.getElementById("splash-screen");
@@ -619,6 +719,7 @@
                 }
                 
                 document.getElementById("profile-btn").classList.remove("hidden");
+                initAI();
                 allCities = me.cities || [];
 
                 if (!me.city_id) {
@@ -1134,6 +1235,7 @@
             const items = Object.values(cart);
             const bar = document.getElementById("cart-bar");
             if (items.length === 0) { 
+                aiOrder = false;
                 bar.classList.add("hidden"); 
                 return; 
             }
@@ -1492,6 +1594,11 @@
         }
 
         async function placeOrder() {
+            if (aiOrder && paymentMethod !== 'p2p') {
+                alert("AI orqali yig'ilgan buyurtma uchun oldindan to'lov (karta orqali) kerak.");
+                setPayment('p2p');
+                return;
+            }
             if (paymentMethod === 'p2p' && (!p2pCardInfo || !p2pCardInfo.available)) {
                 alert("Hozircha P2P (karta orqali) to'lov mavjud emas. Iltimos, boshqa to'lov usulini tanlang.");
                 return;
@@ -1519,8 +1626,10 @@
                     comment: comment,
                     location: userLocation,
                     items,
-                    use_cashback: useCashback 
+                    use_cashback: useCashback,
+                    via_ai: aiOrder
                 });
+                aiOrder = false;
 
                 document.getElementById("app").innerHTML = `
                     <div class="text-center py-16 card-bg rounded-3xl p-6 shadow-sm border my-4">

@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>ZooMo LED</title>
+<style>
+  html,body{margin:0;height:100%;background:#000;overflow:hidden;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  #ad{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:4vmin;color:#fff;transition:opacity .6s ease;opacity:1}
+  #ad.out{opacity:0}
+  #brand{font-size:5vmin;font-weight:800;letter-spacing:.3em;text-transform:uppercase;opacity:.85}
+  #title{font-size:15vmin;font-weight:900;line-height:1.05;margin:2vmin 0;text-shadow:0 .6vmin 2vmin rgba(0,0,0,.35);word-break:break-word}
+  #text{font-size:6.5vmin;font-weight:600;opacity:.95}
+  #dist{position:fixed;left:2vmin;bottom:2vmin;font-size:3.5vmin;opacity:.75;color:#fff}
+</style>
+</head>
+<body>
+<div id="ad" style="background:#f59e0b">
+  <div id="brand">ZOOMO</div>
+  <div id="title">ZooMo Delivery</div>
+  <div id="text"></div>
+</div>
+<div id="dist"></div>
+<script>
+(function(){
+  var ads=[],idx=0,pos=null,adEl=document.getElementById('ad'),timer=null,off=false;
+  function next(){
+    clearTimeout(timer);
+    if(off){adEl.style.display='none';document.getElementById('dist').textContent='';timer=setTimeout(next,10000);return;}
+    adEl.style.display='';
+    var a=ads.length?ads[idx%ads.length]:{brand:'ZOOMO',title:'ZooMo Delivery',text:'Tez va ishonchli yetkazish',bg_color:'#f59e0b',seconds:8};
+    if(ads.length)idx++;
+    setCard(a);
+    timer=setTimeout(next,(a.seconds||8)*1000);
+  }
+  function setCard(a){
+    adEl.classList.add('out');
+    setTimeout(function(){
+      adEl.style.background=a.bg_color||'#f59e0b';
+      document.getElementById('brand').textContent=a.brand||'ZOOMO';
+      document.getElementById('title').textContent=a.title||'';
+      document.getElementById('text').textContent=a.text||'';
+      document.getElementById('dist').textContent=(a.distance_km!=null)?('📍 '+a.distance_km+' km'):'';
+      adEl.classList.remove('out');
+    },350);
+  }
+  function load(){
+    var q=pos?('?lat='+pos.latitude+'&lng='+pos.longitude):'';
+    fetch('/courier/led/feed'+q,{credentials:'same-origin'}).then(function(r){off=(r.status===403);return r.ok?r.json():{ads:[]};})
+      .then(function(d){off=off||!!d.disabled;var cur=ads[(idx-1+ads.length)%Math.max(ads.length,1)];ads=d.ads||[];if(!ads.length)idx=0;})
+      .catch(function(){});
+  }
+  if(navigator.geolocation){
+    navigator.geolocation.watchPosition(function(p){pos=p.coords;},function(){},{enableHighAccuracy:true,maximumAge:5000,timeout:20000});
+  }
+  try{if(navigator.wakeLock)navigator.wakeLock.request('screen').catch(function(){});}catch(e){}
+  load();setTimeout(next,900);setInterval(load,20000);
+  document.addEventListener('visibilitychange',function(){try{if(!document.hidden&&navigator.wakeLock)navigator.wakeLock.request('screen').catch(function(){});}catch(e){}});
+})();
+</script>
+</body>
+</html>

@@ -57,6 +57,9 @@ from models import (
     Card,
     OperatorPermission,
     PaymentReceipt,
+    LedAd,
+    AIMessage,
+    AIMessageLog,
 )
 import card_security
 from auth import (
@@ -323,7 +326,10 @@ async def lifespan(app: FastAPI):
             print("[TELEGRAM WEBHOOK] TELEGRAM_BOT_TOKEN topilmadi — bot ishlamaydi.")
     except Exception as e:
         print(f"[TELEGRAM WEBHOOK XATOSI] {e!r}")
+    import asyncio as _asyncio
+    _ai_task = _asyncio.create_task(_ai_dispatcher_loop())
     yield
+    _ai_task.cancel()
     # Server to'xtatilganda Telegram uchun ochilgan HTTP ulanishlarni yopamiz
     await close_telegram_bot_client()
 
@@ -1130,6 +1136,7 @@ async def admin_dashboard(
             "analytics": analytics,
             "operator_perms": operator_perms,
             "section_labels": SECTION_LABELS_UZ,
+            "ai_help_on": _ai_flags(await _get_or_create_setting(db))["help"],
         },
     )
 
@@ -1256,6 +1263,17 @@ async def update_settings(
     km_road_factor: Optional[float] = Form(None),
     courier_delivery_per_km: Optional[float] = Form(None),
     courier_pickup_per_km: Optional[float] = Form(None),
+    ai_form: Optional[str] = Form(None),
+    ai_enabled: Optional[str] = Form(None),
+    ai_client_enabled: Optional[str] = Form(None),
+    ai_courier_enabled: Optional[str] = Form(None),
+    ai_partner_enabled: Optional[str] = Form(None),
+    ai_dispatcher_enabled: Optional[str] = Form(None),
+    ai_led_enabled: Optional[str] = Form(None),
+    ai_help_enabled: Optional[str] = Form(None),
+    ai_campaigns_enabled: Optional[str] = Form(None),
+    ai_delay_promo_amount: Optional[float] = Form(None),
+    ai_delay_promo_enabled: Optional[str] = Form(None),
     db: AsyncSession = Depends(get_db),
 ):
     try:
@@ -1307,6 +1325,20 @@ async def update_settings(
         if km_road_factor is not None: setting.km_road_factor = km_road_factor
         if courier_delivery_per_km is not None: setting.courier_delivery_per_km = courier_delivery_per_km
         if courier_pickup_per_km is not None: setting.courier_pickup_per_km = courier_pickup_per_km
+
+    # ---- ZooMo AI yoqish/o'chirish ----
+    if ai_form:
+        setting.ai_enabled = bool(ai_enabled)
+        setting.ai_client_enabled = bool(ai_client_enabled)
+        setting.ai_courier_enabled = bool(ai_courier_enabled)
+        setting.ai_partner_enabled = bool(ai_partner_enabled)
+        setting.ai_dispatcher_enabled = bool(ai_dispatcher_enabled)
+        setting.ai_led_enabled = bool(ai_led_enabled)
+        setting.ai_help_enabled = bool(ai_help_enabled)
+        setting.ai_campaigns_enabled = bool(ai_campaigns_enabled)
+        setting.ai_delay_promo_enabled = bool(ai_delay_promo_enabled)
+        if ai_delay_promo_amount is not None and ai_delay_promo_amount >= 0:
+            setting.ai_delay_promo_amount = ai_delay_promo_amount
 
     await db.commit()
     return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
@@ -1919,6 +1951,7 @@ async def auto_assign_nearest_courier(db: AsyncSession, order: Order) -> Optiona
 
     order.courier_id = nearest.id
     order.status = OrderStatus.ON_THE_WAY
+    order.on_the_way_at = datetime.utcnow()
     await _apply_pickup_bonus(db, order, nearest.id)
     await db.commit()
     return nearest
@@ -4520,6 +4553,7 @@ class ShopOrderBody(BaseModel):
     promo_code: Optional[str] = None
     location: Optional[dict] = None
     use_cashback: Optional[bool] = None
+    via_ai: Optional[bool] = None   # ZooMo AI orqali yig'ilgan buyurtma — oldindan to'lov shart
 
 
 @shop_router.get("/p2p-card")
@@ -4579,6 +4613,7 @@ async def shop_me(body: InitDataBody, db: AsyncSession = Depends(get_db)):
     cities = [{"id": c.id, "name": c.name} for c in cities_result.scalars().all()]
 
     referral_code = await get_or_create_referral_code(db, client)
+    client.last_active_at = datetime.utcnow()
     await db.commit()
 
     bot_username = await get_bot_username()
@@ -4984,6 +5019,9 @@ async def shop_create_order(body: ShopOrderBody, db: AsyncSession = Depends(get_
             courier_km_bonus = compute_courier_km_bonus(setting, distance_km)
 
     payment_method = body.payment_method or "cash"
+    if body.via_ai:
+        # AI buyurtma: to'lov (karta orqali) tasdiqlangandan KEYIN hamkorga boradi — qoida server tomonida majburiy
+        payment_method = "p2p"
 
     # ---- P2P TO'LOV: avval FAOL karta borligini tekshiramiz ----
     # (bo'lmasa, mijoz pulni qayerga o'tkazishini bilmay qoladi)
@@ -5086,6 +5124,16 @@ async def _get_own_partner(db: AsyncSession, current_user: User) -> PartnerProfi
     return partner
 
 
+def _touch_active(user, db_session=None) -> bool:
+    """Oxirgi faollikni belgilaydi (har 10 daqiqada bir marta — jonli yangilanishda bazani ortiqcha yozmaslik uchun)."""
+    now = datetime.utcnow()
+    la = getattr(user, "last_active_at", None)
+    if la is None or (now - la).total_seconds() > 600:
+        user.last_active_at = now
+        return True
+    return False
+
+
 @partner_router.get("", response_class=HTMLResponse)
 async def partner_dashboard(
     request: Request,
@@ -5093,6 +5141,8 @@ async def partner_dashboard(
     current_user: User = Depends(get_current_partner_user),
 ):
     partner = await _get_own_partner(db, current_user)
+    if _touch_active(current_user):
+        await db.commit()
 
     products_result = await db.execute(
         select(Product).where(Product.partner_id == partner.id).order_by(Product.id.desc())
@@ -5148,6 +5198,9 @@ async def partner_dashboard(
             "withdrawal_requests": withdrawal_requests,
             "cards": cards,
             "MAX_CARDS": partner_card_limit,
+            "ai_on": _ai_flags(await _get_or_create_setting(db))["partner"],
+            "ai_help_on": _ai_flags(await _get_or_create_setting(db))["help"],
+            "ai_led_on": _ai_flags(await _get_or_create_setting(db))["led"],
             "MIN_WITHDRAWAL_AMOUNT": MIN_WITHDRAWAL_AMOUNT,
             "MAX_WITHDRAWAL_AMOUNT": MAX_WITHDRAWAL_AMOUNT,
         },
@@ -5567,6 +5620,8 @@ async def courier_dashboard(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_courier_user),
 ):
+    if _touch_active(current_user):
+        await db.commit()
     profile_result = await db.execute(
         select(CourierProfile).where(CourierProfile.user_id == current_user.id)
     )
@@ -5676,6 +5731,9 @@ async def courier_dashboard(
             "my_active_orders": my_active_orders,
             "partner_phones": partner_phones,
             "courier_pct": courier_pct,
+            "ai_on": _ai_flags(setting)["courier"],
+            "ai_help_on": _ai_flags(setting)["help"],
+            "ai_led_on": _ai_flags(setting)["led"] and not (courier_profile is not None and courier_profile.led_enabled is False),
             "history_orders": history_orders,
             "withdrawal_requests": withdrawal_requests,
             "cards": cards,
@@ -5919,6 +5977,7 @@ async def courier_accept_order(
 
     order.courier_id = current_user.id
     order.status = OrderStatus.ON_THE_WAY
+    order.on_the_way_at = datetime.utcnow()
     await db.commit()
 
     try:
@@ -5970,8 +6029,896 @@ async def courier_mark_delivered(
 
     return RedirectResponse(url="/courier", status_code=status.HTTP_303_SEE_OTHER)
 
+# ==================== ZOOMO AI (aqlli yordamchi) ====================
+# Tashqi AI xizmatisiz, qoida va tarixiy ma'lumotlar asosida ishlaydi (kalit/pul kerak emas).
+# Admin umumiy yoki rollar bo'yicha (mijoz / kuryer / hamkor) yoqadi va o'chiradi.
+# O'chiq bo'lsa API 403 qaytaradi, panellarda bo'lim ko'rinmaydi.
+
+def _ai_flags(setting) -> dict:
+    master = bool(getattr(setting, "ai_enabled", True)) if setting is not None else True
+
+    def f(name):
+        v = getattr(setting, name, True) if setting is not None else True
+        return master and (True if v is None else bool(v))
+    return {"client": f("ai_client_enabled"), "courier": f("ai_courier_enabled"), "partner": f("ai_partner_enabled"),
+            "dispatcher": f("ai_dispatcher_enabled"), "led": f("ai_led_enabled"),
+            "help": f("ai_help_enabled"), "campaigns": f("ai_campaigns_enabled")}
+
+
+async def _ai_require(db: AsyncSession, role: str) -> SystemSetting:
+    setting = await _get_or_create_setting(db)
+    if not _ai_flags(setting).get(role):
+        raise HTTPException(status_code=403, detail="ZooMo AI hozircha o'chirilgan")
+    return setting
+
+
+def _ai_norm(s: str) -> str:
+    s = (s or "").lower()
+    for ch in ("’", "‘", "ʻ", "ʼ", "`", "´"):
+        s = s.replace(ch, "'")
+    return s
+
+
+_AI_QTY_WORDS = {
+    "bitta": 1, "bir": 1, "ikkita": 2, "ikki": 2, "uchta": 3, "uch": 3, "to'rtta": 4, "tortta": 4,
+    "beshta": 5, "besh": 5, "oltita": 6, "yettita": 7, "sakkizta": 8, "to'qqizta": 9, "o'nta": 10,
+    "один": 1, "одна": 1, "два": 2, "две": 2, "три": 3, "четыре": 4, "пять": 5,
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+}
+_AI_STOP = {
+    "aka", "bilan", "bitta", "ikkita", "uchta", "menga", "kerak", "olib", "ber", "bering", "iltimos",
+    "yegim", "kelyapti", "nimadir", "judayam", "bugun", "yana", "qo'shib", "ham", "uchun", "va",
+    "xohlayman", "istayman", "buyurtma", "bergin", "beray", "shu", "shunday", "juda", "kecha",
+    "хочу", "мне", "дайте", "пожалуйста", "please", "want", "need",
+}
+_AI_ALIASES = {"kola": ["kola", "cola", "кола"], "pitsa": ["pitsa", "pizza", "пицца"], "lavash": ["lavash", "лаваш"],
+               "burger": ["burger", "бургер"], "choy": ["choy", "chay", "чай", "tea"], "kofe": ["kofe", "coffee", "кофе"],
+               "sho'rva": ["sho'rva", "shorva", "sup", "суп"], "non": ["non", "хлеб"]}
+_AI_DRINK = ["kola", "cola", "sok", "limonad", "suv", "fanta", "pepsi", "choy", "ichimlik", "напит", "сок", "вода", "drink"]
+_AI_INTENTS = [
+    ("health", "Shamollash/og'riq uchun iliq va foydali taomlar",
+     ["tomog", "shamoll", "yo'tal", "yotal", "isitma", "kasal", "bosh og'ri", "bosh o'g'ri", "gripp", "горл", "простуд", "sore throat", "cold"],
+     ["sho'rva", "shorva", "limon", "choy", "asal", "mastava", "sup", "bulyon", "imbir", "суп", "чай", "tea", "soup"]),
+    ("mood", "Kayfiyatni ko'taradigan shirinliklar",
+     ["charcha", "horg'in", "holsiz", "kayfiyat", "xafa", "stress", "shirin", "tatli", "устал", "сладк", "sweet", "tired"],
+     ["shirin", "tort", "desert", "pirojn", "shokolad", "muzqaymoq", "kofe", "donut", "baklava", "cake", "торт", "кофе", "coffee", "dessert"]),
+    ("light", "Yengil va sog'lom variantlar",
+     ["yengil", "salat", "parhez", "diet", "sog'lom", "легк", "light"],
+     ["salat", "sho'rva", "yogurt", "meva", "grill", "sabzavot", "салат", "salad"]),
+    ("cold", "Chanqoqni bosadigan ichimliklar",
+     ["chanq", "sovuq", "muzdek", "issiq kun", "жажд", "thirst"], _AI_DRINK),
+    ("hearty", "To'yimli taomlar",
+     ["och ", "ochiqdim", "to'yim", "qorin", "голод", "hungry"],
+     ["osh", "lag'mon", "kebab", "shashlik", "burger", "lavash", "pitsa", "pizza", "somsa", "манты", "manti"]),
+    ("spicy", "Achchiq taomlar", ["achchiq", "spicy", "остр"], ["achchiq", "spicy", "острый", "lag'mon", "chili"]),
+]
+
+
+class AIAssistBody(BaseModel):
+    init_data: str
+    query: str
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+
+
+@shop_router.get("/ai/status")
+async def shop_ai_status(db: AsyncSession = Depends(get_db)):
+    setting = await _get_or_create_setting(db)
+    await db.commit()
+    fl = _ai_flags(setting)
+    return {"enabled": fl["client"], "help": fl["help"]}
+
+
+@shop_router.post("/ai/assist")
+async def shop_ai_assist(body: AIAssistBody, db: AsyncSession = Depends(get_db)):
+    """Mijoz matnini (yoki ovozdan matnga aylangan so'zini) tushunib, MIJOZGA ENG YAQIN do'kondan mos mahsulotlarni yig'adi.
+    Mijoz do'kon nomini aytsa — faqat o'sha do'kondan. Buyurtma faqat mijoz tasdig'i va to'lovdan keyin yuboriladi."""
+    tg_user = _get_telegram_user_or_403(body.init_data)
+    await _ai_require(db, "client")
+    q = _ai_norm(body.query).strip()[:300]
+    if len(q) < 2:
+        raise HTTPException(status_code=400, detail="Nima xohlayotganingizni yozing")
+
+    client = (await db.execute(select(User).where(_ident_cond(tg_user)))).scalars().first()
+    stmt = (
+        select(Product, PartnerProfile)
+        .join(PartnerProfile, Product.partner_id == PartnerProfile.id)
+        .where(Product.is_available == True, PartnerProfile.is_open == True)
+    )
+    if client and client.city_id:
+        stmt = stmt.where(PartnerProfile.city_id == client.city_id)
+    rows = (await db.execute(stmt.limit(1200))).all()
+
+    # Mijoz joylashuvi: avval hozirgi GPS, bo'lmasa saqlangan uy manzili
+    lat, lng = body.lat, body.lng
+    if (lat is None or lng is None) and client is not None:
+        lat, lng = getattr(client, "home_latitude", None), getattr(client, "home_longitude", None)
+    have_loc = lat is not None and lng is not None
+
+    def pdist(pr):
+        if not have_loc or pr.latitude is None or pr.longitude is None:
+            return None
+        return _haversine_km(lat, lng, pr.latitude, pr.longitude)
+
+    dist_cache = {}
+    for _, pr in rows:
+        if pr.id not in dist_cache:
+            dist_cache[pr.id] = pdist(pr)
+
+    def dkey(pid):  # yaqin birinchi; noma'lum masofa oxirida
+        d = dist_cache.get(pid)
+        return (d is None, d if d is not None else 0)
+
+    # Mijoz do'kon nomini aytdimi? («Evos dan 3 ta lavash»)
+    named = {}
+    for _, pr in rows:
+        bn = _ai_norm(pr.brand_name or "").strip()
+        if len(bn) >= 3 and bn in q:
+            named[pr.id] = pr.brand_name
+    if named:
+        rows = [(p, pr) for p, pr in rows if pr.id in named]
+
+    def hay(p):
+        return _ai_norm(f"{p.name} {p.description or ''} {p.category or ''}")
+
+    def mk(p, pr, qty, kind, reason):
+        d = dist_cache.get(pr.id)
+        return {"product_id": p.id, "name": p.name, "price": p.price, "partner_id": pr.id,
+                "partner_name": pr.brand_name, "qty": qty, "kind": kind, "reason": reason,
+                "image_url": p.image_url, "distance_km": round(d, 1) if d is not None else None}
+
+    tokens = [t for t in re.findall(r"[\w'‘’-]+", q) if t]
+    # 1) Aniq nom bo'yicha (miqdor bilan): "uchta lavash va bitta kola"
+    wanted = []   # [(stems, qty)]
+    for i, tok in enumerate(tokens):
+        if len(tok) < 3 or tok in _AI_STOP or tok in _AI_QTY_WORDS or tok.isdigit():
+            continue
+        if any(tok in _ai_norm(n) for n in named.values()):
+            continue  # do'kon nomining o'zi mahsulot emas
+        stems = _AI_ALIASES.get(tok, [tok])
+        stems = [s[:max(4, len(s) - 2)] if len(s) > 5 else s for s in stems]
+        qty = 1
+        for j in (i - 1, i - 2, i + 1):
+            if 0 <= j < len(tokens):
+                t = tokens[j]
+                if t in _AI_QTY_WORDS:
+                    qty = _AI_QTY_WORDS[t]
+                    break
+                if t.isdigit() and 0 < int(t) <= 30:
+                    qty = int(t)
+                    break
+        wanted.append((stems, min(qty, 20)))
+    # Faqat menyuda bor so'zlarni "buyurtma so'zi" deb olamiz
+    cand = {}  # partner_id -> {wanted_index: (product, partner, qty)}
+    for wi, (stems, qty) in enumerate(wanted):
+        for p, pr in rows:
+            if any(s in _ai_norm(p.name) for s in stems):
+                cur = cand.setdefault(pr.id, {})
+                if wi not in cur or p.price < cur[wi][0].price:
+                    cur[wi] = (p, pr, qty)
+    items = []
+    summary = ""
+    if cand:
+        # Eng ko'p so'rovni qoplaydigan do'kon; teng bo'lsa — mijozga eng yaqini
+        best_pid = sorted(cand.keys(), key=lambda pid: (-len(cand[pid]), dkey(pid)))[0]
+        for wi in sorted(cand[best_pid]):
+            p, pr, qty = cand[best_pid][wi]
+            items.append(mk(p, pr, qty, "match", "So'rovingizga mos"))
+        pr0 = cand[best_pid][sorted(cand[best_pid])[0]][1]
+        # Aqlli qo'shimcha: ichimlik
+        if not any(any(d in _ai_norm(i["name"]) for d in _AI_DRINK) for i in items):
+            drinks = sorted([(p, pr) for p, pr in rows if pr.id == best_pid and any(d in hay(p) for d in _AI_DRINK)],
+                            key=lambda x: x[0].price)
+            if drinks:
+                items.append(mk(drinks[0][0], drinks[0][1], 1, "addon", "Ichimlik ham qo'shilsinmi?"))
+        d0 = dist_cache.get(best_pid)
+        where = f"«{pr0.brand_name}»" + (f" ({d0:.1f} km)" if d0 is not None else "")
+        missing = len(wanted) - len(cand[best_pid])
+        summary = (f"{where} do'konidan topdim" if named else f"Sizga eng yaqin: {where}") + \
+                  (f". {missing} ta narsa bu do'konda yo'q." if missing > 0 else ".") + " Tasdiqlang."
+    else:
+        # 2) Niyat bo'yicha (kayfiyat, salomatlik...) — yaqin do'konlar birinchi
+        padded = q + " "
+        for key, label, triggers, w in _AI_INTENTS:
+            if any(t in padded for t in triggers):
+                scored = []
+                for p, pr in rows:
+                    h = hay(p)
+                    sc = sum(1 for x in w if x in h)
+                    if sc:
+                        scored.append((p, pr, sc))
+                scored.sort(key=lambda x: (dkey(x[1].id), -x[2], x[0].price))
+                seen = {}
+                for p, pr, sc in scored:
+                    if seen.get(pr.id, 0) >= 2:
+                        continue
+                    seen[pr.id] = seen.get(pr.id, 0) + 1
+                    items.append(mk(p, pr, 1, "idea", label))
+                    if len(items) >= 8:
+                        break
+                summary = label + (" — eng yaqin joylardan" if have_loc else "")
+                break
+        if not items:
+            words = [t for t in tokens if len(t) >= 4 and t not in _AI_STOP]
+            scored = []
+            for p, pr in rows:
+                h = hay(p)
+                sc = sum(1 for x in words if x[:max(4, len(x) - 2)] in h)
+                if sc:
+                    scored.append((p, pr, sc))
+            scored.sort(key=lambda x: (-x[2], dkey(x[1].id), x[0].price))
+            for p, pr, sc in scored[:8]:
+                items.append(mk(p, pr, 1, "idea", "Qidiruv bo'yicha"))
+            if not items and named:
+                summary = "«" + ", ".join(named.values()) + "» do'konida bunday mahsulot topilmadi. Do'kon nomisiz yozib ko'ring — yaqin joylardan qidiraman."
+            else:
+              summary = "Qidiruv natijalari" if items else \
+                "Mos mahsulot topilmadi. Boshqacha yozib ko'ring (masalan: «uchta lavash va bitta kola» yoki «tomog'im og'riyapti»)."
+    return {"enabled": True, "summary": summary, "items": items, "have_location": have_loc,
+            "named_partner": bool(named), "needs_payment": True}
+
+
+# ---------- Kuryer: aqlli maslahatchi ----------
+@courier_router_app.get("/ai/insights")
+async def courier_ai_insights(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_courier_user),
+):
+    setting = await _ai_require(db, "courier")
+    cp = (await db.execute(select(CourierProfile).where(CourierProfile.user_id == current_user.id))).scalars().first()
+    pct = (setting.courier_share_percent or 0) / 100
+    stmt = (
+        select(Order).options(selectinload(Order.partner))
+        .where(or_(
+            and_(Order.status == OrderStatus.LOOKING_FOR_COURIER, Order.courier_id.is_(None)),
+            and_(Order.courier_id == current_user.id, Order.status == OrderStatus.ON_THE_WAY),
+        ))
+    )
+    if current_user.city_id is not None:
+        stmt = stmt.outerjoin(PartnerProfile, Order.partner_id == PartnerProfile.id).where(
+            or_(PartnerProfile.city_id == current_user.city_id, Order.courier_id == current_user.id))
+    orders = (await db.execute(stmt.limit(60))).scalars().all()
+    avail = [o for o in orders if o.courier_id is None]
+    mine = [o for o in orders if o.courier_id == current_user.id]
+
+    def plat(o): return o.partner.latitude if o.partner else None
+    def plng(o): return o.partner.longitude if o.partner else None
+
+    ranked = []
+    for o in avail:
+        pk = _road_km(setting, cp.latitude, cp.longitude, plat(o), plng(o)) if cp else None
+        dk = o.distance_km
+        if dk is None:
+            dk = _road_km(setting, plat(o), plng(o), o.delivery_latitude, o.delivery_longitude)
+        earn = (o.delivery_fee or 0) * pct + compute_courier_km_bonus(setting, dk) + compute_courier_pickup_bonus(setting, pk)
+        total_km = (pk or 0) + (dk or 0)
+        ranked.append({"id": o.id, "earn": round(earn), "pickup_km": pk, "dist_km": dk,
+                       "per_km": round(earn / total_km) if total_km > 0.2 else None,
+                       "brand": o.partner.brand_name if o.partner else ""})
+    tips = []
+    with_km = [r for r in ranked if r["per_km"] is not None]
+    if with_km:
+        b = max(with_km, key=lambda r: r["per_km"])
+        tips.append({"type": "best", "icon": "🏆", "order_ids": [b["id"]],
+                     "text": f"Eng foydali buyurtma: #{b['id']} ({b['brand']}) — taxminan {b['earn']:,} so'm, har km ≈ {b['per_km']:,} so'm.".replace(",", " ")})
+        near = min((r for r in ranked if r["pickup_km"] is not None), key=lambda r: r["pickup_km"], default=None)
+        if near and near["id"] != b["id"]:
+            tips.append({"type": "near", "icon": "📍", "order_ids": [near["id"]],
+                         "text": f"Eng yaqin do'kon: #{near['id']} — {near['pickup_km']:.1f} km."})
+    # Batching: bir yo'nalishdagi buyurtmalarni birlashtirish
+    pool = [o for o in avail + mine if o.partner and o.partner.latitude is not None and o.delivery_latitude is not None]
+    used, groups = set(), []
+    for o in pool:
+        if o.id in used:
+            continue
+        g = [o]
+        for o2 in pool:
+            if o2.id == o.id or o2.id in used:
+                continue
+            if (_haversine_km(plat(o), plng(o), plat(o2), plng(o2)) <= 1.2 and
+                    _haversine_km(o.delivery_latitude, o.delivery_longitude, o2.delivery_latitude, o2.delivery_longitude) <= 2.5):
+                g.append(o2)
+        if len(g) >= 2:
+            groups.append(g[:3])
+            used.update(x.id for x in g[:3])
+    for g in groups:
+        ids = [x.id for x in g]
+        tips.append({"type": "batch", "icon": "🔗", "order_ids": ids,
+                     "text": "Birga olib ketish mumkin: " + ", ".join(f"#{i}" for i in ids) + " — do'konlar va manzillar bir yo'nalishda."})
+    w = getattr(setting.weather_condition, "value", "clear")
+    if w in ("rain", "snow"):
+        tips.append({"type": "weather", "icon": "🌧️", "order_ids": [], "text": "Ob-havo yomon: yo'lda ehtiyot bo'ling, tezlikni pasaytiring."})
+    elif w == "hot":
+        tips.append({"type": "weather", "icon": "☀️", "order_ids": [], "text": "Issiq kun: suv olib yuring, buyurtmani soyada kuting."})
+    hour = (datetime.utcnow() + UZB_TZ_OFFSET).hour
+    if hour in (12, 13, 18, 19, 20):
+        tips.append({"type": "peak", "icon": "⏰", "order_ids": [], "text": "Hozir yuqori talab vaqti — buyurtmalar ko'p bo'ladi, onlayn turing."})
+    if not avail and not mine:
+        tips.append({"type": "idle", "icon": "💤", "order_ids": [], "text": "Hozir bo'sh buyurtma yo'q. Do'konlar atrofida turish tezroq buyurtma olishga yordam beradi."})
+    return {"enabled": True, "tips": tips, "ranked": ranked[:10]}
+
+
+# ---------- Hamkor: bashorat va ovozli/matnli buyruq ----------
+@partner_router.get("/ai/insights")
+async def partner_ai_insights(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_partner_user),
+):
+    setting = await _ai_require(db, "partner")
+    partner = await _get_own_partner(db, current_user)
+    now = datetime.utcnow() + UZB_TZ_OFFSET
+    since = datetime.utcnow() - timedelta(days=56)
+    orders = (await db.execute(
+        select(Order).where(Order.partner_id == partner.id, Order.created_at >= since, Order.status != OrderStatus.CANCELLED)
+    )).scalars().all()
+    wd = now.weekday()
+    names = ["Dushanba", "Seshanba", "Chorshanba", "Payshanba", "Juma", "Shanba", "Yakshanba"]
+    by_hour = [0] * 24
+    days_seen = set()
+    all_days = set()
+    for o in orders:
+        t = o.created_at + UZB_TZ_OFFSET
+        all_days.add(t.date())
+        if t.weekday() == wd:
+            by_hour[t.hour] += 1
+            days_seen.add(t.date())
+    n_days = max(len(days_seen), 1)
+    avg_hour = [round(c / n_days, 1) for c in by_hour]
+    expected_today = round(sum(avg_hour[now.hour:]), 1)
+    peak = sorted(range(24), key=lambda h: -avg_hour[h])[:2]
+    peak = [h for h in peak if avg_hour[h] > 0]
+    top = {}
+    if orders:
+        ids = [o.id for o in orders]
+        items = (await db.execute(select(OrderItem.product_name, func.sum(OrderItem.quantity))
+                                  .where(OrderItem.order_id.in_(ids)).group_by(OrderItem.product_name))).all()
+        top = sorted(items, key=lambda r: -(r[1] or 0))[:5]
+    insights = []
+    if not orders:
+        insights.append({"icon": "📊", "text": "Hali tarix yetarli emas. Buyurtmalar to'plangach, bashorat aniqroq bo'ladi."})
+    else:
+        if peak:
+            insights.append({"icon": "⏰", "text": f"{names[wd]} kunlari odatda eng ko'p buyurtma soat " + ", ".join(f"{h}:00" for h in sorted(peak)) + " atrofida keladi."})
+        insights.append({"icon": "📈", "text": f"Bugun yana taxminan {expected_today:g} ta buyurtma kutilmoqda (so'nggi {n_days} ta {names[wd].lower()} tahlili)."})
+    w = getattr(setting.weather_condition, "value", "clear")
+    wmsg = {"rain": "Yomg'ir kutilmoqda: yetkazish buyurtmalari odatda ortadi. Issiq taomlar va xamir/qiyma zaxirasini ~20% ko'paytiring.",
+            "snow": "Qor: yetkazish talabi ortadi. Issiq taomlar zaxirasini ko'paytiring.",
+            "cold": "Sovuq havo: issiq sho'rva va ichimliklar talabi ortadi.",
+            "hot": "Issiq havo: sovuq ichimlik, salat va muzqaymoq talabi ortadi.",
+            "windy": "Shamol: kuryer kechikishi mumkin, taomlarni oldindan tayyorlab qo'ying."}.get(w)
+    if wmsg:
+        insights.append({"icon": "🌦️", "text": wmsg})
+    if wd >= 4:
+        insights.append({"icon": "🎉", "text": "Hafta oxiri yaqin: kechki soatlarda talab odatda yuqori bo'ladi."})
+    if top:
+        insights.append({"icon": "🔥", "text": "Eng ko'p sotilganlar: " + ", ".join(f"{n} ({int(c or 0)})" for n, c in top)})
+    return {"enabled": True, "insights": insights, "hours": avg_hour, "weekday": names[wd], "now_hour": now.hour}
+
+
+class PartnerAICommand(BaseModel):
+    text: str
+
+
+@partner_router.post("/ai/command")
+async def partner_ai_command(
+    body: PartnerAICommand,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_partner_user),
+):
+    """«Tovuq tugadi» → tovuqli taomlar menyudan yashiriladi; «tovuq keldi» → qayta ko'rsatiladi."""
+    await _ai_require(db, "partner")
+    partner = await _get_own_partner(db, current_user)
+    t = _ai_norm(body.text).strip()[:200]
+    off_w = ("tugadi", "tugab", "qolmadi", "yo'q", "yoq", "tugagan", "закончил", "нет", "out of")
+    on_w = ("keldi", "bor", "qaytdi", "mavjud", "paydo", "есть", "back", "available")
+    if any(w in t for w in off_w):
+        make = False
+    elif any(w in t for w in on_w):
+        make = True
+    else:
+        raise HTTPException(status_code=400, detail="Masalan: «Tovuq tugadi» yoki «Tovuq keldi» deb yozing")
+    stop = set(off_w) | set(on_w) | {"va", "bilan", "hamma", "barcha", "ham", "endi", "bugun"}
+    words = [w for w in re.findall(r"[\w']+", t) if len(w) >= 3 and w not in stop]
+    if not words:
+        raise HTTPException(status_code=400, detail="Qaysi mahsulot ekanini yozing (masalan: «Tovuq tugadi»)")
+    prods = (await db.execute(select(Product).where(Product.partner_id == partner.id))).scalars().all()
+    stems = [w[:max(4, len(w) - 2)] if len(w) > 5 else w for w in words]
+    hit = [p for p in prods if any(s in _ai_norm(f"{p.name} {p.description or ''}") for s in stems)]
+    if not hit:
+        raise HTTPException(status_code=404, detail="Menyuda bunday mahsulot topilmadi")
+    changed = []
+    for p in hit:
+        if bool(p.is_available) != make:
+            p.is_available = make
+            changed.append(p.name)
+    await db.commit()
+    alts = []
+    if not make:
+        cats = {p.category for p in hit}
+        alts = [p.name for p in prods if p.is_available and p.category in cats][:4]
+    return {"ok": True, "available": make, "changed": changed, "matched": [p.name for p in hit], "alternatives": alts}
+
+
+# ---------- AI-dispetcher: kechikishni avtomatik hal qilish ----------
+async def ai_dispatcher_tick() -> int:
+    """Kuryer kechiksa — operator aralashuvisiz mijozga uzr xabari va promo-kod yuboradi.
+    Kutilgan vaqt = 12 daqiqa + masofa(km) * 4 daqiqa; unga 5 daqiqa qo'shilsa kechikkan hisoblanadi."""
+    import secrets as _sec
+    sent = 0
+    async with AsyncSessionLocal() as db:
+        setting = await _get_or_create_setting(db)
+        if not _ai_flags(setting)["dispatcher"]:
+            return 0
+        now = datetime.utcnow()
+        orders = (await db.execute(
+            select(Order).options(selectinload(Order.client))
+            .where(Order.status == OrderStatus.ON_THE_WAY, Order.ai_delay_notified != True,
+                   Order.on_the_way_at.is_not(None))
+            .limit(100)
+        )).scalars().all()
+        for o in orders:
+            expected = 12 + (o.distance_km or 3.0) * 4 + 5
+            late_min = (now - o.on_the_way_at).total_seconds() / 60 - expected
+            if late_min < 0:
+                continue
+            o.ai_delay_notified = True
+            promo_txt = ""
+            amount = float(setting.ai_delay_promo_amount or 0)
+            if bool(getattr(setting, "ai_delay_promo_enabled", False)) and amount > 0:
+                code = "ZM" + _sec.token_hex(3).upper()
+                db.add(PromoCode(code=code, discount_amount=amount, max_uses=1, is_active=True,
+                                 expires_at=now + timedelta(days=14)))
+                promo_txt = f"\nUzr sifatida keyingi buyurtmangizga {int(amount):,} so'm chegirma: <b>{code}</b>".replace(",", " ")
+            client = o.client
+            if client and client.telegram_id:
+                try:
+                    await send_telegram_message(
+                        client.telegram_id,
+                        f"🛵 Buyurtma #{o.id}: kuryerimiz yo'ldagi sabablar bilan biroz kechikmoqda. Kechirasiz, tez orada yetib boradi.{promo_txt}",
+                    )
+                    sent += 1
+                except Exception as e:
+                    print(f"[AI-DISPETCHER] xabar yuborilmadi: {e!r}")
+        await db.commit()
+    return sent
+
+
+async def _ai_dispatcher_loop():
+    import asyncio
+    while True:
+        try:
+            await asyncio.sleep(60)
+            await ai_dispatcher_tick()
+            await ai_campaign_tick()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            print(f"[AI-DISPETCHER XATO] {e!r}")
+
+
+# ---------- LED reklama (kuryer sumkasining orqa-pastki ekrani) ----------
+# Hammasini FAQAT admin boshqaradi: hamkor reklama SO'RAYDI (pending), adminga to'lov qiladi,
+# admin tasdiqlagach (approved) AI navbatiga qo'shiladi. Kuryer faqat ko'radi.
+class LedAdBody(BaseModel):
+    title: str
+    text: Optional[str] = ""
+    bg_color: Optional[str] = "#f59e0b"
+    radius_km: Optional[float] = 3.0
+
+
+class LedApproveBody(BaseModel):
+    days: int = 7
+    paid_amount: float = 0.0
+
+
+class LedUpdateBody(BaseModel):
+    title: Optional[str] = None
+    text: Optional[str] = None
+    radius_km: Optional[float] = None
+    bg_color: Optional[str] = None
+
+
+def _led_live(a: LedAd, now=None) -> bool:
+    now = now or datetime.utcnow()
+    return bool(a.is_active) and a.status == "approved" and (a.expires_at is None or a.expires_at > now)
+
+
+def _led_dict(a: LedAd) -> dict:
+    expired = a.status == "approved" and a.expires_at is not None and a.expires_at <= datetime.utcnow()
+    return {"id": a.id, "title": a.title, "text": a.text or "", "bg_color": a.bg_color or "#f59e0b",
+            "radius_km": a.radius_km or 3.0, "is_active": bool(a.is_active), "status": ("expired" if expired else (a.status or "pending")),
+            "paid_amount": a.paid_amount or 0.0, "expires_at": a.expires_at.isoformat() if a.expires_at else None,
+            "admin_note": a.admin_note or "", "partner_id": a.partner_id,
+            "brand": a.partner.brand_name if a.partner else "ZooMo"}
+
+
+def _led_clean(body: LedAdBody):
+    title = (body.title or "").strip()[:60]
+    if not title:
+        raise HTTPException(status_code=400, detail="Reklama sarlavhasini yozing")
+    color = body.bg_color if re.fullmatch(r"#[0-9a-fA-F]{6}", body.bg_color or "") else "#f59e0b"
+    radius = min(max(body.radius_km or 3.0, 0.5), 30.0)
+    return title, (body.text or "").strip()[:120], color, radius
+
+
+@partner_router.get("/ai/led")
+async def partner_led_list(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_partner_user)):
+    await _ai_require(db, "led")
+    partner = await _get_own_partner(db, current_user)
+    ads = (await db.execute(select(LedAd).options(selectinload(LedAd.partner)).where(LedAd.partner_id == partner.id)
+                            .order_by(LedAd.id.desc()))).scalars().all()
+    return {"ads": [_led_dict(a) for a in ads], "pay_card": await _get_topup_card_info(db)}
+
+
+@partner_router.post("/ai/led")
+async def partner_led_create(body: LedAdBody, db: AsyncSession = Depends(get_db),
+                             current_user: User = Depends(get_current_partner_user)):
+    """Hamkor reklama SO'ROVI yuboradi. U ekranga chiqmaydi — admin to'lovni tasdiqlab yoqmaguncha."""
+    await _ai_require(db, "led")
+    partner = await _get_own_partner(db, current_user)
+    title, text, color, radius = _led_clean(body)
+    cnt = (await db.execute(select(func.count(LedAd.id)).where(LedAd.partner_id == partner.id, LedAd.status == "pending"))).scalar() or 0
+    if cnt >= 5:
+        raise HTTPException(status_code=400, detail="Tasdiq kutayotgan 5 tadan ortiq so'rov bo'lishi mumkin emas")
+    db.add(LedAd(partner_id=partner.id, title=title, text=text, bg_color=color, radius_km=radius, status="pending", is_active=False))
+    await db.commit()
+    return {"ok": True}
+
+
+@partner_router.post("/ai/led/{ad_id}/delete")
+async def partner_led_delete(ad_id: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_partner_user)):
+    """Hamkor faqat hali tasdiqlanmagan (yoki rad etilgan) so'rovini bekor qila oladi."""
+    await _ai_require(db, "led")
+    partner = await _get_own_partner(db, current_user)
+    ad = (await db.execute(select(LedAd).where(LedAd.id == ad_id, LedAd.partner_id == partner.id))).scalars().first()
+    if not ad:
+        raise HTTPException(status_code=404, detail="Reklama topilmadi")
+    if ad.status == "approved":
+        raise HTTPException(status_code=403, detail="Tasdiqlangan reklamani faqat admin o'zgartiradi")
+    await db.delete(ad)
+    await db.commit()
+    return {"ok": True}
+
+
+@courier_router_app.get("/led", response_class=HTMLResponse)
+async def courier_led_page(request: Request, db: AsyncSession = Depends(get_db),
+                           current_user: User = Depends(get_current_courier_user)):
+    await _ai_require(db, "led")
+    return templates.TemplateResponse(request=request, name="led.html", context={"current_user": current_user})
+
+
+def _led_playlist(ads: list, now=None) -> list:
+    """AI efir navbati (TV kabi): har reklamaga og'irlik beriladi — kuryerga yaqinroq do'kon va ko'proq
+    to'lagan reklama ko'proq efir oladi. "Silliq og'irlikli aylanma" (smooth weighted round-robin)
+    bir reklamani ketma-ket takrorlamaydi, hammasi adolatli tarqaladi."""
+    if not ads:
+        return []
+    for a in ads:
+        w = 1.0
+        if a["distance_km"] is not None and a["radius_km"]:
+            w += 2.0 * max(0.0, 1.0 - a["distance_km"] / a["radius_km"])
+        w += min((a["paid_amount"] or 0) / 100000.0, 3.0)
+        a["_w"] = w
+        a["_cur"] = 0.0
+    total = sum(a["_w"] for a in ads)
+    slots = max(len(ads), min(14, int(round(total))))
+    out = []
+    last = None
+    for _ in range(slots):
+        for a in ads:
+            a["_cur"] += a["_w"]
+        pick = max((a for a in ads if a["id"] != last) or ads, key=lambda a: a["_cur"])
+        pick["_cur"] -= total
+        last = pick["id"]
+        item = {k: v for k, v in pick.items() if not k.startswith("_")}
+        item["seconds"] = int(7 + min(5, round(pick["_w"])))
+        out.append(item)
+    return out
+
+
+@courier_router_app.get("/led/feed")
+async def courier_led_feed(lat: Optional[float] = None, lng: Optional[float] = None,
+                           db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_courier_user)):
+    """Kuryer joylashuviga qarab AI tuzgan efir navbati. Faqat admin tasdiqlagan, to'langan, muddati tugamagan reklamalar."""
+    await _ai_require(db, "led")
+    cp = (await db.execute(select(CourierProfile).where(CourierProfile.user_id == current_user.id))).scalars().first()
+    if cp is not None and cp.led_enabled is False:
+        return {"ads": [], "disabled": True}
+    ads = (await db.execute(select(LedAd).options(selectinload(LedAd.partner))
+                            .where(LedAd.is_active == True, LedAd.status == "approved").limit(300))).scalars().all()
+    now = datetime.utcnow()
+    cand = []
+    for a in ads:
+        if not _led_live(a, now):
+            continue
+        p = a.partner
+        if p is not None and p.is_open is False:
+            continue
+        dist = None
+        if lat is not None and lng is not None and p is not None and p.latitude is not None and p.longitude is not None:
+            dist = _haversine_km(lat, lng, p.latitude, p.longitude)
+            if dist > (a.radius_km or 3.0):
+                continue
+        d = _led_dict(a)
+        d["distance_km"] = round(dist, 2) if dist is not None else None
+        cand.append(d)
+    return {"ads": _led_playlist(cand), "disabled": False}
+
+
+ai_admin_router = APIRouter(tags=["ZooMo AI Admin"])
+
+
+async def _led_get(db, ad_id):
+    ad = (await db.execute(select(LedAd).where(LedAd.id == ad_id))).scalars().first()
+    if not ad:
+        raise HTTPException(status_code=404, detail="Reklama topilmadi")
+    return ad
+
+
+@ai_admin_router.get("/admin/ai/led")
+async def admin_led_list(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_admin_user)):
+    ads = (await db.execute(select(LedAd).options(selectinload(LedAd.partner)).order_by(LedAd.id.desc()).limit(300))).scalars().all()
+    couriers = (await db.execute(select(CourierProfile, User).join(User, CourierProfile.user_id == User.id).limit(300))).all()
+    return {"ads": [_led_dict(a) for a in ads],
+            "couriers": [{"id": c.id, "name": u.full_name, "led_enabled": c.led_enabled is not False} for c, u in couriers]}
+
+
+@ai_admin_router.post("/admin/ai/led")
+async def admin_led_create(body: LedAdBody, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_admin_user)):
+    title, text, color, radius = _led_clean(body)
+    db.add(LedAd(partner_id=None, title=title, text=text, bg_color=color, radius_km=30.0 if not body.radius_km else radius,
+                 status="approved", is_active=True))
+    await db.commit()
+    return {"ok": True}
+
+
+@ai_admin_router.post("/admin/ai/led/{ad_id}/approve")
+async def admin_led_approve(ad_id: int, body: LedApproveBody, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_admin_user)):
+    """To'lov qabul qilingach tasdiqlash: necha kunga va qancha to'langani (efir ulushiga ta'sir qiladi)."""
+    ad = await _led_get(db, ad_id)
+    days = min(max(int(body.days or 0), 1), 365)
+    ad.status = "approved"
+    ad.is_active = True
+    ad.paid_amount = max(float(body.paid_amount or 0), 0.0)
+    ad.expires_at = datetime.utcnow() + timedelta(days=days)
+    await db.commit()
+    return {"ok": True}
+
+
+@ai_admin_router.post("/admin/ai/led/{ad_id}/reject")
+async def admin_led_reject(ad_id: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_admin_user)):
+    ad = await _led_get(db, ad_id)
+    ad.status = "rejected"
+    ad.is_active = False
+    await db.commit()
+    return {"ok": True}
+
+
+@ai_admin_router.post("/admin/ai/led/{ad_id}/toggle")
+async def admin_led_toggle(ad_id: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_admin_user)):
+    ad = await _led_get(db, ad_id)
+    if ad.status != "approved":
+        raise HTTPException(status_code=400, detail="Avval to'lovni tasdiqlang")
+    ad.is_active = not ad.is_active
+    await db.commit()
+    return {"ok": True, "is_active": ad.is_active}
+
+
+@ai_admin_router.post("/admin/ai/led/{ad_id}/update")
+async def admin_led_update(ad_id: int, body: LedUpdateBody, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_admin_user)):
+    ad = await _led_get(db, ad_id)
+    if body.title is not None and body.title.strip():
+        ad.title = body.title.strip()[:60]
+    if body.text is not None:
+        ad.text = body.text.strip()[:120]
+    if body.radius_km is not None:
+        ad.radius_km = min(max(body.radius_km, 0.5), 30.0)
+    if body.bg_color and re.fullmatch(r"#[0-9a-fA-F]{6}", body.bg_color):
+        ad.bg_color = body.bg_color
+    await db.commit()
+    return {"ok": True}
+
+
+@ai_admin_router.post("/admin/ai/led/{ad_id}/delete")
+async def admin_led_delete(ad_id: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_admin_user)):
+    ad = (await db.execute(select(LedAd).where(LedAd.id == ad_id))).scalars().first()
+    if ad:
+        await db.delete(ad)
+        await db.commit()
+    return {"ok": True}
+
+
+@ai_admin_router.post("/admin/ai/led/courier/{cp_id}/toggle")
+async def admin_led_courier_toggle(cp_id: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_admin_user)):
+    cp = (await db.execute(select(CourierProfile).where(CourierProfile.id == cp_id))).scalars().first()
+    if not cp:
+        raise HTTPException(status_code=404, detail="Kuryer topilmadi")
+    cp.led_enabled = not (cp.led_enabled is not False)
+    await db.commit()
+    return {"ok": True, "led_enabled": cp.led_enabled}
+
+
+# ---------- AI yordamchi (rolga mos qo'llanma) ----------
+import ai_help_kb
+
+
+class AIHelpBody(BaseModel):
+    q: str = ""
+
+
+class AIHelpShopBody(BaseModel):
+    init_data: str
+    q: str = ""
+
+
+@shop_router.post("/ai/help")
+async def shop_ai_help(body: AIHelpShopBody, db: AsyncSession = Depends(get_db)):
+    _get_telegram_user_or_403(body.init_data)
+    await _ai_require(db, "help")
+    return ai_help_kb.answer("client", body.q[:300])
+
+
+@courier_router_app.post("/ai/help")
+async def courier_ai_help(body: AIHelpBody, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_courier_user)):
+    await _ai_require(db, "help")
+    return ai_help_kb.answer("courier", body.q[:300])
+
+
+@partner_router.post("/ai/help")
+async def partner_ai_help(body: AIHelpBody, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_partner_user)):
+    await _ai_require(db, "help")
+    return ai_help_kb.answer("partner", body.q[:300])
+
+
+# ---------- Admin AI xabarlari (bildirishnoma kampaniyalari) ----------
+class AIMessageBody(BaseModel):
+    title: Optional[str] = ""
+    text: str
+    audience: str = "client"
+    inactive_hours: Optional[int] = None
+    repeat_hours: Optional[int] = 168
+
+
+def _aim_dict(m: AIMessage) -> dict:
+    return {"id": m.id, "title": m.title, "text": m.text, "audience": m.audience, "inactive_hours": m.inactive_hours,
+            "repeat_hours": m.repeat_hours, "is_active": bool(m.is_active), "sent_count": m.sent_count or 0,
+            "last_run_at": m.last_run_at.isoformat() if m.last_run_at else None}
+
+
+def _aim_text(m: AIMessage) -> str:
+    return "📣 " + html.escape(m.text)
+
+
+async def _aim_send(db: AsyncSession, m: AIMessage, users: list) -> int:
+    import asyncio as _a
+    sent = 0
+    for u in users:
+        if not u.telegram_id:
+            continue
+        try:
+            ok = await send_telegram_message(u.telegram_id, _aim_text(m))
+        except Exception as e:
+            print(f"[AI-XABAR] yuborilmadi: {e!r}")
+            ok = False
+        if ok is not False:
+            db.add(AIMessageLog(message_id=m.id, user_id=u.id))
+            sent += 1
+        await _a.sleep(0.05)
+    m.sent_count = (m.sent_count or 0) + sent
+    m.last_run_at = datetime.utcnow()
+    await db.commit()
+    return sent
+
+
+async def ai_campaign_tick() -> int:
+    """«N soat kirmaganlarga» xabarlar: har daqiqada tekshiriladi, bir mijozga takror oralig'ida qayta yuborilmaydi."""
+    total = 0
+    async with AsyncSessionLocal() as db:
+        setting = await _get_or_create_setting(db)
+        if not _ai_flags(setting)["campaigns"]:
+            return 0
+        now = datetime.utcnow()
+        msgs = (await db.execute(select(AIMessage).where(AIMessage.is_active == True, AIMessage.inactive_hours.is_not(None)))).scalars().all()
+        role_map = {"client": UserRole.CLIENT, "courier": UserRole.COURIER, "partner": UserRole.PARTNER}
+        for m in msgs:
+            role = role_map.get(m.audience)
+            if role is None:
+                continue
+            cutoff = now - timedelta(hours=max(int(m.inactive_hours or 1), 1))
+            cands = (await db.execute(
+                select(User).where(User.role == role, User.is_active == True, User.telegram_id.is_not(None),
+                                   func.coalesce(User.last_active_at, User.created_at) < cutoff).limit(300)
+            )).scalars().all()
+            if not cands:
+                continue
+            gap = now - timedelta(hours=max(int(m.repeat_hours or 24), 1))
+            recent = set(r[0] for r in (await db.execute(
+                select(AIMessageLog.user_id).where(AIMessageLog.message_id == m.id, AIMessageLog.sent_at > gap))).all())
+            todo = [u for u in cands if u.id not in recent][:100]
+            if todo:
+                total += await _aim_send(db, m, todo)
+    return total
+
+
+@ai_admin_router.post("/admin/ai/help")
+async def admin_ai_help(body: AIHelpBody, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_admin_user)):
+    await _ai_require(db, "help")
+    return ai_help_kb.answer("admin", body.q[:300])
+
+
+@ai_admin_router.get("/admin/ai/messages")
+async def admin_aim_list(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_admin_user)):
+    ms = (await db.execute(select(AIMessage).order_by(AIMessage.id.desc()).limit(100))).scalars().all()
+    return {"messages": [_aim_dict(m) for m in ms]}
+
+
+@ai_admin_router.post("/admin/ai/messages")
+async def admin_aim_create(body: AIMessageBody, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_admin_user)):
+    text = (body.text or "").strip()[:1000]
+    if not text:
+        raise HTTPException(status_code=400, detail="Xabar matnini yozing")
+    if body.audience not in ("client", "courier", "partner"):
+        raise HTTPException(status_code=400, detail="Auditoriya noto'g'ri")
+    ih = body.inactive_hours if body.inactive_hours and body.inactive_hours > 0 else None
+    if ih is not None:
+        ih = min(ih, 24 * 365)
+    rh = min(max(body.repeat_hours or 168, 1), 24 * 365)
+    m = AIMessage(title=(body.title or text)[:60], text=text, audience=body.audience, inactive_hours=ih, repeat_hours=rh,
+                  is_active=True)
+    db.add(m)
+    await db.commit()
+    return {"ok": True}
+
+
+async def _aim_get(db, mid):
+    m = (await db.execute(select(AIMessage).where(AIMessage.id == mid))).scalars().first()
+    if not m:
+        raise HTTPException(status_code=404, detail="Xabar topilmadi")
+    return m
+
+
+@ai_admin_router.post("/admin/ai/messages/{mid}/toggle")
+async def admin_aim_toggle(mid: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_admin_user)):
+    m = await _aim_get(db, mid)
+    m.is_active = not m.is_active
+    await db.commit()
+    return {"ok": True, "is_active": m.is_active}
+
+
+@ai_admin_router.post("/admin/ai/messages/{mid}/delete")
+async def admin_aim_delete(mid: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_admin_user)):
+    m = await _aim_get(db, mid)
+    await db.delete(m)
+    await db.commit()
+    return {"ok": True}
+
+
+@ai_admin_router.post("/admin/ai/messages/{mid}/send")
+async def admin_aim_send_now(mid: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_admin_user)):
+    """Hozir yuborish: butun auditoriyaga (Telegram ulangan foydalanuvchilar) bir martalik. Orqa fonda yuboriladi."""
+    setting = await _get_or_create_setting(db)
+    if not _ai_flags(setting)["campaigns"]:
+        raise HTTPException(status_code=403, detail="AI xabarlari o'chirilgan")
+    m = await _aim_get(db, mid)
+    role = {"client": UserRole.CLIENT, "courier": UserRole.COURIER, "partner": UserRole.PARTNER}[m.audience]
+    users = (await db.execute(select(User).where(User.role == role, User.is_active == True, User.telegram_id.is_not(None)).limit(2000))).scalars().all()
+    n = len(users)
+    mid_ = m.id
+
+    async def _run():
+        async with AsyncSessionLocal() as db2:
+            mm = (await db2.execute(select(AIMessage).where(AIMessage.id == mid_))).scalars().first()
+            us = (await db2.execute(select(User).where(User.role == role, User.is_active == True, User.telegram_id.is_not(None)).limit(2000))).scalars().all()
+            if mm:
+                await _aim_send(db2, mm, us)
+    import asyncio as _a
+    _a.create_task(_run())
+    return {"ok": True, "recipients": n}
+
+
 # Routerlarni ulash
 app.include_router(courier_router_app)
+app.include_router(ai_admin_router)
 app.include_router(partner_router)
 app.include_router(shop_router)
 app.include_router(app_api_router)

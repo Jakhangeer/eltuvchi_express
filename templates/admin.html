@@ -9,8 +9,9 @@
     <script src="/static/js/zm-ui.js?v=3"></script>
     <script src="/static/js/zm-live.js?v=3"></script>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css?v=1" />
+    <script src="/static/vendor/leaflet/leaflet.js?v=1"></script>
+    <script>window.L||document.write('<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"><\/script>');</script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
     <script>
         tailwind.config = { darkMode: 'class' }
@@ -399,6 +400,50 @@
                             </div>
                             <p class="text-[11px] text-gray-500 mt-1">Kuryer buyurtmani qabul qilganda uning joylashuvidan hamkorgacha masofa, hamda hamkordan mijozgacha masofa bo'yicha shu summalar kuryer daromadiga qo'shiladi. 0 bo'lsa — qo'shilmaydi.</p>
                         </div>
+                    </div>
+                    <!-- ===== ZOOMO AI (yoqish / o'chirish) ===== -->
+                    {% set _ai = system_setting %}
+                    <div class="rounded-xl border-2 border-dashed p-3 space-y-2 dark:border-gray-700" style="border-color:var(--accent)">
+                        <input type="hidden" name="ai_form" value="1">
+                        <p class="text-sm font-extrabold">🤖 ZooMo AI</p>
+                        <label class="flex items-center gap-2 text-sm font-bold cursor-pointer"><input type="checkbox" name="ai_enabled" value="1" {% if not _ai or _ai.ai_enabled is none or _ai.ai_enabled %}checked{% endif %} class="w-4 h-4"> Umumiy: AI yoqilgan (o'chirsangiz hammasi o'chadi)</label>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-1.5 text-sm">
+                            <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" name="ai_client_enabled" value="1" {% if not _ai or _ai.ai_client_enabled is none or _ai.ai_client_enabled %}checked{% endif %} class="w-4 h-4"> 🛍️ Mijoz paneli (niyatni anglash, ovozli buyurtma)</label>
+                            <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" name="ai_courier_enabled" value="1" {% if not _ai or _ai.ai_courier_enabled is none or _ai.ai_courier_enabled %}checked{% endif %} class="w-4 h-4"> 🛵 Kuryer paneli (Copilot, birlashtirish)</label>
+                            <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" name="ai_partner_enabled" value="1" {% if not _ai or _ai.ai_partner_enabled is none or _ai.ai_partner_enabled %}checked{% endif %} class="w-4 h-4"> 🏪 Hamkor paneli (bashorat, avto-menyu)</label>
+                            <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" name="ai_dispatcher_enabled" value="1" {% if not _ai or _ai.ai_dispatcher_enabled is none or _ai.ai_dispatcher_enabled %}checked{% endif %} class="w-4 h-4"> 🧭 AI-dispetcher (kechikishda avto xabar)</label>
+                            <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" name="ai_help_enabled" value="1" {% if not _ai or _ai.ai_help_enabled is none or _ai.ai_help_enabled %}checked{% endif %} class="w-4 h-4"> 💬 AI yordamchi (har bir panelda qo'llanma va savol-javob)</label>
+                            <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" name="ai_campaigns_enabled" value="1" {% if not _ai or _ai.ai_campaigns_enabled is none or _ai.ai_campaigns_enabled %}checked{% endif %} class="w-4 h-4"> 📣 AI xabarlari (bildirishnoma kampaniyalari)</label>
+                            <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" name="ai_led_enabled" value="1" {% if not _ai or _ai.ai_led_enabled is none or _ai.ai_led_enabled %}checked{% endif %} class="w-4 h-4"> 📺 LED reklama (sumka ekrani)</label>
+                        </div>
+                        <label class="flex items-center gap-2 text-sm font-bold cursor-pointer"><input type="checkbox" name="ai_delay_promo_enabled" value="1" {% if _ai and _ai.ai_delay_promo_enabled %}checked{% endif %} class="w-4 h-4"> 🎁 Kechikkanda mijozga promo-kod (bonus) berilsin</label>
+                        <div>
+                            <label class="block text-xs font-medium">Kechikish uchun promo-kod summasi (so'm, 0 = yubormaslik)</label>
+                            <input type="number" step="500" min="0" name="ai_delay_promo_amount" value="{{ _ai.ai_delay_promo_amount if _ai and _ai.ai_delay_promo_amount is not none else 5000 }}" class="w-full mt-1 p-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700">
+                        </div>
+                        <p class="text-[11px] text-gray-500">Kuryer kutilgan vaqtdan 5 daqiqadan ko'proq kechiksa, mijozga Telegramda uzr xabari avtomatik yuboriladi. Promo-kod (bonus) FAQAT yuqoridagi belgi yoqilgandagina qo'shiladi. «Saqlash» tugmasi bilan saqlanadi.</p>
+                        <details class="text-xs">
+                            <summary class="font-bold cursor-pointer">📣 AI xabarlari — bildirishnoma yozish</summary>
+                            <p class="text-[11px] text-gray-500 mt-1">Matnni o'zingiz yozasiz. «N soat kirmaganlarga» belgilansa AI avtomatik yuboradi (takror oralig'i bilan); bo'sh qoldirsangiz «Hozir yuborish» bilan butun auditoriyaga bir martalik boradi. Xabar Telegramda bildirishnoma bo'lib keladi.</p>
+                            <div class="space-y-1.5 mt-2">
+                                <textarea id="aim-text" rows="2" maxlength="1000" placeholder="Masalan: Sizni sog'indik! yoki Evosda lavashga 50% chegirma bo'lmoqda" class="w-full p-2 border rounded dark:bg-gray-800 dark:border-gray-700"></textarea>
+                                <div class="grid grid-cols-3 gap-1.5">
+                                    <select id="aim-aud" class="p-1.5 border rounded dark:bg-gray-800 dark:border-gray-700"><option value="client">Mijozlar</option><option value="courier">Kuryerlar</option><option value="partner">Hamkorlar</option></select>
+                                    <input id="aim-inact" type="number" min="0" placeholder="N soat kirmagan" class="p-1.5 border rounded dark:bg-gray-800 dark:border-gray-700" title="Masalan 72">
+                                    <input id="aim-rep" type="number" min="1" value="168" class="p-1.5 border rounded dark:bg-gray-800 dark:border-gray-700" title="Takror oralig'i (soat)">
+                                </div>
+                                <button type="button" onclick="aimCreate()" class="w-full py-1.5 rounded bg-amber-500 text-white font-bold">➕ Xabar qo'shish</button>
+                            </div>
+                            <div id="aim-list" class="mt-2 space-y-1.5"></div>
+                        </details>
+                        <details class="text-xs">
+                            <summary class="font-bold cursor-pointer">📺 LED reklamalarni boshqarish (faqat admin)</summary>
+                            <p class="text-[11px] text-gray-500 mt-1">Hamkorlar reklama so'raydi. To'lov kelgach «Tasdiqlash» — AI navbatga qo'yadi (ko'proq to'lagan va kuryerga yaqin reklama ko'proq efir oladi).</p>
+                            <div id="admin-led" class="mt-2 space-y-2"></div>
+                            <div class="flex gap-1.5 mt-2"><input id="admin-led-title" maxlength="60" placeholder="ZooMo umumiy reklama" class="flex-1 p-1.5 border rounded dark:bg-gray-800 dark:border-gray-700"><button type="button" onclick="adminLedAdd()" class="px-3 rounded bg-amber-500 text-white font-bold">➕</button></div>
+                            <p class="font-bold mt-3">🛵 Kuryerlarda LED yoqilgani</p>
+                            <div id="admin-led-couriers" class="mt-1 space-y-1"></div>
+                        </details>
                     </div>
                     <div>
                         <label class="block text-sm font-medium">Ob-havo Sharoiti</label>
@@ -2871,6 +2916,51 @@
                 setInterval(renderHourlyChart, 30000);
             }
         });
+    </script>
+
+    <script src="/static/js/zm-ai.js?v=2"></script>
+    {% if ai_help_on %}<script>document.addEventListener("DOMContentLoaded",function(){if(window.ZMAI)ZMAI.mountHelp({url:"/admin/ai/help"});});</script>{% endif %}
+    <script>
+    (function(){
+        function e(v){return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+        var ST={pending:'⏳ To\'lov kutilmoqda',approved:'✅ Efirda',rejected:'⛔ Rad',expired:'⌛ Muddati tugagan'};
+        function post(u,b){return fetch(u,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})}).then(function(r){if(!r.ok)return r.json().then(function(x){throw new Error(x.detail||'Xatolik');});return r.json();});}
+        function load(){fetch('/admin/ai/led',{credentials:'same-origin'}).then(function(r){return r.ok?r.json():{ads:[],couriers:[]};}).then(function(d){
+            var el=document.getElementById('admin-led'); if(!el)return;
+            el.innerHTML=(d.ads||[]).map(function(a){
+                var h='<div class="p-2 rounded border dark:border-gray-700" data-ad="'+a.id+'"><div class="flex items-center gap-2"><span style="width:12px;height:12px;border-radius:3px;background:'+e(a.bg_color)+'"></span><b class="flex-1 truncate">'+e(a.brand)+': '+e(a.title)+'</b><span>'+(a.is_active&&a.status==='approved'?ST.approved:(ST[a.status]||a.status))+'</span></div>'
+                 +'<div class="text-[11px] text-gray-500">'+e(a.text)+' · radius '+a.radius_km+' km'+(a.paid_amount?' · to\'langan '+Math.round(a.paid_amount)+' so\'m':'')+(a.expires_at?' · '+e(a.expires_at.slice(0,10))+' gacha':'')+'</div><div class="flex flex-wrap items-center gap-1.5 mt-1">';
+                if(a.status==='pending'||a.status==='rejected'||a.status==='expired'){
+                    h+='<input type="number" min="1" max="365" value="7" data-f="days" class="w-14 p-1 border rounded dark:bg-gray-800 dark:border-gray-700" title="Kun"><input type="number" min="0" step="1000" placeholder="to\'lov so\'m" data-f="paid" class="w-24 p-1 border rounded dark:bg-gray-800 dark:border-gray-700"><button type="button" data-a="approve" class="px-2 py-1 rounded bg-emerald-600 text-white font-bold">✅ Tasdiqlash</button>'+(a.status==='pending'?'<button type="button" data-a="reject" class="px-2 py-1 rounded bg-rose-600 text-white">⛔</button>':'');
+                } else { h+='<button type="button" data-a="toggle" class="px-2 py-1 rounded bg-slate-500/20">'+(a.is_active?'⏸ O\'chirish':'▶️ Yoqish')+'</button>'; }
+                h+='<button type="button" data-a="radius" class="px-2 py-1 rounded bg-slate-500/20">📏 Radius</button><button type="button" data-a="delete" class="px-2 py-1 rounded bg-rose-500/20">🗑</button></div></div>';
+                return h;}).join('')||'<p class="text-gray-500">Reklama yo\'q</p>';
+            var ce=document.getElementById('admin-led-couriers');
+            if(ce)ce.innerHTML=(d.couriers||[]).map(function(c){return '<label class="flex items-center gap-2"><input type="checkbox" data-c="'+c.id+'" '+(c.led_enabled?'checked':'')+'> '+e(c.name)+'</label>';}).join('')||'<p class="text-gray-500">Kuryer yo\'q</p>';
+        });}
+        document.addEventListener('click',function(ev){var b=ev.target.closest('#admin-led button[data-a]');if(!b)return;
+            var box=b.closest('[data-ad]'),id=box.dataset.ad,a=b.dataset.a,p;
+            if(a==='approve'){var days=parseInt(box.querySelector('[data-f=days]').value)||7,paid=parseFloat(box.querySelector('[data-f=paid]').value)||0;p=post('/admin/ai/led/'+id+'/approve',{days:days,paid_amount:paid});}
+            else if(a==='reject'){p=post('/admin/ai/led/'+id+'/reject');}
+            else if(a==='toggle'){p=post('/admin/ai/led/'+id+'/toggle');}
+            else if(a==='radius'){var r=prompt('Radius (km):','3');if(!r)return;p=post('/admin/ai/led/'+id+'/update',{radius_km:parseFloat(r)});}
+            else if(a==='delete'){if(!confirm("O'chirilsinmi?"))return;p=post('/admin/ai/led/'+id+'/delete');}
+            if(p)p.then(load).catch(function(x){alert(x.message);});});
+        document.addEventListener('change',function(ev){var c=ev.target.closest('#admin-led-couriers input[data-c]');if(!c)return;post('/admin/ai/led/courier/'+c.dataset.c+'/toggle').catch(function(x){alert(x.message);});});
+        window.adminLedAdd=function(){var t=document.getElementById('admin-led-title').value.trim();if(!t)return;
+            post('/admin/ai/led',{title:t}).then(function(){document.getElementById('admin-led-title').value='';load();});};
+        function loadAim(){fetch('/admin/ai/messages',{credentials:'same-origin'}).then(function(r){return r.ok?r.json():{messages:[]};}).then(function(d){
+            var el=document.getElementById('aim-list');if(!el)return;var AU={client:'Mijozlar',courier:'Kuryerlar',partner:'Hamkorlar'};
+            el.innerHTML=(d.messages||[]).map(function(m){return '<div class="p-2 rounded border dark:border-gray-700" data-aim="'+m.id+'"><div class="font-bold">'+e(m.text)+'</div><div class="text-[11px] text-gray-500">'+AU[m.audience]+' · '+(m.inactive_hours?(m.inactive_hours+' soat kirmaganlarga, har '+m.repeat_hours+' soatda bir'):'bir martalik')+' · yuborilgan: '+m.sent_count+' · '+(m.is_active?'faol':'to\'xtatilgan')+'</div><div class="flex gap-1.5 mt-1">'+(m.inactive_hours?'':'<button type="button" data-m="send" class="px-2 py-1 rounded bg-emerald-600 text-white font-bold">📤 Hozir yuborish</button>')+'<button type="button" data-m="toggle" class="px-2 py-1 rounded bg-slate-500/20">'+(m.is_active?'⏸':'▶️')+'</button><button type="button" data-m="delete" class="px-2 py-1 rounded bg-rose-500/20">🗑</button></div></div>';}).join('')||'<p class="text-gray-500">Xabar yo\'q</p>';});}
+        document.addEventListener('click',function(ev){var b=ev.target.closest('#aim-list button[data-m]');if(!b)return;var id=b.closest('[data-aim]').dataset.aim,a=b.dataset.m,p;
+            if(a==='send'){if(!confirm('Butun auditoriyaga yuborilsinmi?'))return;p=post('/admin/ai/messages/'+id+'/send').then(function(r){alert('Yuborilmoqda: '+r.recipients+' ta foydalanuvchi');});}
+            else if(a==='toggle'){p=post('/admin/ai/messages/'+id+'/toggle');}
+            else if(a==='delete'){if(!confirm("O'chirilsinmi?"))return;p=post('/admin/ai/messages/'+id+'/delete');}
+            if(p)p.then(loadAim).catch(function(x){alert(x.message);});});
+        window.aimCreate=function(){var t=document.getElementById('aim-text').value.trim();if(!t)return;
+            post('/admin/ai/messages',{text:t,audience:document.getElementById('aim-aud').value,inactive_hours:parseInt(document.getElementById('aim-inact').value)||null,repeat_hours:parseInt(document.getElementById('aim-rep').value)||168}).then(function(){document.getElementById('aim-text').value='';loadAim();}).catch(function(x){alert(x.message);});};
+        document.addEventListener('DOMContentLoaded',function(){load();loadAim();});
+    })();
     </script>
 </body>
 </html>

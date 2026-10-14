@@ -86,6 +86,30 @@
         }
         if (get() === 'light') lightLayer.addTo(map); else darkLayer.addTo(map);
         document.addEventListener('uimodechange', function (e) { apply(e.detail.mode); });
+        watchTiles(map, darkLayer, lightLayer);
+    }
+
+    /* Plitka serveri (CARTO) ochilmasa — xarita bo'sh qolmasin: OpenStreetMap zaxira qatlamiga o'tadi
+       (tungi rejimda unga qorong'u filtr qo'llanadi). */
+    function watchTiles(map, darkLayer, lightLayer) {
+        if (!window.L) return;
+        var errs = 0, ok = 0, fell = false, fb = null;
+        function onErr() { errs++; if (!fell && ok === 0 && errs >= 4) fallback(); }
+        function onOk() { ok++; }
+        [darkLayer, lightLayer].forEach(function (l) { l.on('tileerror', onErr); l.on('tileload', onOk); });
+        function fallback() {
+            fell = true;
+            fb = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 });
+            [darkLayer, lightLayer].forEach(function (l) { if (map.hasLayer(l)) map.removeLayer(l); });
+            fb.addTo(map);
+            paint();
+        }
+        function paint() {
+            if (!fell) return;
+            var c = map.getContainer();
+            c.classList.toggle('zm-dark-osm', get() === 'dark');
+        }
+        document.addEventListener('uimodechange', paint);
     }
 
     // 1) Darhol qo'llaymiz (birinchi paint'dan oldin — "chaqnash" bo'lmaydi)

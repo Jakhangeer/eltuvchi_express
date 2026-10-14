@@ -11,8 +11,9 @@
     <script src="/static/js/zm-live.js?v=3"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Leaflet — buyurtmani olib ketgan kuryerni jonli kuzatish uchun -->
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css?v=1" />
+    <script src="/static/vendor/leaflet/leaflet.js?v=1"></script>
+    <script>window.L||document.write('<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"><\/script>');</script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
@@ -167,6 +168,7 @@
         <button onclick="showTab('history')" data-tab-btn="history" class="tab-btn px-4 py-3 text-sm whitespace-nowrap font-semibold">📜 Tarix</button>
         <button onclick="showTab('menu')" data-tab-btn="menu" class="tab-btn px-4 py-3 text-sm whitespace-nowrap font-semibold">📋 Menyu</button>
         <button onclick="showTab('balance')" data-tab-btn="balance" class="tab-btn px-4 py-3 text-sm whitespace-nowrap font-semibold">💰 Balans</button>
+        {% if ai_on %}<button onclick="showTab('ai')" data-tab-btn="ai" class="tab-btn px-4 py-3 text-sm whitespace-nowrap font-semibold">🤖 AI</button>{% endif %}
         <button onclick="showTab('settings')" data-tab-btn="settings" class="tab-btn px-4 py-3 text-sm whitespace-nowrap font-semibold">⚙️ Sozlamalar</button>
     </div>
 
@@ -424,6 +426,13 @@
                 </form>
             </div>
         </div>
+
+        {% if ai_on %}
+        <!-- ZOOMO AI -->
+        <div id="tab-ai" class="tab-page fade-up hidden glass p-5 rounded-2xl" data-live-hold>
+            <div id="zm-ai-partner" data-led="{{ '1' if ai_led_on else '0' }}"></div>
+        </div>
+        {% endif %}
 
         <!-- SOZLAMALAR -->
         <div id="tab-settings" class="tab-page fade-up hidden glass p-5 rounded-2xl">
@@ -793,7 +802,8 @@
 
         document.addEventListener('DOMContentLoaded', () => {
             if (window.ZMPrinter) { ZMPrinter.bindAutoPrint(document); ZMPrinter.mountSettings(document.getElementById('printer-settings')); }
-            showTab(localStorage.getItem('partner_active_tab') || 'orders');
+            (function(){ var t = localStorage.getItem('partner_active_tab') || 'orders'; if (!document.getElementById('tab-' + t)) t = 'orders'; showTab(t); })();
+            if (window.ZMAI && document.getElementById('zm-ai-partner')) ZMAI.mountPartner(document.getElementById('zm-ai-partner'));
             updateLiveClock();
             setInterval(updateLiveClock, 1000);
             checkForNewOrders();
@@ -801,5 +811,7 @@
             if (window.ZMLive) ZMLive.start({ interval: 4000 });
         });
     </script>
+    <script src="/static/js/zm-ai.js?v=2"></script>
+    {% if ai_help_on %}<script>document.addEventListener("DOMContentLoaded",function(){if(window.ZMAI)ZMAI.mountHelp({url:"/partner/ai/help"});});</script>{% endif %}
 </body>
 </html>

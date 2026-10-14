@@ -38,6 +38,14 @@
     var ICON_C = '<div class="zmn-pin" style="background:#2563eb">📍</div>';
     function meIcon(h) { return icon('<div class="zmn-me"><div class="zmn-me-arrow" style="transform:rotate(' + (h || 0) + 'deg)"></div></div>', 34); }
 
+    // Panel (tepa va pastki) ostida qolmasligi uchun xarita chegaralari
+    function fitPad(extra) {
+        var top = document.querySelector('#zmn .zmn-top'), sh = document.querySelector('#zmn .zmn-sheet');
+        var t = (top ? top.offsetHeight : 0) + (extra || 24), b = (sh ? sh.offsetHeight : 0) + (extra || 24);
+        return { paddingTopLeft: [40, t], paddingBottomRight: [40, b] };
+    }
+    function fit(bounds, extra) { try { var o = fitPad(extra); o.maxZoom = 17; S.map.fitBounds(bounds, o); } catch (e) {} }
+
     function ensureMap() {
         if (S.map) return;
         S.map = L.map('zmn-map', { zoomControl: false, attributionControl: false }).setView([41.5504, 60.6318], 14);
@@ -47,6 +55,7 @@
         var sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19 });
         L.control.layers({ '🌑': dark, '☀️': light, '🗺️': streets, '🛰️': sat }, {}, { position: 'topright', collapsed: true }).addTo(S.map);
         if (window.UIMode) UIMode.attachMapTheme(S.map, dark, light); else dark.addTo(S.map);
+        try { if (window.ResizeObserver) new ResizeObserver(function () { if (S.map) S.map.invalidateSize(); }).observe($('zmn-map')); } catch (e) {}
         S.map.on('dragstart', function () { S.follow = false; $('zmn-follow').classList.remove('on'); });
     }
 
@@ -84,7 +93,7 @@
             S.steps = (rt.legs && rt.legs[0] && rt.legs[0].steps) || [];
             S.dist = rt.distance; S.dur = rt.duration;
             renderInfo(rt);
-            if (force && !S.follow) S.map.fitBounds(S.layers.route.getBounds(), { padding: [60, 60] });
+            if (force && !S.follow) fit(S.layers.route.getBounds());
         }).catch(function () { fallback(from, to); });
         // 2-faza uzunligi (do'kon → mijoz) — jami masofa uchun
         if (S.phase === 1 && hasPt(S.order.partner) && hasPt(S.order.client) && S.leg2 == null) {
@@ -114,6 +123,7 @@
         if (next) {
             var tx = stepText(next), dm = S.me && next.maneuver && next.maneuver.location ? hav(S.me, [next.maneuver.location[1], next.maneuver.location[0]]) : (S.steps[0] ? S.steps[0].distance : next.distance);
             $('zmn-arrow').textContent = tx[0]; $('zmn-instr').textContent = tx[1]; $('zmn-next').textContent = fmtKm(dm);
+            try { if (window.ZMAI && ZMAI.speakNav) ZMAI.speakNav(tx[1], dm); } catch (e) {}
         } else if (!hasPt(target())) { $('zmn-arrow').textContent = '📍'; }
         // jami masofa (faza 1: yo'l + do'kon→mijoz)
         var tot = '';
@@ -152,6 +162,12 @@
         $('zmn-act').className = 'zmn-act ' + (p1 ? 'p1' : 'p2');
         var tel = p1 ? o.partnerPhone : o.clientPhone;
         $('zmn-call').href = tel ? 'tel:' + tel : '#'; $('zmn-call').style.display = tel ? '' : 'none';
+        $('zmn-call').textContent = tel ? '📞 ' + tel : '📞';
+        // Ikkala raqam ham doim ko'rinsin (bosilsa qo'ng'iroq qilinadi)
+        var ph = '';
+        if (o.clientPhone) ph += '<a class="zmn-row" style="text-decoration:none;color:inherit" href="tel:' + o.clientPhone + '"><span>📞 ' + T('Mijoz') + '</span><b>' + o.clientPhone + '</b></a>';
+        if (o.partnerPhone) ph += '<a class="zmn-row" style="text-decoration:none;color:inherit" href="tel:' + o.partnerPhone + '"><span>📞 ' + T("Do'kon") + '</span><b>' + o.partnerPhone + '</b></a>';
+        if (ph) $('zmn-prices').innerHTML += ph;
         var t = target(), q = hasPt(t) ? t[0] + ',' + t[1] : encodeURIComponent(o.address || '');
         $('zmn-ext-g').href = hasPt(t) ? 'https://www.google.com/maps/dir/?api=1&destination=' + q + '&travelmode=driving' : '#';
         $('zmn-ext-y').href = hasPt(t) ? 'https://yandex.com/maps/?rtext=~' + q + '&rtt=auto' : 'https://yandex.com/maps/?text=' + q;
@@ -165,7 +181,7 @@
         buildSheet(); drawStatic(); renderInfo();
         route(true);
         var t = target();
-        if (S.me && hasPt(t)) S.map.fitBounds([S.me, t], { padding: [90, 90] });
+        if (S.me && hasPt(t)) fit([S.me, t], 40);
         else if (hasPt(t)) S.map.setView(t, 15);
     }
 
@@ -202,7 +218,7 @@
     }
     function showAll() {
         var pts = []; if (S.me) pts.push(S.me); if (hasPt(S.order.partner)) pts.push(S.order.partner); if (hasPt(S.order.client)) pts.push(S.order.client);
-        if (pts.length > 1) { S.follow = false; $('zmn-follow').classList.remove('on'); S.map.fitBounds(pts, { padding: [90, 90] }); }
+        if (pts.length > 1) { S.follow = false; $('zmn-follow').classList.remove('on'); fit(pts, 40); }
     }
 
     document.addEventListener('click', function (e) {

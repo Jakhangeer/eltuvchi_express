@@ -66,6 +66,8 @@ class User(Base):
     role = Column(Enum(UserRole), default=UserRole.CLIENT)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+    # Oxirgi faollik (ilova/panelga kirgan vaqt) — AI xabarlari «N soat kirmaganlarga» uchun
+    last_active_at = Column(DateTime, nullable=True)
 
     # Faqat OWNER/ADMIN (operator) rollari uchun ishlatiladi — mijoz/kuryer/hamkorda bo'sh qoladi
     password_hash = Column(String, nullable=True)
@@ -122,6 +124,8 @@ class CourierProfile(Base):
     # auto_assign_nearest_courier.
     credit_limit = Column(Float, default=300000.0)
     is_blocked = Column(Boolean, default=False)
+    # LED ekran shu kuryerda ishlashi — FAQAT admin boshqaradi
+    led_enabled = Column(Boolean, default=True)
 
     # Kuryer "Pul yechish" so'rovi yuborganda (bu FAQAT egasi kuryerga
     # qarzdor bo'lgan — balance MANFIY bo'lgan holatda mumkin, masalan bonus)
@@ -268,6 +272,9 @@ class Order(Base):
     pickup_distance_km = Column(Float, nullable=True)
     courier_km_bonus = Column(Float, nullable=True, default=0.0)
     courier_pickup_bonus = Column(Float, nullable=True, default=0.0)
+    # AI-dispetcher: buyurtma "Yo'lda" bo'lgan vaqt va kechikish xabari yuborilgani
+    on_the_way_at = Column(DateTime, nullable=True)
+    ai_delay_notified = Column(Boolean, default=False)
 
     # ---- P2P (KARTADAN-KARTAGA) TO'LOV TEKSHIRUVI ----
     # payment_method == "p2p" bo'lgan buyurtmalar uchun: mijoz pulni
@@ -362,6 +369,19 @@ class SystemSetting(Base):
     #  - courier_pickup_per_km: kuryer -> hamkor (buyurtmani olishga borish) har km uchun
     courier_delivery_per_km = Column(Float, default=0.0)
     courier_pickup_per_km = Column(Float, default=0.0)
+
+    # ---- ZooMo AI (aqlli yordamchi) — admin yoqadi/o'chiradi ----
+    # ai_enabled — umumiy asosiy tumbler; qolganlari rollar bo'yicha.
+    ai_enabled = Column(Boolean, default=True)
+    ai_client_enabled = Column(Boolean, default=True)
+    ai_courier_enabled = Column(Boolean, default=True)
+    ai_partner_enabled = Column(Boolean, default=True)
+    ai_dispatcher_enabled = Column(Boolean, default=True)   # AI-dispetcher: kechikishda mijozga avto xabar + promo
+    ai_led_enabled = Column(Boolean, default=True)          # Kuryer sumkasidagi LED reklama
+    ai_help_enabled = Column(Boolean, default=True)         # AI yordamchi (panel bo'yicha savol-javob)
+    ai_campaigns_enabled = Column(Boolean, default=True)    # Admin AI xabarlari (bildirishnoma)
+    ai_delay_promo_amount = Column(Float, default=5000.0)   # kechikish uchun promo-kod summasi
+    ai_delay_promo_enabled = Column(Boolean, default=False) # promo-kod BERILISHI faqat admin yoqganda
 
     # Yetkazish narxining necha foizi kuryerga tegishli ekani (qolgani egasiga qoladi).
     # Masalan 80.0 = yetkazish narxining 80%i kuryerga, 20%i egasiga.
@@ -632,3 +652,53 @@ class PaymentReceipt(Base):
     partner = relationship("PartnerProfile", foreign_keys=[partner_id])
     order = relationship("Order", foreign_keys=[order_id])
     reviewed_by = relationship("User", foreign_keys=[reviewed_by_id])
+
+
+class LedAd(Base):
+    """Kuryer sumkasi orqasidagi (pastki qismidagi) LED ekranda aylanib ko'rsatiladigan reklama.
+    Hamkor o'z reklamasini qo'shadi; kuryer joylashuviga yaqin do'kon reklamasi ustuvor (geo-targeting)."""
+    __tablename__ = "led_ads"
+
+    id = Column(Integer, primary_key=True, index=True)
+    partner_id = Column(Integer, ForeignKey("partner_profiles.id", ondelete="CASCADE"), nullable=True)
+    title = Column(String, nullable=False)
+    text = Column(String, nullable=True)
+    bg_color = Column(String, default="#f59e0b")
+    radius_km = Column(Float, default=3.0)
+    # Hamkor so'rov yuboradi (pending) -> adminga to'lov qiladi -> admin tasdiqlaydi (approved).
+    # Faqat approved + is_active + muddati tugamagan reklamalar ekranda chiqadi. Hammasini FAQAT admin boshqaradi.
+    status = Column(String, default="pending")   # pending | approved | rejected
+    paid_amount = Column(Float, default=0.0)     # admin tasdiqlaganda kiritadi (efir vaqtiga ta'sir qiladi)
+    expires_at = Column(DateTime, nullable=True)
+    admin_note = Column(String, nullable=True)
+    is_active = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    partner = relationship("PartnerProfile")
+
+
+class AIMessage(Base):
+    """Admin yozgan AI xabari (bildirishnoma): kimga, qanday shartda yuboriladi.
+    inactive_hours bo'lsa — shuncha soat ilovaga kirmaganlarga avtomatik (takror oralig'i bilan);
+    bo'lmasa — «Hozir yuborish» bilan butun auditoriyaga bir martalik."""
+    __tablename__ = "ai_messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, nullable=False)
+    text = Column(Text, nullable=False)
+    audience = Column(String, default="client")      # client | courier | partner
+    inactive_hours = Column(Integer, nullable=True)
+    repeat_hours = Column(Integer, default=168)
+    is_active = Column(Boolean, default=True)
+    sent_count = Column(Integer, default=0)
+    last_run_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class AIMessageLog(Base):
+    __tablename__ = "ai_message_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    message_id = Column(Integer, ForeignKey("ai_messages.id", ondelete="CASCADE"), index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    sent_at = Column(DateTime, default=datetime.utcnow)

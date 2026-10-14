@@ -232,7 +232,7 @@ body.zmn-lock { overflow: hidden; }
 .zmn-arrived { width: 100%; padding: 12px; border: 0; border-radius: 14px; background: #10b981; color: #fff; font-weight: 900; font-size: 14px; margin-bottom: 8px; animation: zmnPulse 1.4s ease-in-out infinite; cursor: pointer; }
 @keyframes zmnPulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.025); } }
 .zmn-btns { display: flex; gap: 8px; }
-.zmn-call { width: 56px; display: flex; align-items: center; justify-content: center; border-radius: 14px; background: #1e293b; color: #fff; font-size: 22px; text-decoration: none; }
+.zmn-call { min-width: 56px; padding: 0 12px; white-space: nowrap; font-size: 15px; font-weight: 800; display: flex; align-items: center; justify-content: center; border-radius: 14px; background: #1e293b; color: #fff; font-size: 22px; text-decoration: none; }
 .zmn-act { flex: 1; padding: 15px; border: 0; border-radius: 14px; color: #fff; font-weight: 900; font-size: 16px; cursor: pointer; }
 .zmn-act.p1 { background: linear-gradient(135deg, var(--accent-dark), var(--accent)); }
 .zmn-act.p2 { background: linear-gradient(135deg, #16a34a, #34d399); }
@@ -322,3 +322,8 @@ html[data-mode="light"] .zm-map-close-fab { background: rgba(255,255,255,.95); c
 #admin-map-card.zm-map-full { z-index: 100000; background: var(--card-bg-solid, #fff); }
 html[data-mode="dark"] #admin-map-card.zm-map-full { background: #0f1018; }
 #admin-map-card.zm-map-full .leaflet-top.leaflet-right { margin-top: 56px; }
+
+/* Zaxira OSM xaritasining tungi ko'rinishi */
+.leaflet-container.zm-dark-osm .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(.92) contrast(.9); }
+.leaflet-container { background: #e5e7eb; }
+html[data-mode="dark"] .leaflet-container { background: #0b0f19; }
