@@ -71,6 +71,10 @@ class User(Base):
     # Qo'shimcha himoya (maxfiy javob): noto'g'ri urinishlar hisobi va vaqtincha bloklash
     sec_fail_count = Column(Integer, default=0)
     sec_locked_until = Column(DateTime, nullable=True)
+    # Maxfiy javoblarni o'zgartirish uchun Telegram orqali yuboriladigan bir martalik 8 xonali kod
+    sec_otp_hash = Column(String, nullable=True)
+    sec_otp_expires = Column(DateTime, nullable=True)
+    sec_otp_tries = Column(Integer, default=0)
 
     # Faqat OWNER/ADMIN (operator) rollari uchun ishlatiladi — mijoz/kuryer/hamkorda bo'sh qoladi
     password_hash = Column(String, nullable=True)
@@ -278,6 +282,7 @@ class Order(Base):
     # AI-dispetcher: buyurtma "Yo'lda" bo'lgan vaqt va kechikish xabari yuborilgani
     on_the_way_at = Column(DateTime, nullable=True)
     ai_delay_notified = Column(Boolean, default=False)
+    courier_rating_bonus = Column(Float, nullable=True)   # yuqori reytingli kuryerga admin belgilagan bonus (shahar bo'yicha)
 
     # ---- P2P (KARTADAN-KARTAGA) TO'LOV TEKSHIRUVI ----
     # payment_method == "p2p" bo'lgan buyurtmalar uchun: mijoz pulni
@@ -384,6 +389,7 @@ class SystemSetting(Base):
     ai_help_enabled = Column(Boolean, default=True)         # AI yordamchi (panel bo'yicha savol-javob)
     ai_campaigns_enabled = Column(Boolean, default=True)    # Admin AI xabarlari (bildirishnoma)
     ai_delay_promo_amount = Column(Float, default=5000.0)   # kechikish uchun promo-kod summasi
+    rating_priority_enabled = Column(Boolean, default=True)  # reyting bo'yicha kuryerga buyurtma taklif qilish tartibi
     ai_delay_promo_enabled = Column(Boolean, default=False) # promo-kod BERILISHI faqat admin yoqganda
 
     # Yetkazish narxining necha foizi kuryerga tegishli ekani (qolgani egasiga qoladi).
@@ -719,3 +725,69 @@ class SecurityAnswer(Base):
     category = Column(String, nullable=False)
     answer_hash = Column(String, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class SupportMessage(Base):
+    """Foydalanuvchi ↔ administratsiya chati (real muammo, fikr-mulohaza). Suhbat = (user_id, section)."""
+    __tablename__ = "support_messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    section = Column(String, nullable=False, index=True)      # client | courier | partner
+    sender = Column(String, nullable=False)                   # user | staff
+    staff_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    text = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    read_by_staff = Column(Boolean, default=False)
+    read_by_user = Column(Boolean, default=False)
+
+
+class Announcement(Base):
+    """Admin/operator bo'lim bo'yicha (barcha hamkor / kuryer / mijozga) yuboradigan majburiy e'lon."""
+    __tablename__ = "announcements"
+
+    id = Column(Integer, primary_key=True, index=True)
+    audience = Column(String, nullable=False, index=True)     # client | courier | partner
+    text = Column(String, nullable=False)
+    created_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    city_id = Column(Integer, ForeignKey("cities.id"), nullable=True)   # operator e'loni — faqat o'z shahri; egasi — hamma
+    created_at = Column(DateTime, default=datetime.utcnow)
+    sent_count = Column(Integer, default=0)
+
+
+class AnnouncementAck(Base):
+    """Foydalanuvchi e'lonni ko'rib «Tushundim» bosgani."""
+    __tablename__ = "announcement_acks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    announcement_id = Column(Integer, ForeignKey("announcements.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    acked_at = Column(DateTime, default=datetime.utcnow)
+
+
+class OrderRating(Base):
+    """Mijozning yetkazilgan buyurtmadan keyingi bahosi: platforma xizmati, kuryer va hamkor (1–5)."""
+    __tablename__ = "order_ratings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    order_id = Column(Integer, ForeignKey("orders.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    courier_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    partner_id = Column(Integer, ForeignKey("partner_profiles.id", ondelete="SET NULL"), nullable=True, index=True)
+    platform_stars = Column(Integer, nullable=True)
+    courier_stars = Column(Integer, nullable=True)
+    partner_stars = Column(Integer, nullable=True)
+    comment = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class CityRatingBonus(Base):
+    """Shahar kesimida: reytingi yuqori kuryerlarga har buyurtmada qo'shiladigan bonus (admin belgilaydi)."""
+    __tablename__ = "city_rating_bonuses"
+
+    id = Column(Integer, primary_key=True, index=True)
+    city_id = Column(Integer, ForeignKey("cities.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
+    enabled = Column(Boolean, default=False)
+    min_rating = Column(Float, default=4.7)       # kamida shuncha o'rtacha baho
+    min_count = Column(Integer, default=5)        # kamida shuncha baho olgan bo'lsin
+    bonus_amount = Column(Float, default=0.0)     # har buyurtmaga so'm

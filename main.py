@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, text, extract, or_, and_, inspect as sa_inspect
 from sqlalchemy.schema import CreateColumn
 from sqlalchemy.orm import selectinload
+from sqlalchemy.orm.attributes import set_committed_value
 
 from database import engine, Base, get_db, AsyncSessionLocal
 from telegram_bot import (
@@ -35,6 +36,11 @@ from telegram_bot import (
     get_bot_username,
 )
 from models import (
+    CityRatingBonus,
+    OrderRating,
+    SupportMessage,
+    Announcement,
+    AnnouncementAck,
     User,
     UserRole,
     Order,
@@ -487,6 +493,7 @@ SECTION_LABELS_UZ = {
     "referal": "🎁 Referal dasturi sozlamalari",
     "bonuscashback": "💸 Bonus/Cashback sozlamalari",
     "tugilgankun": "🎂 Tug'ilgan kunlar ro'yxati",
+    "xabarlar": "💬 Chat va e'lonlar (hamkor/kuryer/mijoz xabarlari)",
 }
 DEFAULT_OPERATOR_SECTION_VISIBILITY = {
     # Kundalik operativ ish uchun shart bo'lgan bo'limlar — standart OCHIQ
@@ -505,6 +512,7 @@ DEFAULT_OPERATOR_SECTION_VISIBILITY = {
     "referal": True,
     "bonuscashback": True,
     "tugilgankun": True,
+    "xabarlar": True,
 }
 # "xavfzone" (tizimni butunlay tozalash) — BU YERDA ATAYLAB YO'Q: shu bo'lim
 # har doim, hech qanday sozlamadan qat'i nazar, FAQAT OWNER'ga ko'rinadi va
@@ -1275,6 +1283,8 @@ async def update_settings(
     courier_delivery_per_km: Optional[float] = Form(None),
     courier_pickup_per_km: Optional[float] = Form(None),
     ai_form: Optional[str] = Form(None),
+    rp_form: Optional[str] = Form(None),
+    rating_priority_enabled: Optional[str] = Form(None),
     ai_enabled: Optional[str] = Form(None),
     ai_client_enabled: Optional[str] = Form(None),
     ai_courier_enabled: Optional[str] = Form(None),
@@ -1336,6 +1346,9 @@ async def update_settings(
         if km_road_factor is not None: setting.km_road_factor = km_road_factor
         if courier_delivery_per_km is not None: setting.courier_delivery_per_km = courier_delivery_per_km
         if courier_pickup_per_km is not None: setting.courier_pickup_per_km = courier_pickup_per_km
+
+    if rp_form:
+        setting.rating_priority_enabled = bool(rating_priority_enabled)
 
     # ---- ZooMo AI yoqish/o'chirish ----
     if ai_form:
@@ -1575,6 +1588,8 @@ async def apply_cod_delivery_financials(db: AsyncSession, order: Order) -> None:
     """
     setting = await _get_or_create_setting(db)
     courier_pct = setting.courier_share_percent / 100
+    if order.courier_id and order.courier_rating_bonus is None:
+        order.courier_rating_bonus = await courier_rating_bonus_for(db, order.courier_id)
 
     courier_earning = _courier_earning(order, courier_pct)
     courier_owes = (order.total_price + order.delivery_fee) - courier_earning
@@ -1847,11 +1862,40 @@ def _courier_earning(order, courier_pct: float) -> float:
         (order.delivery_fee or 0.0) * courier_pct
         + (getattr(order, "courier_km_bonus", 0.0) or 0.0)
         + (getattr(order, "courier_pickup_bonus", 0.0) or 0.0)
+        + (getattr(order, "courier_rating_bonus", 0.0) or 0.0)
     )
 
 
+async def courier_rating_bonus_for(db: AsyncSession, courier_user_id: int, fallback_city_id: Optional[int] = None) -> float:
+    """Kuryer shahridagi sozlamaga ko'ra reyting bonusi (so'm). Shart: yoqilgan, yetarli baho soni va o'rtacha baho."""
+    try:
+        u = (await db.execute(select(User).where(User.id == courier_user_id))).scalars().first()
+        city_id = (u.city_id if u else None) or fallback_city_id
+        if city_id is None:
+            return 0.0
+        cfg = (await db.execute(select(CityRatingBonus).where(CityRatingBonus.city_id == city_id))).scalars().first()
+        if not cfg or not cfg.enabled or (cfg.bonus_amount or 0) <= 0:
+            return 0.0
+        avg, n = (await db.execute(select(func.avg(OrderRating.courier_stars), func.count(OrderRating.courier_stars))
+                                   .where(OrderRating.courier_user_id == courier_user_id, OrderRating.courier_stars.isnot(None)))).first()
+        if (n or 0) >= (cfg.min_count or 0) and avg is not None and float(avg) >= (cfg.min_rating or 0):
+            return float(cfg.bonus_amount)
+    except Exception as e:
+        print(f"[REYTING BONUS XATOSI] {e!r}")
+    return 0.0
+
+
 async def _apply_pickup_bonus(db: AsyncSession, order: Order, courier_id: int, setting=None):
-    """Kuryer buyurtmani olganda — uning oxirgi joylashuvidan hamkorgacha masofani hisoblab, haqni yozib qo'yadi."""
+    """Kuryer buyurtmani olganda — uning oxirgi joylashuvidan hamkorgacha masofani hisoblab, haqni yozib qo'yadi.
+    Shu bilan birga yuqori reytingli kuryerga shahar bo'yicha reyting bonusi ham yoziladi (bir marta)."""
+    if order.courier_rating_bonus is None:
+        try:
+            _pcity = None
+            if order.partner_id:
+                _pcity = (await db.execute(select(PartnerProfile.city_id).where(PartnerProfile.id == order.partner_id))).scalars().first()
+            order.courier_rating_bonus = await courier_rating_bonus_for(db, courier_id, _pcity)
+        except Exception as e:
+            print(f"[REYTING BONUS] {e!r}")
     try:
         setting = setting or await _get_or_create_setting(db)
         cp = (await db.execute(select(CourierProfile).where(CourierProfile.user_id == courier_id))).scalars().first()
@@ -4877,16 +4921,37 @@ async def shop_order_track(order_id: int, init_data: str, db: AsyncSession = Dep
     }
 
 
+
+# ==================== REYTING BO'YICHA TARTIB ====================
+# Hamkor: bahosi yuqori do'kon mijoz ro'yxatida yuqorida chiqadi (admin sozlamalardan o'chirib-yoqadi).
+# Kuryer: buyurtma taklif qilish tartibi reytingga BOG'LIQ EMAS; yuqori reytingli kuryerga admin shaharlar kesimida BONUS belgilaydi.
+RP_PRIOR_STARS, RP_PRIOR_W = 4.0, 5
+
+
+def _bayes(avg, n, prior=RP_PRIOR_STARS, w=RP_PRIOR_W) -> float:
+    n = n or 0
+    return ((float(avg or 0) * n) + prior * w) / (n + w)
+
+
+
+
 @shop_router.get("/partners")
 async def shop_partners(city_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
         select(PartnerProfile).where(PartnerProfile.city_id == city_id, PartnerProfile.is_open == True)
     )
     partners = result.scalars().all()
-    return [
-        {"id": p.id, "name": p.brand_name, "category": p.category, "address": p.address}
-        for p in partners
-    ]
+    rows = (await db.execute(select(OrderRating.partner_id, func.avg(OrderRating.partner_stars), func.count(OrderRating.partner_stars))
+                             .where(OrderRating.partner_stars.isnot(None), OrderRating.partner_id.in_([p.id for p in partners] or [0]))
+                             .group_by(OrderRating.partner_id))).all()
+    rt = {pid: (float(a), n) for pid, a, n in rows}
+    setting = await _get_or_create_setting(db)
+    out = [{"id": p.id, "name": p.brand_name, "category": p.category, "address": p.address,
+            "rating": round(rt[p.id][0], 1) if p.id in rt else None, "rating_count": rt[p.id][1] if p.id in rt else 0}
+           for p in partners]
+    if bool(getattr(setting, "rating_priority_enabled", True)):
+        out.sort(key=lambda d: (-_bayes(rt[d["id"]][0], rt[d["id"]][1], w=3) if d["id"] in rt else -RP_PRIOR_STARS, d["name"].lower()))
+    return out
 
 
 class DeliveryQuoteBody(BaseModel):
@@ -5712,7 +5777,9 @@ async def courier_dashboard(
     order_holds = {o.id: _courier_cash_hold(o, courier_pct) for o in available_orders}
     # ---- Har buyurtma uchun kuryer daromadi: ulush + masofa (km) uchun qo'shimcha haqlar ----
     order_calc = {}
+    _rb_now = await courier_rating_bonus_for(db, current_user.id)
     for o in list(my_active_orders) + list(available_orders):
+        _rb = o.courier_rating_bonus if o.courier_rating_bonus is not None else _rb_now
         base = (o.delivery_fee or 0.0) * courier_pct
         dist = o.distance_km
         if dist is None and o.partner:
@@ -5731,7 +5798,8 @@ async def courier_dashboard(
         order_calc[o.id] = {
             "base": round(base), "dist_km": dist, "delivery_bonus": round(d_bonus),
             "pickup_km": pk, "pickup_bonus": round(p_bonus), "pickup_estimated": estimated,
-            "total": round(base + d_bonus + p_bonus),
+            "rating_bonus": round(_rb or 0),
+            "total": round(base + d_bonus + p_bonus + (_rb or 0)),
         }
     topup_card = await _get_topup_card_info(db)
     my_receipts = (await db.execute(
@@ -6953,10 +7021,501 @@ async def admin_aim_send_now(mid: int, db: AsyncSession = Depends(get_db), curre
     return {"ok": True, "recipients": n}
 
 
+# ==================== CHAT / FIKR-MULOHAZA VA MAJBURIY E'LONLAR ====================
+# Hamkor, kuryer va mijoz administratsiyaga real muammo/fikr yozadi (chat). Admin va operator
+# 3 bo'limda (hamkor / kuryer / mijoz) ko'radi, har bir foydalanuvchiga shaxsiy javob beradi (Telegramdagidek),
+# yoki butun bo'limga e'lon yuboradi: Telegram + ilova ichida ovozli oyna («Tushundim» bosilguncha yopilmaydi).
+SUP_SECTIONS = ("client", "courier", "partner")
+SUP_LABELS = {"client": "Mijozlar", "courier": "Kuryerlar", "partner": "Hamkorlar"}
+SUP_MAX_LEN = 1500
+SUP_RATE_PER_HOUR = 30
+ANN_VISIBLE_DAYS = 7
+support_admin_router = APIRouter(tags=["Chat va e'lonlar"])
+
+
+def _sup_msg(m: SupportMessage) -> dict:
+    return {"id": m.id, "sender": m.sender, "text": m.text, "at": m.created_at.isoformat() if m.created_at else None}
+
+
+async def sup_thread(db: AsyncSession, user: User, section: str) -> dict:
+    msgs = (await db.execute(select(SupportMessage).where(SupportMessage.user_id == user.id, SupportMessage.section == section)
+                             .order_by(SupportMessage.id.desc()).limit(100))).scalars().all()
+    msgs.reverse()
+    changed = False
+    for m in msgs:
+        if m.sender == "staff" and not m.read_by_user:
+            m.read_by_user = True
+            changed = True
+    if changed:
+        await db.commit()
+    return {"messages": [_sup_msg(m) for m in msgs]}
+
+
+async def sup_send(db: AsyncSession, user: User, section: str, text: str) -> dict:
+    text = (text or "").strip()[:SUP_MAX_LEN]
+    if not text:
+        raise HTTPException(status_code=400, detail="Xabar matnini yozing")
+    since = datetime.utcnow() - timedelta(hours=1)
+    cnt = (await db.execute(select(func.count(SupportMessage.id)).where(
+        SupportMessage.user_id == user.id, SupportMessage.sender == "user", SupportMessage.created_at > since))).scalar() or 0
+    if cnt >= SUP_RATE_PER_HOUR:
+        raise HTTPException(status_code=429, detail="Juda ko'p xabar yubordingiz. Birozdan keyin yozing.")
+    db.add(SupportMessage(user_id=user.id, section=section, sender="user", text=text, read_by_user=True, read_by_staff=False))
+    await db.commit()
+    return {"ok": True}
+
+
+async def sup_poll(db: AsyncSession, user: User, section: str) -> dict:
+    unread = (await db.execute(select(func.count(SupportMessage.id)).where(
+        SupportMessage.user_id == user.id, SupportMessage.section == section,
+        SupportMessage.sender == "staff", SupportMessage.read_by_user == False))).scalar() or 0  # noqa: E712
+    since = datetime.utcnow() - timedelta(days=ANN_VISIBLE_DAYS)
+    acked = select(AnnouncementAck.announcement_id).where(AnnouncementAck.user_id == user.id)
+    anns = (await db.execute(select(Announcement).where(
+        Announcement.audience == section, Announcement.created_at > since, Announcement.id.notin_(acked))
+        .order_by(Announcement.id))).scalars().all()
+    my_city = user.city_id
+    if section == "partner":
+        my_city = (await db.execute(select(PartnerProfile.city_id).where(PartnerProfile.user_id == user.id))).scalars().first()
+    anns = [a for a in anns if a.city_id is None or a.city_id == my_city]
+    return {"unread": unread, "pending": [{"id": a.id, "text": a.text, "at": a.created_at.isoformat()} for a in anns]}
+
+
+async def sup_ack(db: AsyncSession, user: User, section: str, aid: int) -> dict:
+    a = (await db.execute(select(Announcement).where(Announcement.id == aid, Announcement.audience == section))).scalars().first()
+    if a:
+        exists = (await db.execute(select(AnnouncementAck.id).where(AnnouncementAck.announcement_id == aid, AnnouncementAck.user_id == user.id))).first()
+        if not exists:
+            db.add(AnnouncementAck(announcement_id=aid, user_id=user.id))
+            await db.commit()
+    return {"ok": True}
+
+
+class SupTextBody(BaseModel):
+    text: str
+
+
+# ---- Hamkor (sessiya) ----
+@partner_router.get("/support")
+async def partner_sup_thread(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_partner_user)):
+    return await sup_thread(db, current_user, "partner")
+
+
+@partner_router.post("/support/send")
+async def partner_sup_send(body: SupTextBody, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_partner_user)):
+    return await sup_send(db, current_user, "partner", body.text)
+
+
+@partner_router.get("/support/poll")
+async def partner_sup_poll(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_partner_user)):
+    return await sup_poll(db, current_user, "partner")
+
+
+@partner_router.post("/support/ack/{aid}")
+async def partner_sup_ack(aid: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_partner_user)):
+    return await sup_ack(db, current_user, "partner", aid)
+
+
+# ---- Kuryer (sessiya) ----
+@courier_router_app.get("/support")
+async def courier_sup_thread(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_courier_user)):
+    return await sup_thread(db, current_user, "courier")
+
+
+@courier_router_app.post("/support/send")
+async def courier_sup_send(body: SupTextBody, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_courier_user)):
+    return await sup_send(db, current_user, "courier", body.text)
+
+
+@courier_router_app.get("/support/poll")
+async def courier_sup_poll(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_courier_user)):
+    return await sup_poll(db, current_user, "courier")
+
+
+@courier_router_app.post("/support/ack/{aid}")
+async def courier_sup_ack(aid: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_courier_user)):
+    return await sup_ack(db, current_user, "courier", aid)
+
+
+# ---- Mijoz (Telegram initData yoki ilova tokeni) ----
+class ShopSupBody(BaseModel):
+    init_data: str
+    text: Optional[str] = ""
+    id: Optional[int] = None
+
+
+async def _shop_sup_user(db: AsyncSession, init_data: str) -> User:
+    tg_user = _get_telegram_user_or_403(init_data)
+    u = (await db.execute(select(User).where(_ident_cond(tg_user), User.role == UserRole.CLIENT))).scalars().first()
+    if not u or not u.is_active:
+        raise HTTPException(status_code=404, detail="Foydalanuvchi topilmadi")
+    return u
+
+
+@shop_router.post("/support")
+async def shop_sup_thread(body: ShopSupBody, db: AsyncSession = Depends(get_db)):
+    return await sup_thread(db, await _shop_sup_user(db, body.init_data), "client")
+
+
+@shop_router.post("/support/send")
+async def shop_sup_send(body: ShopSupBody, db: AsyncSession = Depends(get_db)):
+    return await sup_send(db, await _shop_sup_user(db, body.init_data), "client", body.text or "")
+
+
+@shop_router.post("/support/poll")
+async def shop_sup_poll(body: ShopSupBody, db: AsyncSession = Depends(get_db)):
+    return await sup_poll(db, await _shop_sup_user(db, body.init_data), "client")
+
+
+@shop_router.post("/support/ack")
+async def shop_sup_ack(body: ShopSupBody, db: AsyncSession = Depends(get_db)):
+    return await sup_ack(db, await _shop_sup_user(db, body.init_data), "client", int(body.id or 0))
+
+
+# ---- Admin / operator ----
+def _sup_scope_cond(me: User, section: str):
+    """Operator o'z shahri bilan cheklanadi (egasi va shaharsiz operator — cheklovsiz → None)."""
+    if not (me.role == UserRole.ADMIN and me.city_id is not None):
+        return None
+    if section == "partner":
+        return User.id.in_(select(PartnerProfile.user_id).where(PartnerProfile.city_id == me.city_id))
+    return User.city_id == me.city_id
+
+
+async def _sup_check_scope(db: AsyncSession, me: User, user_id: int, section: str):
+    cond = _sup_scope_cond(me, section)
+    if cond is None:
+        return
+    ok = (await db.execute(select(User.id).where(User.id == user_id, cond))).first()
+    if not ok:
+        raise HTTPException(status_code=403, detail="Bu foydalanuvchi sizning shahringizga tegishli emas")
+
+
+def _sup_section(section: str) -> str:
+    if section not in SUP_SECTIONS:
+        raise HTTPException(status_code=400, detail="Bo'lim noto'g'ri")
+    return section
+
+
+@support_admin_router.get("/admin/support/unread")
+async def admin_sup_unread(db: AsyncSession = Depends(get_db), current_user: User = Depends(require_section("xabarlar"))):
+    out = {}
+    for sec in SUP_SECTIONS:
+        q = select(func.count(func.distinct(SupportMessage.user_id))).where(
+            SupportMessage.section == sec, SupportMessage.sender == "user", SupportMessage.read_by_staff == False)  # noqa: E712
+        cond = _sup_scope_cond(current_user, sec)
+        if cond is not None:
+            q = q.where(SupportMessage.user_id.in_(select(User.id).where(cond)))
+        out[sec] = (await db.execute(q)).scalar() or 0
+    out["total"] = sum(out.values())
+    return out
+
+
+@support_admin_router.get("/admin/support/threads")
+async def admin_sup_threads(section: str, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_section("xabarlar"))):
+    section = _sup_section(section)
+    lq = select(func.max(SupportMessage.id)).where(SupportMessage.section == section)
+    cond = _sup_scope_cond(current_user, section)
+    if cond is not None:
+        lq = lq.where(SupportMessage.user_id.in_(select(User.id).where(cond)))
+    last_ids = (await db.execute(lq.group_by(SupportMessage.user_id))).scalars().all()
+    if not last_ids:
+        return {"threads": []}
+    last = (await db.execute(select(SupportMessage).where(SupportMessage.id.in_(last_ids)).order_by(SupportMessage.id.desc()))).scalars().all()
+    unread = dict((await db.execute(select(SupportMessage.user_id, func.count(SupportMessage.id)).where(
+        SupportMessage.section == section, SupportMessage.sender == "user", SupportMessage.read_by_staff == False)  # noqa: E712
+        .group_by(SupportMessage.user_id))).all())
+    users = {u.id: u for u in (await db.execute(select(User).where(User.id.in_([m.user_id for m in last])))).scalars().all()}
+    out = []
+    for m in last:
+        u = users.get(m.user_id)
+        out.append({"user_id": m.user_id, "name": u.full_name if u else "?", "phone": u.phone_number if u else "",
+                    "last": m.text[:80], "last_sender": m.sender, "at": m.created_at.isoformat(), "unread": unread.get(m.user_id, 0)})
+    out.sort(key=lambda t: t["at"], reverse=True)
+    out.sort(key=lambda t: 0 if t["unread"] else 1)
+    return {"threads": out}
+
+
+@support_admin_router.get("/admin/support/thread/{user_id}")
+async def admin_sup_thread(user_id: int, section: str, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_section("xabarlar"))):
+    section = _sup_section(section)
+    await _sup_check_scope(db, current_user, user_id, section)
+    u = (await db.execute(select(User).where(User.id == user_id))).scalars().first()
+    if not u:
+        raise HTTPException(status_code=404, detail="Foydalanuvchi topilmadi")
+    msgs = (await db.execute(select(SupportMessage).where(SupportMessage.user_id == user_id, SupportMessage.section == section)
+                             .order_by(SupportMessage.id.desc()).limit(200))).scalars().all()
+    msgs.reverse()
+    for m in msgs:
+        if m.sender == "user" and not m.read_by_staff:
+            m.read_by_staff = True
+    await db.commit()
+    return {"user": {"id": u.id, "name": u.full_name, "phone": u.phone_number, "telegram": bool(u.telegram_id)},
+            "messages": [_sup_msg(m) for m in msgs]}
+
+
+@support_admin_router.post("/admin/support/thread/{user_id}/reply")
+async def admin_sup_reply(user_id: int, section: str, body: SupTextBody, db: AsyncSession = Depends(get_db),
+                          current_user: User = Depends(require_section("xabarlar"))):
+    section = _sup_section(section)
+    text = (body.text or "").strip()[:SUP_MAX_LEN]
+    if not text:
+        raise HTTPException(status_code=400, detail="Javob matnini yozing")
+    await _sup_check_scope(db, current_user, user_id, section)
+    u = (await db.execute(select(User).where(User.id == user_id))).scalars().first()
+    if not u:
+        raise HTTPException(status_code=404, detail="Foydalanuvchi topilmadi")
+    db.add(SupportMessage(user_id=user_id, section=section, sender="staff", staff_id=current_user.id, text=text,
+                          read_by_staff=True, read_by_user=False))
+    await db.commit()
+    tg = False
+    if u.telegram_id:
+        try:
+            tg = (await send_telegram_message(u.telegram_id, "💬 <b>ZooMo administratsiyasi javobi</b>\n\n" + html.escape(text)
+                                              + "\n\n<i>Javob berish uchun ilovadagi chat bo'limiga yozing.</i>")) is not False
+        except Exception as e:
+            print(f"[SUPPORT] telegram yuborilmadi: {e!r}")
+    return {"ok": True, "telegram": tg}
+
+
+class AnnounceBody(BaseModel):
+    audience: str
+    text: str
+
+
+async def _ann_recipients(db: AsyncSession, audience: str, city_id: Optional[int] = None) -> list:
+    if audience == "partner" and city_id is not None:
+        cond = User.id.in_(select(PartnerProfile.user_id).where(PartnerProfile.application_status != "pending", PartnerProfile.city_id == city_id))
+    elif audience == "courier" and city_id is not None:
+        cond = and_(User.city_id == city_id, User.id.in_(select(CourierProfile.user_id).where(CourierProfile.application_status != "pending")))
+    elif audience == "client" and city_id is not None:
+        cond = and_(User.role == UserRole.CLIENT, User.city_id == city_id)
+    elif audience == "courier":
+        cond = User.id.in_(select(CourierProfile.user_id).where(CourierProfile.application_status != "pending"))
+    elif audience == "partner":
+        cond = User.id.in_(select(PartnerProfile.user_id).where(PartnerProfile.application_status != "pending"))
+    else:
+        cond = User.role == UserRole.CLIENT
+    return (await db.execute(select(User).where(cond, User.is_active == True))).scalars().all()  # noqa: E712
+
+
+@support_admin_router.post("/admin/support/announce")
+async def admin_sup_announce(body: AnnounceBody, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_section("xabarlar"))):
+    """Butun bo'limga (barcha hamkor / kuryer / mijoz) majburiy e'lon: Telegram + ilova ichida «Tushundim» bosilguncha chiqadi."""
+    audience = _sup_section(body.audience)
+    text = (body.text or "").strip()[:SUP_MAX_LEN]
+    if len(text) < 2:
+        raise HTTPException(status_code=400, detail="E'lon matnini yozing")
+    # Operator — faqat o'z shahriga; egasi — barcha shaharlarga
+    scope_city = current_user.city_id if (current_user.role == UserRole.ADMIN and current_user.city_id is not None) else None
+    ann = Announcement(audience=audience, text=text, created_by_id=current_user.id, city_id=scope_city)
+    db.add(ann)
+    await db.commit()
+    users = await _ann_recipients(db, audience, scope_city)
+    ann_id = ann.id
+    msg = "📢 <b>ZooMo — muhim e'lon</b>\n\n" + html.escape(text)
+    targets = [u.telegram_id for u in users if u.telegram_id]
+
+    async def _run():
+        import asyncio as _a
+        sent = 0
+        for tid in targets:
+            try:
+                if (await send_telegram_message(tid, msg)) is not False:
+                    sent += 1
+            except Exception as e:
+                print(f"[E'LON] yuborilmadi: {e!r}")
+            await _a.sleep(0.05)
+        async with AsyncSessionLocal() as db2:
+            a2 = (await db2.execute(select(Announcement).where(Announcement.id == ann_id))).scalars().first()
+            if a2:
+                a2.sent_count = sent
+                await db2.commit()
+
+    import asyncio as _asyncio
+    _asyncio.create_task(_run())
+    return {"ok": True, "recipients": len(users), "telegram": len(targets)}
+
+
+@support_admin_router.get("/admin/support/announcements")
+async def admin_sup_announcements(audience: str, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_section("xabarlar"))):
+    audience = _sup_section(audience)
+    aq = select(Announcement).where(Announcement.audience == audience)
+    if current_user.role == UserRole.ADMIN and current_user.city_id is not None:
+        aq = aq.where(Announcement.city_id == current_user.city_id)
+    rows = (await db.execute(aq.order_by(Announcement.id.desc()).limit(15))).scalars().all()
+    acks = dict((await db.execute(select(AnnouncementAck.announcement_id, func.count(AnnouncementAck.id)).where(
+        AnnouncementAck.announcement_id.in_([a.id for a in rows] or [0])).group_by(AnnouncementAck.announcement_id))).all())
+    return {"items": [{"id": a.id, "text": a.text, "at": a.created_at.isoformat(), "sent": a.sent_count or 0, "seen": acks.get(a.id, 0)} for a in rows]}
+
+
+# ==================== BAHOLASH (platforma, kuryer, hamkor) ====================
+RATING_WINDOW_DAYS = 3
+LOW_STARS = 3
+
+
+class RatingBody(BaseModel):
+    init_data: str
+    order_id: Optional[int] = None
+    platform: Optional[int] = None
+    courier: Optional[int] = None
+    partner: Optional[int] = None
+    comment: Optional[str] = ""
+
+
+def _star(v):
+    if v is None:
+        return None
+    try:
+        v = int(v)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Baho 1 dan 5 gacha bo'lsin")
+    if not 1 <= v <= 5:
+        raise HTTPException(status_code=400, detail="Baho 1 dan 5 gacha bo'lsin")
+    return v
+
+
+@shop_router.post("/rating/pending")
+async def shop_rating_pending(body: RatingBody, db: AsyncSession = Depends(get_db)):
+    """Oxirgi yetkazilgan, hali baholanmagan buyurtma (so'nggi 3 kun) — baholash oynasi uchun."""
+    client = await _shop_sup_user(db, body.init_data)
+    since = datetime.utcnow() - timedelta(days=RATING_WINDOW_DAYS)
+    rated = select(OrderRating.order_id).where(OrderRating.user_id == client.id)
+    o = (await db.execute(select(Order).where(Order.client_id == client.id, Order.status == OrderStatus.DELIVERED,
+                                              Order.created_at > since, Order.id.notin_(rated))
+                          .order_by(Order.id.desc()).limit(1))).scalars().first()
+    if not o:
+        return {"order": None}
+    partner = (await db.execute(select(PartnerProfile).where(PartnerProfile.id == o.partner_id))).scalars().first() if o.partner_id else None
+    courier = (await db.execute(select(User).where(User.id == o.courier_id))).scalars().first() if o.courier_id else None
+    return {"order": {"id": o.id, "partner": partner.brand_name if partner else "", "courier": courier.full_name if courier else "",
+                      "has_courier": bool(courier), "has_partner": bool(partner)}}
+
+
+@shop_router.post("/rating/submit")
+async def shop_rating_submit(body: RatingBody, db: AsyncSession = Depends(get_db)):
+    client = await _shop_sup_user(db, body.init_data)
+    o = (await db.execute(select(Order).where(Order.id == int(body.order_id or 0), Order.client_id == client.id))).scalars().first()
+    if not o or o.status != OrderStatus.DELIVERED:
+        raise HTTPException(status_code=400, detail="Faqat yetkazilgan buyurtmani baholash mumkin")
+    if (await db.execute(select(OrderRating.id).where(OrderRating.order_id == o.id))).first():
+        raise HTTPException(status_code=400, detail="Bu buyurtma allaqachon baholangan")
+    pl, co, pa = _star(body.platform), _star(body.courier), _star(body.partner)
+    if not o.courier_id:
+        co = None
+    if not o.partner_id:
+        pa = None
+    if pl is None and co is None and pa is None:
+        raise HTTPException(status_code=400, detail="Kamida bittasini baholang")
+    comment = (body.comment or "").strip()[:500]
+    db.add(OrderRating(order_id=o.id, user_id=client.id, courier_user_id=o.courier_id, partner_id=o.partner_id,
+                       platform_stars=pl, courier_stars=co, partner_stars=pa, comment=comment or None))
+    low = any(v is not None and v <= LOW_STARS for v in (pl, co, pa))
+    if low:
+        # Past baho — administratsiyaga chat xabari bo'lib tushadi (o'qilmagan sifatida ko'rinadi)
+        parts = [f"{n} {v}" for n, v in (("platforma", pl), ("kuryer", co), ("hamkor", pa)) if v is not None]
+        txt = f"⭐ Past baho — buyurtma #{o.id}: " + ", ".join(parts) + (f". Izoh: {comment}" if comment else "")
+        db.add(SupportMessage(user_id=client.id, section="client", sender="user", text=txt[:SUP_MAX_LEN], read_by_user=True, read_by_staff=False))
+    await db.commit()
+    return {"ok": True, "low": low}
+
+
+@partner_router.get("/rating")
+async def partner_rating(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_partner_user)):
+    pid = current_user.partner_profile.id
+    avg, n = (await db.execute(select(func.avg(OrderRating.partner_stars), func.count(OrderRating.partner_stars))
+                               .where(OrderRating.partner_id == pid, OrderRating.partner_stars.isnot(None)))).first()
+    return {"avg": round(float(avg), 2) if avg else None, "count": n or 0}
+
+
+@courier_router_app.get("/rating")
+async def courier_rating(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_courier_user)):
+    avg, n = (await db.execute(select(func.avg(OrderRating.courier_stars), func.count(OrderRating.courier_stars))
+                               .where(OrderRating.courier_user_id == current_user.id, OrderRating.courier_stars.isnot(None)))).first()
+    return {"avg": round(float(avg), 2) if avg else None, "count": n or 0}
+
+
+@support_admin_router.get("/admin/ratings/summary")
+async def admin_ratings_summary(db: AsyncSession = Depends(get_db), current_user: User = Depends(require_section("xabarlar"))):
+    scope = []
+    if current_user.role == UserRole.ADMIN and current_user.city_id is not None:
+        scope.append(OrderRating.user_id.in_(select(User.id).where(User.city_id == current_user.city_id)))
+    pl = (await db.execute(select(func.avg(OrderRating.platform_stars), func.count(OrderRating.platform_stars))
+                           .where(OrderRating.platform_stars.isnot(None), *scope))).first()
+
+    async def worst(col, idcol, model, namecol):
+        rows = (await db.execute(select(idcol, func.avg(col), func.count(col)).where(col.isnot(None), idcol.isnot(None), *scope)
+                                 .group_by(idcol).order_by(func.avg(col)).limit(5))).all()
+        out = []
+        for rid, avg, n in rows:
+            nm = (await db.execute(select(namecol).where(model.id == rid))).scalars().first()
+            out.append({"name": nm or "?", "avg": round(float(avg), 2), "count": n})
+        return out
+    last = (await db.execute(select(OrderRating).where(*scope).order_by(OrderRating.id.desc()).limit(15))).scalars().all()
+    names = {u.id: u.full_name for u in (await db.execute(select(User).where(User.id.in_([r.user_id for r in last] or [0])))).scalars().all()}
+    return {"platform": {"avg": round(float(pl[0]), 2) if pl[0] else None, "count": pl[1] or 0},
+            "worst_couriers": await worst(OrderRating.courier_stars, OrderRating.courier_user_id, User, User.full_name),
+            "worst_partners": await worst(OrderRating.partner_stars, OrderRating.partner_id, PartnerProfile, PartnerProfile.brand_name),
+            "last": [{"client": names.get(r.user_id, "?"), "order": r.order_id, "p": r.platform_stars, "c": r.courier_stars, "h": r.partner_stars,
+                      "comment": r.comment or "", "at": r.created_at.isoformat()} for r in last]}
+
+
+# ---- Reyting bonusi: shaharlar kesimida (faqat egasi boshqaradi) ----
+class RatingBonusBody(BaseModel):
+    enabled: bool = False
+    min_rating: float = 4.7
+    min_count: int = 5
+    bonus_amount: float = 0.0
+
+
+@support_admin_router.get("/admin/rating-bonus")
+async def admin_rating_bonus_list(db: AsyncSession = Depends(get_db), owner: User = Depends(require_owner)):
+    cities = (await db.execute(select(City).order_by(City.name))).scalars().all()
+    cfgs = {c.city_id: c for c in (await db.execute(select(CityRatingBonus))).scalars().all()}
+    couriers = (await db.execute(select(User).where(User.id.in_(select(CourierProfile.user_id)), User.is_active == True))).scalars().all()  # noqa: E712
+    rows = (await db.execute(select(OrderRating.courier_user_id, func.avg(OrderRating.courier_stars), func.count(OrderRating.courier_stars))
+                             .where(OrderRating.courier_stars.isnot(None)).group_by(OrderRating.courier_user_id))).all()
+    rt = {uid: (float(a), n) for uid, a, n in rows}
+    out = []
+    for c in cities:
+        cfg = cfgs.get(c.id)
+        mine = [u for u in couriers if u.city_id == c.id]
+        item = {"city_id": c.id, "city": c.name, "enabled": bool(cfg and cfg.enabled), "min_rating": cfg.min_rating if cfg else 4.7,
+                "min_count": cfg.min_count if cfg else 5, "bonus_amount": cfg.bonus_amount if cfg else 0.0, "couriers": []}
+        for u in mine:
+            a, n = rt.get(u.id, (None, 0))
+            ok = bool(cfg and cfg.enabled and (cfg.bonus_amount or 0) > 0 and n >= (cfg.min_count or 0) and a is not None and a >= (cfg.min_rating or 0))
+            item["couriers"].append({"name": u.full_name, "avg": round(a, 2) if a else None, "count": n, "gets_bonus": ok})
+        item["couriers"].sort(key=lambda x: (-(x["avg"] or 0), x["name"]))
+        out.append(item)
+    return {"cities": out}
+
+
+@support_admin_router.post("/admin/rating-bonus/{city_id}")
+async def admin_rating_bonus_save(city_id: int, body: RatingBonusBody, db: AsyncSession = Depends(get_db), owner: User = Depends(require_owner)):
+    if not (await db.execute(select(City.id).where(City.id == city_id))).first():
+        raise HTTPException(status_code=404, detail="Shahar topilmadi")
+    if not (1.0 <= body.min_rating <= 5.0):
+        raise HTTPException(status_code=400, detail="Minimal baho 1 dan 5 gacha bo'lsin")
+    if body.min_count < 0 or body.bonus_amount < 0 or body.bonus_amount > 10_000_000:
+        raise HTTPException(status_code=400, detail="Qiymat noto'g'ri")
+    cfg = (await db.execute(select(CityRatingBonus).where(CityRatingBonus.city_id == city_id))).scalars().first()
+    if not cfg:
+        cfg = CityRatingBonus(city_id=city_id)
+        db.add(cfg)
+    cfg.enabled = bool(body.enabled)
+    cfg.min_rating = body.min_rating
+    cfg.min_count = body.min_count
+    cfg.bonus_amount = body.bonus_amount
+    await db.commit()
+    return {"ok": True}
+
+
 # Routerlarni ulash
 app.include_router(sec_router)
 app.include_router(courier_router_app)
 app.include_router(ai_admin_router)
+app.include_router(support_admin_router)
 app.include_router(partner_router)
 app.include_router(shop_router)
 app.include_router(app_api_router)

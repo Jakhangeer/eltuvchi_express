@@ -285,6 +285,9 @@
                 {% if is_owner or operator_perms.get('dokonlar') %}
                 <button onclick="showPage('dokonlar')" data-page-btn="dokonlar" class="nav-btn">🏪 Do'konlar</button>
                 {% endif %}
+                {% if is_owner or operator_perms.get('xabarlar', True) %}
+                <button onclick="showPage('xabarlar')" data-page-btn="xabarlar" class="nav-btn">💬 Chat va e'lonlar <span id="sup-nav-badge" class="hidden ml-1 bg-red-500 text-white text-[10px] font-bold rounded-full px-1.5 py-0.5"></span></button>
+                {% endif %}
                 {% if is_owner or operator_perms.get('operatorlar') or operator_perms.get('shartlar') or operator_perms.get('banner') or operator_perms.get('moliya') %}
                 <div class="border-t my-2 dark:border-gray-700"></div>
                 {% endif %}
@@ -316,6 +319,7 @@
                 <option value="referal">🎁 Referal</option>
                 <option value="bonuscashback">💸 Bonus/Cashback</option>
                 <option value="dokonlar">🏪 Do'konlar</option>
+                {% if is_owner or operator_perms.get('xabarlar', True) %}<option value="xabarlar">💬 Chat va e'lonlar</option>{% endif %}
                 {% if is_owner %}
                 <option value="operatorlar">🧑‍💼 Operatorlar</option>
                 <option value="shartlar">📄 Shartlar</option>
@@ -399,8 +403,10 @@
                                 </div>
                             </div>
                             <p class="text-[11px] text-gray-500 mt-1">Kuryer buyurtmani qabul qilganda uning joylashuvidan hamkorgacha masofa, hamda hamkordan mijozgacha masofa bo'yicha shu summalar kuryer daromadiga qo'shiladi. 0 bo'lsa — qo'shilmaydi.</p>
+                        </div>
                     </div></details>
-                    </div>
+                    <input type="hidden" name="rp_form" value="1">
+                    <label class="flex items-start gap-2 text-sm font-bold cursor-pointer"><input type="checkbox" name="rating_priority_enabled" value="1" {% if not system_setting or system_setting.rating_priority_enabled is none or system_setting.rating_priority_enabled %}checked{% endif %} class="w-4 h-4 mt-0.5"> <span>⭐ Hamkorlar reyting bo'yicha tartiblansin<span class="block text-[11px] font-normal text-gray-500">Bahosi yuqori hamkorlar mijoz ro'yxatida yuqorida chiqadi.</span></span></label>
                     <!-- ===== ZOOMO AI (yoqish / o'chirish) ===== -->
                     {% set _ai = system_setting %}
                     <details class="rounded-xl border-2 border-dashed p-3 dark:border-gray-700" style="border-color:var(--accent)"><summary class="text-sm font-extrabold cursor-pointer">🤖 ZooMo AI boshqaruvi</summary><div class="space-y-2 mt-2">
@@ -748,6 +754,33 @@
 
         {% if is_owner or operator_perms.get('kuryerlar') %}
         <section class="app-page" data-page="kuryerlar" style="display:none;">
+            {% if is_owner %}
+            <div class="card-bg bg-white p-4 rounded-xl shadow-md mb-4">
+                <details id="rb-box">
+                    <summary class="text-sm font-extrabold cursor-pointer">⭐ Kuryer reyting bonusi (shaharlar kesimida)</summary>
+                    <p class="text-xs text-gray-500 my-2">Bahosi yuqori kuryerlarga har buyurtmada qo'shimcha haq (bonus) qo'shiladi. Har bir shahar uchun alohida: minimal o'rtacha baho, minimal baho soni va bonus summasi. Bonus kuryerning haqiga qo'shiladi va uning panelida ko'rinadi.</p>
+                    <div id="rb-list" class="space-y-3 text-sm"><p class="text-xs text-gray-500">Yuklanmoqda...</p></div>
+                </details>
+            </div>
+            <script>
+            (function(){
+                function e(v){return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+                function load(){fetch('/admin/rating-bonus',{credentials:'same-origin'}).then(function(r){return r.json();}).then(function(d){
+                    document.getElementById('rb-list').innerHTML=(d.cities||[]).map(function(c){
+                        var cl=c.couriers.length?c.couriers.map(function(x){return '<div class="text-[11px] '+(x.gets_bonus?'text-emerald-600 font-bold':'text-gray-500')+'">'+(x.gets_bonus?'✅ ':'• ')+e(x.name)+' — '+(x.avg?('⭐ '+x.avg):'baho yo\'q')+' ('+x.count+')</div>';}).join(''):'<div class="text-[11px] text-gray-500">Bu shaharda kuryer yo\'q</div>';
+                        return '<div class="p-3 rounded-xl border dark:border-gray-700" data-city="'+c.city_id+'"><div class="flex items-center justify-between mb-2"><b>'+e(c.city)+'</b><label class="flex items-center gap-1 text-xs font-bold"><input type="checkbox" data-f="enabled" '+(c.enabled?'checked':'')+'> Yoqilgan</label></div>'+
+                        '<div class="grid grid-cols-3 gap-2 text-xs"><label>Min. baho<input type="number" step="0.1" min="1" max="5" data-f="min_rating" value="'+c.min_rating+'" class="w-full p-1.5 border rounded dark:bg-gray-800 dark:border-gray-700"></label>'+
+                        '<label>Min. baho soni<input type="number" min="0" data-f="min_count" value="'+c.min_count+'" class="w-full p-1.5 border rounded dark:bg-gray-800 dark:border-gray-700"></label>'+
+                        '<label>Bonus (so\'m/buyurtma)<input type="number" min="0" step="500" data-f="bonus_amount" value="'+c.bonus_amount+'" class="w-full p-1.5 border rounded dark:bg-gray-800 dark:border-gray-700"></label></div>'+
+                        '<button type="button" data-save class="mt-2 px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-xs font-bold">💾 Saqlash</button><div class="mt-2">'+cl+'</div></div>';}).join('')||'<p class="text-xs text-gray-500">Shahar yo\'q</p>';});}
+                document.addEventListener('click',function(ev){var b=ev.target.closest('#rb-list [data-save]');if(!b)return;var box=b.closest('[data-city]');
+                    var g=function(f){return box.querySelector('[data-f='+f+']');};
+                    fetch('/admin/rating-bonus/'+box.dataset.city,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:g('enabled').checked,min_rating:parseFloat(g('min_rating').value)||4.7,min_count:parseInt(g('min_count').value)||0,bonus_amount:parseFloat(g('bonus_amount').value)||0})})
+                    .then(function(r){return r.json().then(function(d){if(!r.ok)throw new Error(typeof d.detail==='string'?d.detail:'Xatolik');});}).then(load).catch(function(x){alert(x.message);});});
+                var rb=document.getElementById('rb-box');rb.addEventListener('toggle',function(){if(rb.open)load();});
+            })();
+            </script>
+            {% endif %}
         <!-- COURIERS -->
 
         <!-- JONLI XARITA -->
@@ -1730,6 +1763,43 @@
         {% if is_owner %}
         <!-- MINI APP BANNERLARI (faqat OWNER) -->
         {% if is_owner or operator_perms.get('banner') %}
+        {% if is_owner or operator_perms.get('xabarlar', True) %}
+        <section class="app-page" data-page="xabarlar" style="display:none;">
+            <div class="card-bg bg-white p-4 rounded-xl shadow-md">
+                <h2 class="theme-title text-lg font-bold mb-1 text-indigo-700">💬 Chat va e'lonlar</h2>
+                <p class="text-xs text-gray-500 mb-3">Hamkor, kuryer va mijozlarning muammo/fikrlari alohida bo'limlarda. Foydalanuvchini tanlab shaxsiy javob yozing (u Telegramga ham, ilova ichiga ham bildirishnoma oladi). Yoki butun bo'limga majburiy e'lon yuboring.</p>
+                <div class="flex flex-wrap gap-2 mb-3" id="sup-tabs">
+                    <button type="button" data-sec="partner" class="px-3 py-2 rounded-lg border text-sm font-bold dark:border-gray-700">🏪 Hamkorlar <span class="sup-b hidden bg-red-500 text-white text-[10px] rounded-full px-1.5 py-0.5"></span></button>
+                    <button type="button" data-sec="courier" class="px-3 py-2 rounded-lg border text-sm font-bold dark:border-gray-700">🛵 Kuryerlar <span class="sup-b hidden bg-red-500 text-white text-[10px] rounded-full px-1.5 py-0.5"></span></button>
+                    <button type="button" data-sec="client" class="px-3 py-2 rounded-lg border text-sm font-bold dark:border-gray-700">👥 Mijozlar <span class="sup-b hidden bg-red-500 text-white text-[10px] rounded-full px-1.5 py-0.5"></span></button>
+                </div>
+                <details class="mb-3 rounded-xl border-2 border-dashed p-3 dark:border-gray-700" style="border-color:var(--accent)">
+                    <summary class="text-sm font-extrabold cursor-pointer">📢 <span id="sup-ann-title">Barchaga e'lon</span></summary>
+                    <div class="mt-2 space-y-2">
+                        <textarea id="sup-ann-text" maxlength="1500" rows="3" placeholder="E'lon matni — bo'limdagi har bir kishiga Telegramdan boradi va ilovada ovozli oyna bo'lib chiqadi (Tushundim bosilguncha yopilmaydi)" class="w-full p-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700 text-sm"></textarea>
+                        <button type="button" id="sup-ann-send" class="px-4 py-2 rounded-lg bg-amber-500 text-white text-sm font-bold">📢 Yuborish</button>
+                        <div id="sup-ann-list" class="text-[11px] text-gray-500 space-y-1"></div>
+                    </div>
+                </details>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div class="md:col-span-1 border rounded-xl dark:border-gray-700 overflow-y-auto" style="max-height:60vh"><div id="sup-threads" class="divide-y dark:divide-gray-700 text-sm"></div></div>
+                    <div class="md:col-span-2 border rounded-xl dark:border-gray-700 flex flex-col" style="height:60vh">
+                        <div id="sup-head" class="px-3 py-2 border-b dark:border-gray-700 text-sm font-bold">Suhbatni tanlang</div>
+                        <div id="sup-msgs" class="flex-1 overflow-y-auto p-3 space-y-2 text-sm"></div>
+                        <div class="flex gap-2 p-2 border-t dark:border-gray-700">
+                            <textarea id="sup-reply" rows="1" maxlength="1500" placeholder="Javob yozing..." class="flex-1 p-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700 text-sm"></textarea>
+                            <button type="button" id="sup-reply-send" class="px-4 rounded-lg bg-indigo-600 text-white font-bold">➤</button>
+                        </div>
+                    </div>
+                </div>
+                <details class="mt-3 rounded-xl border p-3 dark:border-gray-700" id="rate-box">
+                    <summary class="text-sm font-extrabold cursor-pointer">⭐ Baholar (platforma, kuryer, hamkor)</summary>
+                    <div class="mt-2 text-sm space-y-3" id="rate-body"><p class="text-gray-500 text-xs">Yuklanmoqda...</p></div>
+                </details>
+            </div>
+        </section>
+        {% endif %}
+
         <section class="app-page" data-page="banner" style="display:none;">
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div class="card-bg bg-white p-6 rounded-xl shadow-md col-span-1">
@@ -2973,7 +3043,53 @@
         document.addEventListener('DOMContentLoaded',function(){setC('#f59e0b');});
     })();
     </script>
-    <script src="/static/js/zm-secure.js?v=1"></script>
+    <script>
+    (function(){
+        function e(v){return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/\n/g,'<br>');}
+        var sec='partner',uid=null,lastTotal=null,AU={partner:'hamkorlarga',courier:'kuryerlarga',client:'mijozlarga'},ac=null;
+        function api(u,m,b){var o={method:m||'GET',credentials:'same-origin',headers:{'Content-Type':'application/json'}};if(b)o.body=JSON.stringify(b);return fetch(u,o).then(function(r){return r.json().catch(function(){return {};}).then(function(d){if(!r.ok)throw new Error(typeof d.detail==='string'?d.detail:'Xatolik');return d;});});}
+        function beep(){try{ac=ac||new (window.AudioContext||window.webkitAudioContext)();var o=ac.createOscillator(),g=ac.createGain();o.frequency.value=880;o.connect(g);g.connect(ac.destination);g.gain.setValueAtTime(.2,ac.currentTime);g.gain.exponentialRampToValueAtTime(.001,ac.currentTime+.3);o.start();o.stop(ac.currentTime+.31);}catch(x){}}
+        function tm(i){try{return new Date(i+(i.indexOf('Z')<0?'Z':'')).toLocaleString([], {hour:'2-digit',minute:'2-digit',day:'2-digit',month:'2-digit'});}catch(x){return '';}}
+        function visible(){var s=document.querySelector('.app-page[data-page="xabarlar"]');return s&&s.style.display!=='none';}
+        function unread(){api('/admin/support/unread').then(function(d){
+            document.querySelectorAll('#sup-tabs button').forEach(function(b){var n=d[b.dataset.sec]||0,s=b.querySelector('.sup-b');s.textContent=n;s.classList.toggle('hidden',!n);});
+            var nb=document.getElementById('sup-nav-badge');if(nb){nb.textContent=d.total;nb.classList.toggle('hidden',!d.total);}
+            if(lastTotal!==null&&d.total>lastTotal)beep();lastTotal=d.total;}).catch(function(){});}
+        function threads(){api('/admin/support/threads?section='+sec).then(function(d){var el=document.getElementById('sup-threads');
+            el.innerHTML=(d.threads||[]).map(function(t){return '<button type="button" data-u="'+t.user_id+'" class="w-full text-left p-2 hover:bg-gray-50 dark:hover:bg-gray-800 '+(t.user_id===uid?'bg-indigo-50 dark:bg-gray-800':'')+'"><div class="flex justify-between gap-2"><b class="truncate">'+e(t.name)+'</b>'+(t.unread?'<span class="bg-red-500 text-white text-[10px] rounded-full px-1.5">'+t.unread+'</span>':'')+'</div><div class="text-[11px] text-gray-500 truncate">'+(t.last_sender==='staff'?'↩ ':'')+e(t.last)+'</div></button>';}).join('')||'<p class="p-3 text-gray-500 text-xs">Hozircha xabar yo\'q</p>';});}
+        function thread(keepScroll){if(!uid)return;api('/admin/support/thread/'+uid+'?section='+sec).then(function(d){
+            document.getElementById('sup-head').innerHTML='👤 '+e(d.user.name)+' · <a class="text-indigo-600" href="tel:'+e(d.user.phone)+'">'+e(d.user.phone)+'</a>'+(d.user.telegram?'':' <span class="text-[10px] text-amber-600">(Telegram ulanmagan)</span>');
+            var box=document.getElementById('sup-msgs');box.innerHTML=d.messages.map(function(m){var me=m.sender==='staff';return '<div class="flex '+(me?'justify-end':'')+'"><div class="max-w-[80%] px-3 py-2 rounded-2xl '+(me?'bg-indigo-600 text-white':'bg-gray-200 dark:bg-gray-700')+'">'+e(m.text)+'<div class="text-[9px] opacity-70 mt-0.5">'+tm(m.at)+'</div></div></div>';}).join('');
+            if(!keepScroll)box.scrollTop=box.scrollHeight;unread();});}
+        function anns(){api('/admin/support/announcements?audience='+sec).then(function(d){document.getElementById('sup-ann-list').innerHTML=(d.items||[]).map(function(a){return '<div>• '+tm(a.at)+' — '+e(a.text.slice(0,60))+' <b>(Telegram: '+a.sent+', ko\'rdi: '+a.seen+')</b></div>';}).join('');});}
+        function setSec(s){sec=s;uid=null;document.getElementById('sup-msgs').innerHTML='';document.getElementById('sup-head').textContent='Suhbatni tanlang';document.getElementById('sup-ann-title').textContent='Barcha '+AU[s]+' e\'lon';
+            document.querySelectorAll('#sup-tabs button').forEach(function(b){b.classList.toggle('bg-indigo-600',b.dataset.sec===s);b.classList.toggle('text-white',b.dataset.sec===s);});threads();anns();}
+        document.addEventListener('click',function(ev){
+            var t=ev.target.closest('#sup-tabs button');if(t){setSec(t.dataset.sec);return;}
+            var u=ev.target.closest('#sup-threads [data-u]');if(u){uid=parseInt(u.dataset.u);thread();threads();return;}
+            if(ev.target.closest('[data-page-btn="xabarlar"]')||false){setTimeout(function(){setSec(sec);},50);}
+        });
+        document.addEventListener('change',function(ev){if(ev.target.id==='mobile-page-select'&&ev.target.value==='xabarlar')setTimeout(function(){setSec(sec);},50);});
+        function st(n){return n==null?'—':(n===0?'—':n);}
+        function rates(){api('/admin/ratings/summary').then(function(d){var h='<div class="font-bold">ZooMo xizmati: '+(d.platform.avg?('⭐ '+d.platform.avg+' ('+d.platform.count+' ta baho)'):'hali baho yo\'q')+'</div>';
+            function list(t,a){return '<div><div class="font-bold text-xs mb-1">'+t+'</div>'+(a.length?a.map(function(x){return '<div class="text-xs">• '+e(x.name)+' — ⭐ '+x.avg+' ('+x.count+')</div>';}).join(''):'<div class="text-xs text-gray-500">—</div>')+'</div>';}
+            h+='<div class="grid grid-cols-1 md:grid-cols-2 gap-3">'+list('🛵 Eng past baholi kuryerlar',d.worst_couriers)+list('🏪 Eng past baholi hamkorlar',d.worst_partners)+'</div>';
+            h+='<div><div class="font-bold text-xs mb-1">So\'nggi baholar</div>'+(d.last.length?d.last.map(function(r){return '<div class="text-xs border-b dark:border-gray-700 py-1">#'+r.order+' '+e(r.client)+' — xizmat '+st(r.p)+' · kuryer '+st(r.c)+' · hamkor '+st(r.h)+(r.comment?'<div class="text-gray-500">“'+e(r.comment)+'”</div>':'')+'</div>';}).join(''):'<div class="text-xs text-gray-500">—</div>')+'</div>';
+            document.getElementById('rate-body').innerHTML=h;}).catch(function(){});}
+        var rb=document.getElementById('rate-box');if(rb)rb.addEventListener('toggle',function(){if(rb.open)rates();});
+        var rs=document.getElementById('sup-reply-send');
+        if(rs){rs.onclick=function(){var ta=document.getElementById('sup-reply'),v=ta.value.trim();if(!v||!uid)return;ta.value='';
+            api('/admin/support/thread/'+uid+'/reply?section='+sec,'POST',{text:v}).then(function(r){thread();threads();if(!r.telegram)console.log('Telegramga yuborilmadi (ilova ichida baribir ko\'rinadi)');}).catch(function(x){alert(x.message);ta.value=v;});};
+            document.getElementById('sup-reply').onkeydown=function(ev){if(ev.key==='Enter'&&!ev.shiftKey){ev.preventDefault();rs.click();}};
+            document.getElementById('sup-ann-send').onclick=function(){var ta=document.getElementById('sup-ann-text'),v=ta.value.trim();if(v.length<2)return;
+                if(!confirm('Barcha '+AU[sec]+' majburiy e\'lon yuborilsinmi?'))return;
+                api('/admin/support/announce','POST',{audience:sec,text:v}).then(function(r){ta.value='';alert('Yuborildi: '+r.recipients+' kishi (Telegram: '+r.telegram+')');anns();}).catch(function(x){alert(x.message);});};
+            document.addEventListener('DOMContentLoaded',function(){setSec('partner');unread();});
+            setInterval(function(){unread();if(visible()){threads();if(uid)thread(true);}},8000);
+            window.addEventListener('pageshow',unread);}
+    })();
+    </script>
+    <script src="/static/js/zm-secure.js?v=2"></script>
     <script src="/static/js/zm-ai.js?v=3"></script>
     {% if ai_help_on %}<script>document.addEventListener("DOMContentLoaded",function(){if(window.ZMAI)ZMAI.mountHelp({url:"/admin/ai/help"});});</script>{% endif %}
     <script>

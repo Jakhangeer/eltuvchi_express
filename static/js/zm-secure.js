@@ -3,11 +3,17 @@
   var T = function (s) { return window.ZMI18n && ZMI18n.t ? ZMI18n.t(s) : s; };
   var rawFetch = window.fetch.bind(window);
   function esc(v) { return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  // server xabarlari: oddiy yoki raqamli ({n}) shablon bo'yicha tarjima
+  function tm(m) {
+    var t = T(m); if (t !== m) return t;
+    var mm = String(m).match(/\d+/); if (!mm) return m;
+    var k = String(m).replace(/\d+/, '{n}'), r = T(k); return r !== k ? r.replace('{n}', mm[0]) : m;
+  }
   function jget(u) { return rawFetch(u, { credentials: 'same-origin' }).then(j); }
   function jpost(u, b) { return rawFetch(u, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b || {}) }).then(j); }
   function j(r) {
     return r.json().catch(function () { return {}; }).then(function (d) {
-      if (!r.ok) { var m = d && d.detail; var e = new Error(typeof m === 'string' ? m : (m && m.message) || T('Xatolik')); e.status = r.status; e.code = m && m.code; throw e; }
+      if (!r.ok) { var m = d && d.detail; var e = new Error(tm(typeof m === 'string' ? m : (m && m.message) || 'Xatolik')); e.status = r.status; e.code = m && m.code; throw e; }
       return d;
     });
   }
@@ -60,10 +66,37 @@
     });
   }
 
+  // ---- Telegramga yuborilgan 8 xonali kod (javoblarni o'zgartirish/o'chirish uchun) ----
+  function otpView(opts) {
+    return new Promise(function (resolve, reject) {
+      var bg = modal('<p class="zms-h">📲 ' + T("Telegram kodi") + '</p><p class="zms-sub" id="zms-info">' + T("Xavfsizlik uchun Telegram botdan 8 xonali kod yuboriladi. Javoblarni o'zgartirish yoki o'chirish uchun uni kiriting.") + '</p>' +
+        '<input class="zms-in" id="zms-otp" inputmode="numeric" maxlength="8" autocomplete="one-time-code" placeholder="••••••••" style="letter-spacing:6px;text-align:center;font-size:20px" disabled>' +
+        '<div class="zms-err" id="zms-err"></div><div style="display:flex;gap:8px"><button class="zms-btn zms-ok" id="zms-send">' + T("Kod yuborish") + '</button>' +
+        '<button class="zms-btn zms-ok" id="zms-go" style="display:none">' + T("Tasdiqlash") + '</button><button class="zms-btn zms-no" id="zms-cancel">' + T("Bekor qilish") + '</button></div>');
+      var inp = bg.querySelector('#zms-otp'), err = bg.querySelector('#zms-err'), send = bg.querySelector('#zms-send'), go = bg.querySelector('#zms-go');
+      function doSend() {
+        send.disabled = true; err.textContent = '';
+        jpost('/security/otp/send').then(function () {
+          inp.disabled = false; inp.focus(); go.style.display = ''; send.textContent = T("Qayta yuborish");
+          bg.querySelector('#zms-info').textContent = T("Telegramga 8 xonali kod yuborildi. Uni shu yerga kiriting.");
+          setTimeout(function () { send.disabled = false; }, 30000);
+        }).catch(function (e) { err.textContent = e.message; send.disabled = false; });
+      }
+      send.onclick = doSend;
+      function check() {
+        var v = inp.value.replace(/\D/g, ''); if (v.length !== 8) { err.textContent = T("8 ta raqam kiriting"); return; }
+        jpost('/security/otp/verify', { code: v }).then(function () { bg.remove(); resolve(); }).catch(function (e) { err.textContent = e.message; inp.value = ''; });
+      }
+      go.onclick = check; inp.onkeydown = function (e) { if (e.key === 'Enter') check(); };
+      bg.querySelector('#zms-cancel').onclick = function () { bg.remove(); reject(new Error('cancel')); };
+    });
+  }
+
   // ---- Maxfiy javoblarni o'rnatish / yangilash ----
   function setupView(opts, st) {
     return new Promise(function (resolve, reject) {
       (st ? Promise.resolve(st) : jget('/security/status')).then(function (s) {
+        if (s.has && !s.can_change) { otpView(opts).then(function () { setupView(opts).then(resolve, reject); }, reject); return; }
         var have = {}; (s.mine || []).forEach(function (m) { have[m.category] = m; });
         var rows = s.categories.map(function (c) {
           var h = have[c.key];
@@ -77,7 +110,7 @@
           (opts && opts.noCancel && !s.has ? '' : '<button class="zms-btn zms-no" id="zms-cancel">' + T("Yopish") + '</button>') + '</div>');
         var err = bg.querySelector('#zms-err');
         bg.querySelectorAll('[data-del]').forEach(function (b) {
-          b.onclick = function () { if (!confirm(T("O'chirilsinmi?"))) return; jpost('/security/delete/' + b.dataset.del).then(function () { bg.remove(); setupView(opts).then(resolve, reject); }).catch(function (e) { err.textContent = e.message; }); };
+          b.onclick = function () { if (!confirm(T("O'chirilsinmi?"))) return; jpost('/security/delete/' + b.dataset.del).then(function () { bg.remove(); setupView(opts).then(resolve, reject); }).catch(function (e) { if (e.code === 'sec_otp') { bg.remove(); setupView(opts).then(resolve, reject); } else err.textContent = e.message; }); };
         });
         bg.querySelector('#zms-save').onclick = function () {
           var entries = [], bad = '';
@@ -88,7 +121,7 @@
           if (bad) { err.textContent = bad; return; }
           if (!entries.length) { err.textContent = T("Kamida bitta javob yozing"); return; }
           jpost('/security/setup', { entries: entries }).then(function () { bg.remove(); resolve(); })
-            .catch(function (e) { if (e.code === 'sec_verify') { bg.remove(); verifyView(opts).then(function () { setupView(opts).then(resolve, reject); }, reject); } else err.textContent = e.message; });
+            .catch(function (e) { if (e.code === 'sec_verify') { bg.remove(); verifyView(opts).then(function () { setupView(opts).then(resolve, reject); }, reject); } else if (e.code === 'sec_otp') { bg.remove(); setupView(opts).then(resolve, reject); } else err.textContent = e.message; });
         };
         var c = bg.querySelector('#zms-cancel'); if (c) c.onclick = function () { bg.remove(); reject(new Error('cancel')); };
       }).catch(function (e) { alert(e.message); reject(e); });

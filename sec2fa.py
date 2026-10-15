@@ -6,6 +6,7 @@ bcrypt bilan xeshlanadi. Pul yechish, sozlamalar va operator paneliga kirishda s
 5 marta xato qilinsa — 15 daqiqaga bloklanadi."""
 import hashlib
 import random
+import secrets
 import re
 import time
 import unicodedata
@@ -20,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database import get_db
 from models import User, UserRole, SecurityAnswer
+from telegram_bot import send_telegram_message
 from auth import hash_password, verify_password, require_owner
 
 CATEGORIES = {
@@ -34,6 +36,7 @@ CATEGORIES = {
 }
 MIN_LEN, MAX_LEN = 5, 300
 MAX_TRIES, LOCK_MIN, UNLOCK_SEC = 5, 15, 600
+OTP_LEN, OTP_TTL_MIN, OTP_MAX_TRIES, MANAGE_SEC = 8, 5, 5, 600
 
 sec_router = APIRouter(prefix="/security", tags=["Xavfsizlik"])
 
@@ -83,6 +86,11 @@ def _unlock(request: Request, user: User):
         request.session["sec_admin"] = user.id   # operator paneliga kirish — sessiya davomida
 
 
+def _can_change(request: Request, uid: int) -> bool:
+    """Javoblarni o'zgartirish/o'chirish — Telegramdan kelgan 8 xonali kod kiritilgandan keyingina."""
+    return request.session.get("sec_mng_uid") == uid and request.session.get("sec_mng_until", 0) > time.time()
+
+
 async def secure_action(request: Request, db: AsyncSession = Depends(get_db)):
     """Dependency: pul yechish / sozlamalar kabi nozik amallar oldidan maxfiy javob."""
     uid = request.session.get("user_id")
@@ -103,7 +111,7 @@ def _labels():
 async def sec_status(request: Request, db: AsyncSession = Depends(get_db)):
     user = await _user(request, db)
     es = await _entries(db, user.id)
-    return {"has": bool(es), "unlocked": _unlocked(request, user.id), "categories": _labels(),
+    return {"has": bool(es), "unlocked": _unlocked(request, user.id), "can_change": _can_change(request, user.id), "has_tg": bool(user.telegram_id), "categories": _labels(),
             "mine": [{"id": e.id, "category": e.category, "label": CATEGORIES.get(e.category, ("?",))[0]} for e in es],
             "min": MIN_LEN, "max": MAX_LEN}
 
@@ -118,6 +126,8 @@ async def sec_setup(body: SetupBody, request: Request, db: AsyncSession = Depend
     es = await _entries(db, user.id)
     if es and not _unlocked(request, user.id):
         raise HTTPException(status_code=428, detail={"code": "sec_verify", "message": "Maxfiy javobni kiriting"})
+    if es and not _can_change(request, user.id):
+        raise HTTPException(status_code=428, detail={"code": "sec_otp", "message": "Telegramga yuborilgan kodni kiriting"})
     clean = {}
     for it in body.entries[:len(CATEGORIES)]:
         cat = str(it.get("category", ""))
@@ -197,12 +207,69 @@ async def sec_delete(entry_id: int, request: Request, db: AsyncSession = Depends
     user = await _user(request, db)
     if not _unlocked(request, user.id):
         raise HTTPException(status_code=428, detail={"code": "sec_verify", "message": "Maxfiy javobni kiriting"})
+    if not _can_change(request, user.id):
+        raise HTTPException(status_code=428, detail={"code": "sec_otp", "message": "Telegramga yuborilgan kodni kiriting"})
     es = await _entries(db, user.id)
     if len(es) <= 1:
         raise HTTPException(status_code=400, detail="Kamida bitta maxfiy javob qolishi kerak")
     await db.execute(delete(SecurityAnswer).where(SecurityAnswer.id == entry_id, SecurityAnswer.user_id == user.id))
     await db.commit()
     return {"ok": True}
+
+
+@sec_router.post("/otp/send")
+async def sec_otp_send(request: Request, db: AsyncSession = Depends(get_db)):
+    """Telegram botdan foydalanuvchining raqamiga bog'langan akkauntga 8 xonali bir martalik kod yuboradi."""
+    user = await _user(request, db)
+    now = datetime.utcnow()
+    if user.sec_otp_expires and user.sec_otp_expires - timedelta(minutes=OTP_TTL_MIN) + timedelta(seconds=30) > now:
+        raise HTTPException(status_code=429, detail="Kod yaqinda yuborilgan. 30 soniyadan keyin qayta so'rang.")
+    if not user.telegram_id:
+        raise HTTPException(status_code=400, detail="Telegram hisobingiz ulanmagan. Botga /start yuborib raqamingizni ulang yoki administratorga murojaat qiling.")
+    code = "".join(secrets.choice("0123456789") for _ in range(OTP_LEN))
+    ok = await send_telegram_message(
+        user.telegram_id,
+        f"🔐 <b>ZooMo xavfsizlik kodi</b>\n\n<code>{code}</code>\n\nMaxfiy javoblarni o'zgartirish yoki o'chirish uchun kod. "
+        f"{OTP_TTL_MIN} daqiqa amal qiladi. Buni siz so'ramagan bo'lsangiz — hech kimga aytmang va kodni kiritmang.")
+    if not ok:
+        raise HTTPException(status_code=502, detail="Telegramga xabar yuborib bo'lmadi. Botni bloklamaganingizni tekshiring.")
+    user.sec_otp_hash = hash_password(code)
+    user.sec_otp_expires = now + timedelta(minutes=OTP_TTL_MIN)
+    user.sec_otp_tries = 0
+    await db.commit()
+    return {"ok": True, "len": OTP_LEN, "minutes": OTP_TTL_MIN}
+
+
+class OtpBody(BaseModel):
+    code: str
+
+
+@sec_router.post("/otp/verify")
+async def sec_otp_verify(body: OtpBody, request: Request, db: AsyncSession = Depends(get_db)):
+    user = await _user(request, db)
+    if not _unlocked(request, user.id):
+        raise HTTPException(status_code=428, detail={"code": "sec_verify", "message": "Maxfiy javobni kiriting"})
+    now = datetime.utcnow()
+    if not user.sec_otp_hash or not user.sec_otp_expires or user.sec_otp_expires < now:
+        raise HTTPException(status_code=400, detail="Kod muddati tugagan yoki yuborilmagan. Yangi kod so'rang.")
+    code = re.sub(r"\D", "", body.code or "")
+    if len(code) == OTP_LEN and verify_password(code, user.sec_otp_hash):
+        user.sec_otp_hash = None
+        user.sec_otp_expires = None
+        user.sec_otp_tries = 0
+        await db.commit()
+        request.session["sec_mng_uid"] = user.id
+        request.session["sec_mng_until"] = time.time() + MANAGE_SEC
+        return {"ok": True}
+    user.sec_otp_tries = (user.sec_otp_tries or 0) + 1
+    if user.sec_otp_tries >= OTP_MAX_TRIES:
+        user.sec_otp_hash = None
+        user.sec_otp_expires = None
+        user.sec_otp_tries = 0
+        await db.commit()
+        raise HTTPException(status_code=429, detail="Ko'p xato urinish. Yangi kod so'rang.")
+    await db.commit()
+    raise HTTPException(status_code=403, detail=f"Kod noto'g'ri. Yana {OTP_MAX_TRIES - user.sec_otp_tries} ta urinish qoldi.")
 
 
 class ResetBody(BaseModel):
@@ -226,7 +293,7 @@ async def sec_reset(body: ResetBody, db: AsyncSession = Depends(get_db), owner: 
 _GATE = """<!doctype html><html lang="uz"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Xavfsizlik</title><style>body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0f172a;font-family:system-ui,sans-serif;color:#e2e8f0}
 p{max-width:320px;text-align:center;font-size:14px;color:#94a3b8}</style></head><body><p>🔐 Xavfsizlik tekshiruvi...</p>
-<script src="/static/js/zm-secure.js?v=1"></script><script>ZMSec.gate(%s);</script></body></html>"""
+<script src="/static/js/zm-secure.js?v=2"></script><script>ZMSec.gate(%s);</script></body></html>"""
 
 
 @sec_router.get("/gate", response_class=HTMLResponse)

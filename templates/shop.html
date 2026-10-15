@@ -181,7 +181,7 @@
         body.theme-dark .bg-slate-500\/10 { background-color: rgba(255,255,255,.06) !important; }
     </style>
     <link rel="stylesheet" href="/static/css/light-mode.css?v=3">
-    <link rel="stylesheet" href="/static/css/themes.css?v=3">
+    <link rel="stylesheet" href="/static/css/themes.css?v=4">
     <link rel="stylesheet" href="/static/css/splash.css?v=3">
 </head>
 <body id="main-body" class="theme-default min-h-screen antialiased selection:bg-amber-500 selection:text-white pb-32 transition-colors duration-300">
@@ -202,27 +202,27 @@
 
     <!-- Header -->
     <header class="bg-white/80 backdrop-blur-md border-b border-slate-100 sticky top-0 z-40 shadow-sm transition-colors duration-300" id="app-header">
-        <div class="max-w-md mx-auto px-4 py-3 flex justify-between items-center">
-            <div class="flex items-center space-x-2.5 cursor-pointer" onclick="goHome()">
-                <img src="/static/images/logo-mark.png" onerror="this.style.display='none'" alt="ZooMo" class="w-9 h-9 object-contain rounded-xl bg-white p-1 border border-slate-200 shadow-sm">
+        <div class="max-w-md mx-auto px-3 py-3 flex justify-between items-center">
+            <div class="flex items-center space-x-2 cursor-pointer shrink-0" onclick="goHome()">
+                <img src="/static/images/logo-mark.png" onerror="this.style.display='none'" alt="ZooMo" class="w-8 h-8 object-contain rounded-xl bg-white p-1 border border-slate-200 shadow-sm">
                 <div>
                     <div class="font-black text-base text-slate-900 tracking-tight leading-none">ZOOMO</div>
                     <div class="text-[10px] font-extrabold text-amber-500 tracking-widest leading-none mt-0.5">DELIVERY</div>
                 </div>
             </div>
             
-            <div class="flex items-center space-x-2">
-                <button onclick="renderFavorites()" class="bg-slate-100 hover:bg-slate-200 text-slate-700 w-9 h-9 rounded-2xl flex items-center justify-center transition-all active:scale-95 relative">
+            <div class="flex items-center space-x-1 min-w-0">
+                <button onclick="renderFavorites()" class="bg-slate-100 hover:bg-slate-200 text-slate-700 w-8 h-8 shrink-0 rounded-2xl flex items-center justify-center transition-all active:scale-95 relative">
                     <i class="fa-solid fa-heart text-rose-500 text-sm"></i>
                     <span id="fav-badge" class="hidden absolute -top-1 -right-1 bg-rose-500 text-white text-[9px] font-bold w-4 h-4 rounded-full flex items-center justify-center">0</span>
                 </button>
-                <button type="button" data-mode-toggle class="bg-slate-100 hover:bg-slate-200 text-slate-700 w-9 h-9 rounded-2xl flex items-center justify-center transition-all active:scale-95 text-sm" aria-label="Rejim"></button>
-                <button type="button" data-zm-settings="lang" class="bg-slate-100 hover:bg-slate-200 text-slate-700 w-9 h-9 rounded-2xl flex items-center justify-center transition-all active:scale-95 text-sm" aria-label="Til">🌐</button>
-                <button onclick="toggleThemeMenu()" class="bg-slate-100 hover:bg-slate-200 text-slate-700 w-9 h-9 rounded-2xl flex items-center justify-center transition-all active:scale-95">
+                <button type="button" data-mode-toggle class="bg-slate-100 hover:bg-slate-200 text-slate-700 w-8 h-8 shrink-0 rounded-2xl flex items-center justify-center transition-all active:scale-95 text-sm" aria-label="Rejim"></button>
+                <button type="button" data-zm-settings="lang" class="bg-slate-100 hover:bg-slate-200 text-slate-700 w-8 h-8 shrink-0 rounded-2xl flex items-center justify-center transition-all active:scale-95 text-sm" aria-label="Til">🌐</button>
+                <button onclick="toggleThemeMenu()" class="bg-slate-100 hover:bg-slate-200 text-slate-700 w-8 h-8 shrink-0 rounded-2xl flex items-center justify-center transition-all active:scale-95">
                     <i class="fa-solid fa-palette text-sm"></i>
                 </button>
-                <button id="ai-btn" type="button" onclick="openAI()" class="hidden bg-slate-100 hover:bg-slate-200 text-slate-700 w-9 h-9 rounded-2xl flex items-center justify-center transition-all active:scale-95 text-sm" aria-label="ZooMo AI">✨</button>
-                <button id="profile-btn" class="hidden bg-slate-100 hover:bg-slate-200 text-slate-700 w-9 h-9 rounded-2xl flex items-center justify-center transition-all active:scale-95" onclick="openProfile()">
+                <button id="ai-btn" type="button" onclick="openAI()" class="hidden bg-slate-100 hover:bg-slate-200 text-slate-700 w-8 h-8 shrink-0 rounded-2xl flex items-center justify-center transition-all active:scale-95 text-sm" aria-label="ZooMo AI">✨</button>
+                <button id="profile-btn" class="hidden bg-slate-100 hover:bg-slate-200 text-slate-700 w-8 h-8 shrink-0 rounded-2xl flex items-center justify-center transition-all active:scale-95" onclick="openProfile()">
                     <i class="fa-solid fa-user-gear text-sm"></i>
                 </button>
             </div>
@@ -327,6 +327,8 @@
         </div>
     </div>
 
+    <script src="/static/js/zm-support.js?v=2"></script>
+    <script src="/static/js/zm-rating.js?v=1"></script>
     <script src="/static/js/zm-ai.js?v=3"></script>
     <script>
         const tg = window.Telegram?.WebApp;
@@ -528,7 +530,7 @@
                     infoEl.textContent = data.status === 'delivered' ? "✅ Buyurtma yetkazildi!" : "❌ Buyurtma bekor qilindi";
                     statusEl.textContent = '';
                     if (trackingPollTimer) { clearInterval(trackingPollTimer); trackingPollTimer = null; }
-                    if (data.status === 'delivered') setTimeout(closeOrderTracking, 2500);
+                    if (data.status === 'delivered') { setTimeout(closeOrderTracking, 2500); setTimeout(() => { if (window.ZMRating) ZMRating.check(); }, 3200); }
                     return;
                 }
 
@@ -629,6 +631,8 @@
         let aiItems = [];
         let aiOrder = false; // AI orqali yig'ilgan buyurtma: faqat oldindan to'lov (karta) bilan
         async function initAI() {
+            try { if (initData && window.ZMSupport) ZMSupport.mount({ client: true, base: '/api/shop/support', bottom: 86, initData: () => initData }); } catch (e) {}
+            try { if (initData && window.ZMRating) ZMRating.mount({ base: '/api/shop', initData: () => initData, onLow: (id) => { if (window.ZMSupport) ZMSupport.open("Buyurtma #" + id + " bo'yicha muammo: "); } }); } catch (e) {}
             try {
                 const r = await fetch('/api/shop/ai/status');
                 const d = await r.json();
@@ -1047,6 +1051,7 @@
                         <div class="font-black text-sm text-title flex items-center space-x-1.5">
                             <span>${p.name}</span>
                             <span class="w-2 h-2 rounded-full ${isOpen ? 'bg-emerald-500' : 'bg-rose-500'}"></span>
+                            ${p.rating ? `<span class="text-[11px] font-extrabold text-amber-500">⭐ ${p.rating} <span class="text-sub font-semibold">(${p.rating_count})</span></span>` : ''}
                         </div>
                         <span class="text-[9px] uppercase font-bold tracking-wider ${isOpen ? 'bg-emerald-500/10 text-emerald-600' : 'bg-rose-500/10 text-rose-600'} px-2 py-0.5 rounded-md">
                             ${isOpen ? 'Ochiq' : 'Hozir Yopiq'}

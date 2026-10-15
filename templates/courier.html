@@ -115,6 +115,9 @@
   {%- if calc.dist_km is not none %}
   <div class="flex justify-between"><span class="text-slate-300">📏 Mijozgacha: {{ "%.1f"|format(calc.dist_km) }} km</span><span class="text-emerald-300 font-semibold">+{{ "{:,.0f}".format(calc.delivery_bonus).replace(",", " ") }} so'm</span></div>
   {%- endif %}
+  {%- if calc.rating_bonus %}
+  <div class="flex justify-between"><span class="text-slate-300">⭐ Reyting bonusi</span><span class="text-emerald-300 font-semibold">+{{ "{:,.0f}".format(calc.rating_bonus).replace(",", " ") }} so'm</span></div>
+  {%- endif %}
   <div class="flex justify-between border-t border-white/10 mt-1 pt-1"><span class="font-bold text-slate-100">Sizning jami haqingiz</span><span class="font-extrabold text-emerald-300">{{ "{:,.0f}".format(calc.total).replace(",", " ") }} so'm</span></div>
 </div>
 {%- endif -%}
@@ -862,8 +865,10 @@
             if (window.ZMNav && ZMNav.refreshUI) ZMNav.refreshUI();
         });
     </script>
-    <script src="/static/js/zm-secure.js?v=1"></script>
+    <script src="/static/js/zm-secure.js?v=2"></script>
+    <script src="/static/js/zm-support.js?v=2"></script>
     <script src="/static/js/zm-ai.js?v=3"></script>
+    <script>document.addEventListener("DOMContentLoaded",function(){if(window.ZMSupport)ZMSupport.mount({base:"/courier/support",ratingUrl:"/courier/rating"});});</script>
     {% if ai_help_on %}<script>document.addEventListener("DOMContentLoaded",function(){if(window.ZMAI)ZMAI.mountHelp({url:"/courier/ai/help"});});</script>{% endif %}
     <script>document.addEventListener("DOMContentLoaded",function(){var e=document.getElementById("zm-ai-courier");if(e&&window.ZMAI)ZMAI.mountCourier(e);});</script>
 </body>

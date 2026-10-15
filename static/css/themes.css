@@ -302,18 +302,18 @@ html[data-mode="dark"] .zm-map-legend { background: rgba(20,21,31,.92); color: #
 .fa-brands, .fab { font-family: "Font Awesome 6 Brands" !important; font-weight: 400 !important; font-style: normal; }
 
 /* Mijoz sarlavhasidagi tugmalar — barchasi bir xil o'lchamda va shaklda */
-#app-header .zm-set-btn, #app-header [data-mode-toggle], #app-header button.w-9 {
-    width: 36px !important; height: 36px !important; min-width: 36px; border-radius: 16px !important; flex: 0 0 36px;
+#app-header .zm-set-btn, #app-header [data-mode-toggle], #app-header button.w-8 {
+    width: 32px !important; height: 32px !important; min-width: 32px; border-radius: 14px !important; flex: 0 0 32px;
     font-size: 14px; line-height: 1; padding: 0;
     border: 0 !important; background: #f1f5f9; color: #334155; box-shadow: none;
 }
-#app-header .zm-set-btn:hover, #app-header [data-mode-toggle]:hover, #app-header button.w-9:hover { background: #e2e8f0; }
-body.theme-dark #app-header .zm-set-btn, body.theme-dark #app-header [data-mode-toggle], body.theme-dark #app-header button.w-9 {
+#app-header .zm-set-btn:hover, #app-header [data-mode-toggle]:hover, #app-header button.w-8:hover { background: #e2e8f0; }
+body.theme-dark #app-header .zm-set-btn, body.theme-dark #app-header [data-mode-toggle], body.theme-dark #app-header button.w-8 {
     background: rgba(255,255,255,.08) !important; color: #e2e8f0 !important;
 }
 body.theme-dark #app-header button i { color: inherit; }
 body.theme-dark #app-header button i.text-rose-500 { color: #fb7185 !important; }
-#app-header .zm-set-btn:not(.hidden), #app-header [data-mode-toggle]:not(.hidden), #app-header button.w-9:not(.hidden) { display: inline-flex; align-items: center; justify-content: center; }
+#app-header .zm-set-btn:not(.hidden), #app-header [data-mode-toggle]:not(.hidden), #app-header button.w-8:not(.hidden) { display: inline-flex; align-items: center; justify-content: center; }
 
 /* Admin xaritasi to'liq ekranda: yopish tugmasi doim ko'rinadi (suzuvchi) */
 .zm-map-close-fab { position: fixed; top: max(12px, env(safe-area-inset-top)); right: 12px; z-index: 100001; width: 44px; height: 44px; border-radius: 14px; border: 1px solid rgba(148,163,184,.5);
