@@ -5,3 +5,8 @@ __pycache__/
 .env
 venv/
 .venv/
+orders.db
+*.db
+*.sqlite3
+*.rar
+*.zip

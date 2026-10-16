@@ -332,20 +332,7 @@
                 {% endif %}
             </div>
 
-            {% for c in cards %}
-            <div class="flex items-center justify-between rounded-xl p-2.5 mb-2" style="background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.08);">
-                <div class="min-w-0">
-                    <p class="text-xs font-bold truncate">{{ c.bank_name }} <span class="text-slate-500 font-normal">({{ c.card_type|upper }})</span></p>
-                    <p class="text-[11px] text-slate-400 font-mono">{{ c.masked_number }} · {{ c.expire }}</p>
-                    <p class="text-[10px] text-slate-500 truncate">{{ c.card_holder_name }}</p>
-                </div>
-                <form action="/courier/cards/{{ c.id }}/delete" method="POST" class="js-haptic-form" onsubmit="return confirm('Karta o\'chirilsinmi?');">
-                    <button type="submit" class="text-rose-400 text-xs px-2 py-1">🗑️</button>
-                </form>
-            </div>
-            {% else %}
-            <p class="text-xs text-slate-500 mb-2">Hali karta qo'shilmagan.</p>
-            {% endfor %}
+            <div id="cards-box" data-count="{{ cards|length }}"></div>
 
             {% if cards|length >= MAX_CARDS %}
             <p class="text-[11px] text-amber-300/80 mt-1">Maksimal karta soniga ({{ MAX_CARDS }} ta) yetdingiz. Yangisini qo'shish uchun avval birini o'chiring.</p>
@@ -476,6 +463,27 @@
                 {% endfor %}
             </div>
         </div>
+
+        <!-- O'Z-O'ZINI BAND QILGAN SHAXS REKVIZITLARI -->
+        <div class="glass fade-up stagger-5 p-5 rounded-2xl">
+            <h2 class="text-base font-extrabold mb-1">🧾 O'z-o'zini band qilgan shaxs</h2>
+            <p class="text-[11px] text-slate-500 mb-3">To'lovlar uchun rekvizitlar. Sahifada yashirin turadi — ko'rish uchun maxfiy javobingiz so'raladi.</p>
+            {% set has_se = courier_profile and courier_profile.pinfl %}
+            {% if has_se %}
+            <div id="legal-info" class="rounded-xl p-3 mb-3 flex items-center justify-between gap-2" style="background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08)">
+                <div class="text-xs"><b>🔒 Rekvizitlar yashirin</b><div class="text-[11px] opacity-70">Kiritilgan ✅</div></div>
+                <button type="button" id="legal-show" class="px-3 py-1.5 rounded-lg text-xs font-bold" style="background:#f59e0b;color:#fff">👁 Ko'rsatish</button>
+            </div>
+            {% endif %}
+            <form id="legal-form" action="/courier/legal" method="POST" class="js-haptic-form space-y-3 {% if has_se %}hidden{% endif %}">
+                <input type="text" name="se_name" placeholder="F.I.Sh. (to'liq ism-familiya)" class="glass-input w-full p-2.5 rounded-lg text-sm" required>
+                <input type="text" name="pinfl" inputmode="numeric" pattern="[0-9]{14}" maxlength="14" placeholder="JSHSHIR (PINFL) — 14 raqam" class="glass-input w-full p-2.5 rounded-lg text-sm" required>
+                <input type="text" name="se_account" inputmode="numeric" pattern="[0-9]{20}" maxlength="20" placeholder="Hisob-kitob raqami — 20 raqam" class="glass-input w-full p-2.5 rounded-lg text-sm" required>
+                <input type="text" name="se_bank_name" placeholder="Bank nomi (masalan: Kapitalbank ATB)" class="glass-input w-full p-2.5 rounded-lg text-sm" required>
+                <button type="submit" class="btn-press w-full text-white py-2.5 rounded-lg text-sm font-bold" style="background:#6366f1">💾 Saqlash</button>
+            </form>
+        </div>
+        <script>document.addEventListener("DOMContentLoaded",function(){if(window.ZMReveal){ZMReveal.cards({box:"cards-box",base:"/courier"});ZMReveal.legal({button:"legal-show",form:"legal-form",info:"legal-info",base:"/courier"});}});</script>
 
         <!-- QO'SHIMCHA HIMOYA -->
         <div class="glass fade-up stagger-5 p-5 rounded-2xl">
@@ -866,6 +874,7 @@
         });
     </script>
     <script src="/static/js/zm-secure.js?v=2"></script>
+    <script src="/static/js/zm-reveal.js?v=1"></script>
     <script src="/static/js/zm-support.js?v=2"></script>
     <script src="/static/js/zm-ai.js?v=3"></script>
     <script>document.addEventListener("DOMContentLoaded",function(){if(window.ZMSupport)ZMSupport.mount({base:"/courier/support",ratingUrl:"/courier/rating"});});</script>

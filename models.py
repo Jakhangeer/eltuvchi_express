@@ -133,6 +133,11 @@ class CourierProfile(Base):
     is_blocked = Column(Boolean, default=False)
     # LED ekran shu kuryerda ishlashi — FAQAT admin boshqaradi
     led_enabled = Column(Boolean, default=True)
+    # O'z-o'zini band qilgan shaxs rekvizitlari (to'lovlar uchun); faqat egasi maxfiy javob bilan ko'radi
+    se_name = Column(String, nullable=True)
+    pinfl = Column(String, nullable=True)
+    se_bank_name = Column(String, nullable=True)
+    se_account = Column(String, nullable=True)
 
     # Kuryer "Pul yechish" so'rovi yuborganda (bu FAQAT egasi kuryerga
     # qarzdor bo'lgan — balance MANFIY bo'lgan holatda mumkin, masalan bonus)
@@ -208,6 +213,8 @@ class PartnerProfile(Base):
     bank_name = Column(String, nullable=True)         # masalan: Kapitalbank ATB
     director_name = Column(String, nullable=True)     # direktor/rahbar ismi
     director_phone = Column(String, nullable=True)    # direktor telefoni
+    legal_type = Column(String, nullable=True)        # 'legal' (MChJ/YTT...) yoki 'self_employed' (o'z-o'zini band qilgan shaxs)
+    pinfl = Column(String, nullable=True)             # JSHSHIR (PINFL) — 14 xonali; o'z-o'zini band qilgan shaxs uchun
 
     # Veb orqali ariza bergan hamkorlar: "pending" = administratsiya hali
     # bog'lanmagan/tasdiqlamagan, "approved" = tasdiqlangan. NULL = eski
@@ -282,6 +289,7 @@ class Order(Base):
     # AI-dispetcher: buyurtma "Yo'lda" bo'lgan vaqt va kechikish xabari yuborilgani
     on_the_way_at = Column(DateTime, nullable=True)
     ai_delay_notified = Column(Boolean, default=False)
+    financials_applied = Column(Boolean, nullable=True)   # pul (kuryer/hamkor/keshbek) allaqachon hisoblangan — qayta hisoblanmasin
     courier_rating_bonus = Column(Float, nullable=True)   # yuqori reytingli kuryerga admin belgilagan bonus (shahar bo'yicha)
 
     # ---- P2P (KARTADAN-KARTAGA) TO'LOV TEKSHIRUVI ----

@@ -392,20 +392,7 @@
                     {% endif %}
                 </div>
 
-                {% for c in cards %}
-                <div class="flex items-center justify-between rounded-xl p-2.5 mb-2" style="background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.08);">
-                    <div class="min-w-0">
-                        <p class="text-xs font-bold truncate">{{ c.bank_name }} <span class="text-slate-500 font-normal">({{ c.card_type|upper }})</span></p>
-                        <p class="text-[11px] text-slate-400 font-mono">{{ c.masked_number }} · {{ c.expire }}</p>
-                        <p class="text-[10px] text-slate-500 truncate">{{ c.card_holder_name }}</p>
-                    </div>
-                    <form action="/partner/cards/{{ c.id }}/delete" method="POST" class="js-haptic-form" onsubmit="return confirm('Karta o\'chirilsinmi?');">
-                        <button type="submit" class="text-rose-400 text-xs px-2 py-1">🗑️</button>
-                    </form>
-                </div>
-                {% else %}
-                <p class="text-xs text-slate-500 mb-2">Hali karta qo'shilmagan.</p>
-                {% endfor %}
+                <div id="cards-box" data-count="{{ cards|length }}"></div>
 
                 {% if cards|length >= MAX_CARDS %}
                 <p class="text-[11px] text-amber-300/80 mt-1">Maksimal karta soniga ({{ MAX_CARDS }} ta) yetdingiz. Yangisini qo'shish uchun avval birini o'chiring.</p>
@@ -500,43 +487,76 @@
             <!-- YURIDIK REKVIZITLAR -->
             <div class="mt-6 pt-5" style="border-top:1px solid rgba(255,255,255,.08);">
                 <h2 class="text-base font-extrabold mb-1 text-grad">📄 Yuridik rekvizitlar</h2>
-                <p class="text-xs text-slate-500 mb-4">Shartnoma va to'lovlar uchun kerak. Ma'lumotlar xavfsiz saqlanadi va faqat administratsiyaga ko'rinadi.</p>
-                <form action="/partner/legal" method="POST" class="js-haptic-form space-y-3">
+                <p class="text-xs text-slate-500 mb-4">Shartnoma va to'lovlar uchun kerak. Ma'lumotlar xavfsiz saqlanadi, faqat administratsiyaga va sizga ko'rinadi. Sahifada yashirin turadi — ko'rish uchun maxfiy javobingiz so'raladi.</p>
+                {% set has_legal = partner.legal_name %}
+                {% if has_legal %}
+                <div id="legal-info" class="rounded-xl p-3 mb-3 flex items-center justify-between gap-2" style="background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08)">
+                    <div class="text-xs"><b>🔒 Rekvizitlar yashirin</b><div class="text-[11px] opacity-70">{% if partner.legal_type == 'self_employed' %}O'z-o'zini band qilgan shaxs{% else %}Yuridik shaxs / YTT{% endif %} · kiritilgan ✅</div></div>
+                    <button type="button" id="legal-show" class="px-3 py-1.5 rounded-lg text-xs font-bold" style="background:#f59e0b;color:#fff">👁 Ko'rsatish</button>
+                </div>
+                {% endif %}
+                <form id="legal-form" action="/partner/legal" method="POST" class="js-haptic-form space-y-3 {% if has_legal %}hidden{% endif %}">
                     <div>
-                        <label class="block text-xs font-semibold text-slate-400 mb-1">Yuridik nomi</label>
-                        <input type="text" name="legal_name" value="{{ partner.legal_name or '' }}" placeholder="'Gourmet Express' MChJ yoki 'Aliyev B.' YTT" class="glass-input w-full p-2.5 rounded-lg text-sm" required>
+                        <label class="block text-xs font-semibold text-slate-400 mb-1">Turi</label>
+                        <select name="legal_type" id="lg-type" class="glass-input w-full p-2.5 rounded-lg text-sm">
+                            <option value="legal">Yuridik shaxs / YTT (MChJ, YaTT...)</option>
+                            <option value="self_employed">O'z-o'zini band qilgan shaxs</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-400 mb-1" id="lg-name-lab">Yuridik nomi</label>
+                        <input type="text" name="legal_name" placeholder="'Gourmet Express' MChJ yoki 'Aliyev B.' YTT" class="glass-input w-full p-2.5 rounded-lg text-sm" required>
                     </div>
                     <div class="grid grid-cols-2 gap-3">
-                        <div>
+                        <div class="lg-legal">
                             <label class="block text-xs font-semibold text-slate-400 mb-1">STIR (INN) — 9 raqam</label>
-                            <input type="text" name="stir" value="{{ partner.stir or '' }}" inputmode="numeric" pattern="[0-9]{9}" maxlength="9" placeholder="123456789" class="glass-input w-full p-2.5 rounded-lg text-sm" required>
+                            <input type="text" name="stir" inputmode="numeric" pattern="[0-9]{9}" maxlength="9" placeholder="123456789" class="glass-input w-full p-2.5 rounded-lg text-sm" required>
+                        </div>
+                        <div class="lg-se hidden">
+                            <label class="block text-xs font-semibold text-slate-400 mb-1">JSHSHIR (PINFL) — 14 raqam</label>
+                            <input type="text" name="pinfl" inputmode="numeric" pattern="[0-9]{14}" maxlength="14" placeholder="12345678901234" class="glass-input w-full p-2.5 rounded-lg text-sm">
                         </div>
                         <div>
-                            <label class="block text-xs font-semibold text-slate-400 mb-1">MFO — 5 raqam</label>
-                            <input type="text" name="mfo" value="{{ partner.mfo or '' }}" inputmode="numeric" pattern="[0-9]{5}" maxlength="5" placeholder="00014" class="glass-input w-full p-2.5 rounded-lg text-sm" required>
+                            <label class="block text-xs font-semibold text-slate-400 mb-1" id="lg-mfo-lab">MFO — 5 raqam</label>
+                            <input type="text" name="mfo" inputmode="numeric" pattern="[0-9]{5}" maxlength="5" placeholder="00014" class="glass-input w-full p-2.5 rounded-lg text-sm" required>
                         </div>
                     </div>
                     <div>
                         <label class="block text-xs font-semibold text-slate-400 mb-1">Hisob-kitob raqami — 20 raqam</label>
-                        <input type="text" name="bank_account" value="{{ partner.bank_account or '' }}" inputmode="numeric" pattern="[0-9]{20}" maxlength="20" placeholder="20208000000000000000" class="glass-input w-full p-2.5 rounded-lg text-sm font-mono" required>
+                        <input type="text" name="bank_account" inputmode="numeric" pattern="[0-9]{20}" maxlength="20" placeholder="20208000000000000000" class="glass-input w-full p-2.5 rounded-lg text-sm" required>
                     </div>
                     <div>
                         <label class="block text-xs font-semibold text-slate-400 mb-1">Bank nomi</label>
-                        <input type="text" name="bank_name" value="{{ partner.bank_name or '' }}" placeholder="Masalan: Kapitalbank ATB" class="glass-input w-full p-2.5 rounded-lg text-sm" required>
+                        <input type="text" name="bank_name" placeholder="Masalan: Kapitalbank ATB" class="glass-input w-full p-2.5 rounded-lg text-sm" required>
                     </div>
                     <div class="grid grid-cols-2 gap-3">
-                        <div>
+                        <div class="lg-legal">
                             <label class="block text-xs font-semibold text-slate-400 mb-1">Direktor / rahbar ismi</label>
-                            <input type="text" name="director_name" value="{{ partner.director_name or '' }}" class="glass-input w-full p-2.5 rounded-lg text-sm" required>
+                            <input type="text" name="director_name" class="glass-input w-full p-2.5 rounded-lg text-sm" required>
                         </div>
                         <div>
-                            <label class="block text-xs font-semibold text-slate-400 mb-1">Direktor telefoni</label>
-                            <input type="tel" name="director_phone" value="{{ partner.director_phone or '' }}" placeholder="+998901234567" class="glass-input w-full p-2.5 rounded-lg text-sm" required>
+                            <label class="block text-xs font-semibold text-slate-400 mb-1" id="lg-phone-lab">Direktor telefoni</label>
+                            <input type="tel" name="director_phone" placeholder="+998901234567" class="glass-input w-full p-2.5 rounded-lg text-sm" required>
                         </div>
                     </div>
                     <button type="submit" class="btn-press accent-bg accent-glow w-full text-white py-2.5 rounded-lg text-sm font-bold">💾 Rekvizitlarni saqlash</button>
                 </form>
             </div>
+            <script>
+            (function(){
+                var f=document.getElementById('legal-form'); if(!f) return;
+                function apply(){var se=f.elements.legal_type.value==='self_employed';
+                    f.querySelectorAll('.lg-legal').forEach(function(e){e.classList.toggle('hidden',se);var i=e.querySelector('input');if(i)i.required=!se;});
+                    f.querySelectorAll('.lg-se').forEach(function(e){e.classList.toggle('hidden',!se);var i=e.querySelector('input');if(i)i.required=se;});
+                    f.elements.mfo.required=!se;
+                    document.getElementById('lg-name-lab').textContent=se?"F.I.Sh. (to'liq ism-familiya)":'Yuridik nomi';
+                    document.getElementById('lg-mfo-lab').textContent=se?'MFO — 5 raqam (ixtiyoriy)':'MFO — 5 raqam';
+                    document.getElementById('lg-phone-lab').textContent=se?'Telefon raqami':'Direktor telefoni';}
+                f.elements.legal_type.addEventListener('change',apply); apply();
+                document.addEventListener('DOMContentLoaded',function(){
+                    if(window.ZMReveal){ZMReveal.cards({box:'cards-box',base:'/partner'});ZMReveal.legal({button:'legal-show',form:'legal-form',info:'legal-info',base:'/partner'});}});
+            })();
+            </script>
         </div>
 
     </div>
@@ -818,6 +838,7 @@
         });
     </script>
     <script src="/static/js/zm-secure.js?v=2"></script>
+    <script src="/static/js/zm-reveal.js?v=1"></script>
     <script src="/static/js/zm-support.js?v=2"></script>
     <script src="/static/js/zm-ai.js?v=3"></script>
     <script>document.addEventListener("DOMContentLoaded",function(){if(window.ZMSupport)ZMSupport.mount({base:"/partner/support",ratingUrl:"/partner/rating"});});</script>

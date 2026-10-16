@@ -35,7 +35,7 @@ CATEGORIES = {
     "brand": ("Sevimli brendingiz", "Sevimli brendingiz qaysi?"),
 }
 MIN_LEN, MAX_LEN = 5, 300
-MAX_TRIES, LOCK_MIN, UNLOCK_SEC = 5, 15, 600
+MAX_TRIES, LOCK_MIN, UNLOCK_SEC = 5, 15, 1800
 OTP_LEN, OTP_TTL_MIN, OTP_MAX_TRIES, MANAGE_SEC = 8, 5, 5, 600
 
 sec_router = APIRouter(prefix="/security", tags=["Xavfsizlik"])
@@ -101,6 +101,7 @@ async def secure_action(request: Request, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=428, detail={"code": "sec_setup", "message": "Avval maxfiy javobingizni o'rnating"})
     if not _unlocked(request, uid):
         raise HTTPException(status_code=428, detail={"code": "sec_verify", "message": "Maxfiy javobni kiriting"})
+    request.session["sec_until"] = time.time() + UNLOCK_SEC   # har amalda muddat uzayadi (faol ishlayotganda qayta so'ralmaydi)
 
 
 def _labels():

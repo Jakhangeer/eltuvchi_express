@@ -1760,9 +1760,6 @@
         </section>
         {% endif %}
 
-        {% if is_owner %}
-        <!-- MINI APP BANNERLARI (faqat OWNER) -->
-        {% if is_owner or operator_perms.get('banner') %}
         {% if is_owner or operator_perms.get('xabarlar', True) %}
         <section class="app-page" data-page="xabarlar" style="display:none;">
             <div class="card-bg bg-white p-4 rounded-xl shadow-md">
@@ -1799,6 +1796,9 @@
             </div>
         </section>
         {% endif %}
+
+        <!-- MINI APP BANNERLARI -->
+        {% if is_owner or operator_perms.get('banner') %}
 
         <section class="app-page" data-page="banner" style="display:none;">
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -1877,10 +1877,8 @@
         </div>
         </section>
         {% endif %}
-        {% endif %}
 
-        {% if is_owner %}
-        <!-- SHARTLAR (faqat OWNER) -->
+        <!-- SHARTLAR -->
         {% if is_owner or operator_perms.get('shartlar') %}
         <section class="app-page" data-page="shartlar" style="display:none;">
         <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -1914,7 +1912,6 @@
         </div>
         <p class="text-xs text-gray-400 mt-3">Kuryer/hamkor botda shu rolni tanlaganda, avval shu matnni ko'radi va "Roziman" bosishi shart — aks holda davom etolmaydi.</p>
         </section>
-        {% endif %}
         {% endif %}
 
         </main>
@@ -2230,6 +2227,7 @@
         function applyWeatherMultiplier() {
             const select = document.getElementById('weather-select');
             const input = document.getElementById('weather-multiplier-input');
+            if (!select || !input) return;   // operatorda bu blok yo'q (faqat OWNER)
             const selected = select.value;
             input.value = (weatherMultipliers[selected] !== undefined ? weatherMultipliers[selected] : 1.0).toFixed(1);
         }

@@ -196,6 +196,12 @@ async def get_telegram_webhook_info() -> dict:
         return {"ok": False, "error": str(e)}
 
 
+def webhook_secret() -> str:
+    """Webhook so'rovlarini soxtalashtirishdan himoya: Telegram har so'rovda shu tokenni
+    X-Telegram-Bot-Api-Secret-Token sarlavhasida yuboradi (bot tokenidan hosil qilinadi)."""
+    return hashlib.sha256(("zoomo-wh:" + (TELEGRAM_BOT_TOKEN or "")).encode()).hexdigest()[:48]
+
+
 async def set_telegram_webhook(webhook_url: str) -> dict:
     """
     FastAPI server ishga tushganda Telegram Webhook'ni avtomatik sozlashi uchun.
@@ -218,6 +224,7 @@ async def set_telegram_webhook(webhook_url: str) -> dict:
                 "url": webhook_url,
                 "drop_pending_updates": False,
                 "allowed_updates": ["message", "callback_query"],
+                "secret_token": webhook_secret(),
             }
         )
         return resp.json()
@@ -286,4 +293,4 @@ async def answer_callback_query(callback_query_id: str, text: str | None = None,
         return resp.status_code == 200
     except Exception as e:
         print(f"[Kutilmagan Xatolik] answer_callback_query: {e}")
-        return False
+        return False

@@ -160,7 +160,7 @@
   };
 
   // Oddiy forma yuborish: pul yechish, karta, sozlamalar — avval tekshiruv
-  var PROT = /\/(partner|courier)\/(withdraw|cards|settings\/|legal)/;
+  var PROT = /\/(partner|courier)\/(withdraw|cards|settings\/update|legal)/;
   document.addEventListener('submit', function (e) {
     var f = e.target; if (!f || !f.getAttribute) return;
     var a = f.getAttribute('action') || ''; if (!PROT.test(a)) return;

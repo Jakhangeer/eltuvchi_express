@@ -116,6 +116,56 @@ KB = {
 ],
 }
 
+# ---- Qo'shimcha mavzular (kengaytirilgan qamrov) ----
+KB["client"] += [
+ ("Parolni / PIN ni unutdim", ["unutdim", "parol", "pin", "kira olmay", "kirolmay", "забыл", "forgot", "login"],
+  "Botda «🔑 Ilova uchun PIN» tugmasini bosib yangi 4 xonali PIN o'rnating, so'ng telefon raqamingiz va shu PIN bilan kiring. Raqamingiz Telegram orqali tasdiqlanadi."),
+ ("Do'kon yopiq / mahsulot yo'q", ["yopiq", "ochilmayapti", "ko'rinmayapti", "topilmayapti", "tugagan", "mahsulot yo'q", "closed"],
+  "Do'kon ish vaqtidan tashqarida yoki vaqtincha yopiq bo'lsa, buyurtma qabul qilinmaydi. Boshqa ochiq do'konni tanlang yoki shaharni tekshiring. Mahsulot ko'rinmasa — u hozircha tugagan bo'lishi mumkin."),
+ ("Buyurtma tarixi / qayta buyurtma", ["tarix", "oldingi", "qayta buyurtma", "takror", "history", "reorder"],
+  "«Buyurtmalarim» da oldingi buyurtmalar bor. Birini ochib, shu tarkibni qayta savatga qo'shishingiz mumkin."),
+ ("Yordam chati va e'lonlar", ["chat", "e'lon", "elon", "xabar", "yozish", "support", "operatorga yoz"],
+  "Operator bilan yozishish uchun ilovadagi yordam (chat) bo'limidan foydalaning — javob shu yerda va Telegramda keladi. Yangiliklar va e'lonlar ilovaning e'lonlar bo'limida chiqadi."),
+ ("Pul qaytarish", ["qaytar", "qaytarish", "refund", "pulim", "noto'g'ri olib keldi", "buzuq", "sifat"],
+  "Buyurtma noto'g'ri yoki sifatsiz kelsa, buyurtma raqami bilan operatorga yozing — holat tekshirilib, kerak bo'lsa qaytarish/kompensatsiya qilinadi."),
+]
+KB["courier"] += [
+ ("Maxfiy javob (2-qadam himoya)", ["maxfiy", "sevimli", "himoya", "secret", "xavfsizlik", "tasdiqlash so'rayapti", "javob"],
+  "Pul yechish, karta va rekvizitlar kabi nozik amallar oldidan maxfiy javobingiz so'raladi. Bir marta kiritsangiz, faol ishlaganda 30 daqiqa qayta so'ralmaydi. Javobni unutsangiz — Telegramga kelgan kod orqali o'zgartirasiz."),
+ ("Reyting va bonus", ["reyting", "baho", "yulduz", "rating", "bonus", "mukofot"],
+  "Mijozlar bergan baholar reytingingizni belgilaydi. Yuqori reyting qo'shimcha bonus beradi; tez yetkazish va xushmuomalalik reytingni oshiradi."),
+ ("Bloklangan / qarz", ["blok", "bloklandi", "qarz", "chegara", "ruxsat yo'q", "kira olmay"],
+  "Balans qarz chegarasidan oshsa yangi naqd buyurtmalar yopiladi. Balansni to'ldirsangiz qayta ochiladi. Hisob bloklangan bo'lsa operatorga murojaat qiling."),
+ ("Yuridik rekvizit / o'zini band qilgan", ["yuridik", "pinfl", "o'zini band", "self", "rekvizit", "stir", "yatt"],
+  "«Yuridik» bo'limida o'zini band qilgan shaxs (PINFL) yoki yuridik shaxs rekvizitlarini kiritasiz. Ular sukut bo'yicha yashirin — 👁 ni bosib maxfiy javob bilan ochasiz."),
+ ("Yordam chati", ["chat", "operator", "yozish", "support", "e'lon", "elon"],
+  "Yordam bo'limida operatorga yozing — javob shu yerda va Telegramda keladi. Umumiy e'lonlar ham shu yerda chiqadi."),
+]
+KB["partner"] += [
+ ("Yuridik manzil / o'zini band qilgan", ["yuridik", "yuridik manzil", "pinfl", "o'zini band", "self", "rekvizit", "stir", "direktor", "yatt"],
+  "«Sozlamalar → Yuridik» da o'zini band qilgan shaxs (PINFL) yoki tashkilot (STIR, direktor) ma'lumotini kiritasiz. Ko'rinishi sukut bo'yicha yashirin: 👁 ni bosib maxfiy javobingiz bilan ochasiz — faqat egasi ko'ra oladi."),
+ ("Maxfiy javob (himoya)", ["maxfiy", "sevimli", "himoya", "secret", "javob", "xavfsizlik"],
+  "Pul yechish, karta, yuridik ma'lumot va sozlamalar o'zgartirilganda maxfiy javob so'raladi. Bir marta kiritsangiz 30 daqiqa (faol ishlaganda uzayadi) qayta so'ralmaydi. Unutilsa — Telegram kodi bilan tiklanadi."),
+ ("Reyting va sharhlar", ["reyting", "baho", "sharh", "yulduz", "rating", "review"],
+  "Mijozlar bergan baholar do'koningiz reytingini belgilaydi. Reyting yuqori bo'lsa do'kon ro'yxatda oldinroq chiqadi. Tez tayyorlash va sifat reytingni oshiradi."),
+ ("Do'konni yopish / tanaffus", ["yopish", "tanaffus", "dam", "vaqtincha", "ochiq emas", "pauza", "close"],
+  "Sozlamalarda do'konni vaqtincha yopiq qiling — yangi buyurtma kelmaydi. Ish vaqti jadvalini admin o'rnatadi; o'zgartirish uchun operatorga yozing."),
+ ("Yordam chati", ["chat", "operator", "yozish", "support", "e'lon", "elon"],
+  "Yordam bo'limida operatorga yozing — javob shu yerda va Telegramda keladi. Umumiy e'lonlar ham shu yerda chiqadi."),
+]
+KB["admin"] += [
+ ("Yordam chati va e'lonlar", ["chat", "e'lon", "elon", "yordam chat", "support", "xabarlar", "javob ber"],
+  "«Xabarlar» bo'limida mijoz, kuryer va hamkorlarning murojaatlari ko'rinadi — javob yozsangiz u foydalanuvchi panelida va Telegramda chiqadi. E'lon: auditoriyani (hamma/mijoz/kuryer/hamkor) tanlab yuboriladi. Operator o'z shahri doirasida ishlaydi."),
+ ("Maxfiy javob va PIN", ["maxfiy", "pin", "sevimli", "himoya", "secret", "qayta so'ray", "parol"],
+  "Operator panelga kirishda maxfiy javob so'raladi va u sessiya davomida saqlanadi. Pul yechish/karta kabi amallarda 30 daqiqa qayta so'ralmaydi. Parol/PIN ni almashtirish: Operatorlar bo'limi."),
+ ("Operator ruxsatlari", ["ruxsat", "ko'rinmayapti", "bo'lim", "ochilmayapti", "permission", "huquq", "shahar"],
+  "Operatorga ko'rinadigan bo'limlarni egasi «Operatorlar» da belgilaydi. Bo'lim ko'rinmasa — ruxsat berilmagan yoki operator shahriga biriktirilmagan. Egasi tegishli katakni yoqsin."),
+ ("O'z-o'zini band qilgan hamkor/kuryer", ["pinfl", "o'zini band", "yuridik", "stir", "rekvizit", "self"],
+  "Hamkor va kuryer yuridik ma'lumotlarini o'zi kiritadi (o'zini band qilgan — PINFL, tashkilot — STIR). Ma'lumotlar faqat egasiga ko'rinadi va maxfiy javob bilan ochiladi."),
+ ("Xavfsizlik tavsiyalari", ["xavfsiz", "kuchli parol", "zaxira", "backup", "env", "kalit", "secret key"],
+  "Kuchli maxfiy javoblar va noyob parollardan foydalaning, SESSION_SECRET_KEY va CARD_ENCRYPTION_KEY ni .env da saqlang, bazadan muntazam zaxira nusxa oling va .env ni hech kimga bermang."),
+]
+
 OVERVIEW_WORDS = ("qo'llanma", "qollanma", "hammasi", "to'liq", "toliq", "nima qila", "nimalar", "yordam", "help", "guide", "boshla", "tushuntir", "start")
 TITLE = {"client": "Mijoz paneli", "courier": "Kuryer paneli", "partner": "Hamkor paneli", "admin": "Admin/operator paneli"}
 

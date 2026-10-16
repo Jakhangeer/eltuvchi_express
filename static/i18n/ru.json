@@ -1136,5 +1136,21 @@
  "⭐ Baholar (platforma, kuryer, hamkor)": "⭐ Оценки (сервис, курьер, партнёр)",
  "⭐ Reyting bonusi": "⭐ Бонус за рейтинг",
  "⭐ Kuryer reyting bonusi (shaharlar kesimida)": "⭐ Бонус курьерам за рейтинг (по городам)",
- "⭐ Hamkorlar reyting bo'yicha tartiblansin": "⭐ Сортировать партнёров по рейтингу"
+ "⭐ Hamkorlar reyting bo'yicha tartiblansin": "⭐ Сортировать партнёров по рейтингу",
+ "Kartalar yashirin": "Карты скрыты",
+ "ta karta": "карт",
+ "👁 Ko'rsatish": "👁 Показать",
+ "🙈 Yashirish": "🙈 Скрыть",
+ "Yashirish": "Скрыть",
+ "🔒 Rekvizitlar yashirin": "🔒 Реквизиты скрыты",
+ "Kiritilgan ✅": "Заполнено ✅",
+ "O'z-o'zini band qilgan shaxs": "Самозанятый",
+ "🧾 O'z-o'zini band qilgan shaxs": "🧾 Самозанятый",
+ "Yuridik shaxs / YTT": "Юрлицо / ИП",
+ "Turi": "Тип",
+ "F.I.Sh. (to'liq ism-familiya)": "Ф.И.О. (полностью)",
+ "JSHSHIR (PINFL) — 14 raqam": "ПИНФЛ — 14 цифр",
+ "Bank nomi (masalan: Kapitalbank ATB)": "Название банка (напр.: Kapitalbank)",
+ "Hisob-kitob raqami — 20 raqam": "Расчётный счёт — 20 цифр",
+ "Maxfiy javob tasdiqlanmadi": "Секретный ответ не подтверждён"
 }

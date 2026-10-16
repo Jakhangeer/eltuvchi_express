@@ -77,6 +77,7 @@ from auth import (
     get_current_courier_user,
     RedirectToLogin,
     RedirectToGate,
+    is_scoped_to_city,
 )
 from sec2fa import sec_router, secure_action
 
@@ -165,8 +166,9 @@ def _relax_legacy_not_null_columns(sync_conn):
             if col.get("default") is not None or col.get("autoincrement"):
                 continue
             try:
+              with sync_conn.begin_nested():
                 sync_conn.execute(text(f'ALTER TABLE "{table.name}" ALTER COLUMN "{col["name"]}" DROP NOT NULL'))
-                print(f"[AUTO-MIGRATE] NOT NULL olib tashlandi (eski ustun): {table.name}.{col['name']}")
+              print(f"[AUTO-MIGRATE] NOT NULL olib tashlandi (eski ustun): {table.name}.{col['name']}")
             except Exception as e:
                 print(f"[AUTO-MIGRATE OGOHLANTIRISH] {table.name}.{col['name']}: {e}")
 
@@ -257,7 +259,8 @@ async def auto_sync_missing_columns(conn):
                     # baribir keyingi yozuvlarda ishlaydi).
                     col_ddl_nullable = col_ddl.replace(" NOT NULL", "")
                     ddl_statement = f'ALTER TABLE "{table.name}" ADD COLUMN {col_ddl_nullable}'
-                    sync_conn.execute(text(ddl_statement))
+                    with sync_conn.begin_nested():  # savepoint: bitta xato butun tranzaksiyani buzmasin (Postgres)
+                        sync_conn.execute(text(ddl_statement))
                     # DIQQAT: bu yerda sync_conn.commit() CHAQIRILMAYDI — chunki
                     # bu funksiya tashqi "async with engine.begin() as conn:"
                     # tranzaksiyasi ICHIDA ishlaydi, u o'zi avtomatik commit
@@ -309,6 +312,14 @@ async def lifespan(app: FastAPI):
         await auto_sync_missing_columns(conn)
 
     print("PostgreSQL jadvallari tayyor va sinxronlashtirildi.")
+    try:
+        # Eski yetkazilgan buyurtmalar uchun pul allaqachon hisoblangan — qayta hisoblanmasin
+        async with AsyncSessionLocal() as _s:
+            await _s.execute(text("UPDATE orders SET financials_applied = TRUE WHERE status = 'DELIVERED' AND financials_applied IS NULL"))
+            await _s.execute(text("UPDATE orders SET financials_applied = FALSE WHERE financials_applied IS NULL"))
+            await _s.commit()
+    except Exception as e:
+        print(f"[FINANCIALS BACKFILL XATOSI] {e!r}")
     await seed_default_data()
     try:
         await _migrate_courier_wallet_v2()
@@ -325,6 +336,8 @@ async def lifespan(app: FastAPI):
         public_url = get_public_base_url(None)
         if os.getenv("TELEGRAM_BOT_TOKEN") and public_url.startswith("https://"):
             wh = await set_telegram_webhook(public_url + "/telegram/webhook")
+            if isinstance(wh, dict) and wh.get("ok"):
+                globals()["_WH_SECRET_ON"] = True
             print(f"[TELEGRAM WEBHOOK] {public_url}/telegram/webhook -> {wh}")
         elif os.getenv("TELEGRAM_BOT_TOKEN"):
             print("[TELEGRAM WEBHOOK] O'TKAZIB YUBORILDI: PUBLIC_BASE_URL (https) topilmadi. "
@@ -354,7 +367,8 @@ if not SESSION_SECRET_KEY:
     import secrets as _secrets
     SESSION_SECRET_KEY = _secrets.token_hex(32)
 
-app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET_KEY, same_site="lax")
+_https_env = (os.getenv("PUBLIC_BASE_URL") or os.getenv("RENDER_EXTERNAL_URL") or "").startswith("https://")
+app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET_KEY, same_site="lax", https_only=_https_env)
 
 
 # ==================== CSRF HIMOYASI ====================
@@ -680,18 +694,31 @@ async def login_submit(
     # kelsa, kirish beriladi. Qaysi panel(lar)ga kira olishi keyin
     # PROFIL MAVJUDLIGI (courier_profile / partner_profile) orqali
     # aniqlanadi — bitta odam bir nechtasiga ega bo'lishi mumkin.
+    _lg_phone = normalize_phone(phone_number) or phone_number
+    _lg_ip = request.client.host if request.client else "?"
+    _lg_keys = [f"lp:{phone_tail(_lg_phone)}", f"li:{_lg_ip}"]
+    if any(_rate_limited(k, limit=(8 if k.startswith("lp:") else 30)) for k in _lg_keys):
+        return templates.TemplateResponse(
+            request=request, name="login.html",
+            context={"error": "Juda ko'p urinish. 15 daqiqadan keyin qayta urinib ko'ring."},
+            status_code=429,
+        )
     user = await find_user_by_phone(
         db, phone_number,
         options=(selectinload(User.courier_profile), selectinload(User.partner_profile)),
     )
 
     if not user or not user.is_active or not user.password_hash or not verify_password(password, user.password_hash):
+        for _k in _lg_keys:
+            _rate_hit(_k)
         return templates.TemplateResponse(
             request=request,
             name="login.html",
             context={"error": "Telefon raqami yoki parol/PIN noto'g'ri"},
         )
 
+    for _k in _lg_keys:
+        _login_attempts.pop(_k, None)
     request.session["user_id"] = user.id
 
     # Qaysi panellarga kira olishini aniqlaymiz
@@ -1267,21 +1294,21 @@ async def admin_analytics_hourly(
 # ==================== 2. TIZIM SOZLAMALARI (faqat OWNER) ====================
 @settings_router.post("")
 async def update_settings(
-    base_fee: float = Form(...),
+    base_fee: float = Form(..., allow_inf_nan=False),
     weather_condition: str = Form(...),
-    weather_multiplier: float = Form(...),
-    service_commission_percent: float = Form(...),
-    courier_share_percent: float = Form(...),
+    weather_multiplier: float = Form(..., allow_inf_nan=False),
+    service_commission_percent: float = Form(..., allow_inf_nan=False),
+    courier_share_percent: float = Form(..., allow_inf_nan=False),
     max_cards_per_courier: int = Form(3),
     max_cards_per_partner: int = Form(3),
     km_form: Optional[str] = Form(None),
     km_pricing_enabled: Optional[str] = Form(None),
-    km_base_radius: Optional[float] = Form(None),
-    km_base_price: Optional[float] = Form(None),
-    km_extra_price: Optional[float] = Form(None),
-    km_road_factor: Optional[float] = Form(None),
-    courier_delivery_per_km: Optional[float] = Form(None),
-    courier_pickup_per_km: Optional[float] = Form(None),
+    km_base_radius: Optional[float] = Form(None, allow_inf_nan=False),
+    km_base_price: Optional[float] = Form(None, allow_inf_nan=False),
+    km_extra_price: Optional[float] = Form(None, allow_inf_nan=False),
+    km_road_factor: Optional[float] = Form(None, allow_inf_nan=False),
+    courier_delivery_per_km: Optional[float] = Form(None, allow_inf_nan=False),
+    courier_pickup_per_km: Optional[float] = Form(None, allow_inf_nan=False),
     ai_form: Optional[str] = Form(None),
     rp_form: Optional[str] = Form(None),
     rating_priority_enabled: Optional[str] = Form(None),
@@ -1293,7 +1320,7 @@ async def update_settings(
     ai_led_enabled: Optional[str] = Form(None),
     ai_help_enabled: Optional[str] = Form(None),
     ai_campaigns_enabled: Optional[str] = Form(None),
-    ai_delay_promo_amount: Optional[float] = Form(None),
+    ai_delay_promo_amount: Optional[float] = Form(None, allow_inf_nan=False),
     ai_delay_promo_enabled: Optional[str] = Form(None),
     db: AsyncSession = Depends(get_db),
 ):
@@ -1304,6 +1331,10 @@ async def update_settings(
 
     if not (0 <= courier_share_percent <= 100):
         raise HTTPException(status_code=400, detail="Kuryer ulushi 0-100 oralig'ida bo'lishi kerak")
+    if not (0 <= service_commission_percent <= 100):
+        raise HTTPException(status_code=400, detail="Xizmat komissiyasi 0-100 oralig'ida bo'lishi kerak")
+    if base_fee < 0 or not (0.1 <= weather_multiplier <= 10):
+        raise HTTPException(status_code=400, detail="Yetkazish narxi manfiy bo'lmasligi, ob-havo koeffitsienti 0.1–10 oralig'ida bo'lishi kerak")
     if not (1 <= max_cards_per_courier <= 20) or not (1 <= max_cards_per_partner <= 20):
         raise HTTPException(status_code=400, detail="Karta soni chegarasi 1 dan 20 gacha bo'lishi kerak")
 
@@ -1561,6 +1592,28 @@ async def _get_or_create_setting(db: AsyncSession) -> SystemSetting:
     return setting
 
 
+async def _validate_assignable_courier(db: AsyncSession, courier_id: int) -> None:
+    cp = (await db.execute(select(CourierProfile).where(CourierProfile.user_id == courier_id))).scalars().first()
+    if not cp or cp.application_status == "pending" or cp.is_blocked:
+        raise HTTPException(status_code=400, detail="Bu kuryer tasdiqlanmagan, bloklangan yoki mavjud emas")
+
+
+def _guard_status_change(order: Order, old_status) -> None:
+    """Pul allaqachon hisoblangan (yetkazilgan) buyurtmani boshqa holatga qaytarib bo'lmaydi."""
+    if old_status == OrderStatus.DELIVERED and order.status != OrderStatus.DELIVERED:
+        order.status = old_status
+        raise HTTPException(status_code=400, detail="Yetkazilgan buyurtma holatini o'zgartirib bo'lmaydi (pul allaqachon hisoblangan)")
+    if old_status == OrderStatus.CANCELLED and order.status == OrderStatus.DELIVERED:
+        order.status = old_status
+        raise HTTPException(status_code=400, detail="Bekor qilingan buyurtmani yetkazildi qilib bo'lmaydi")
+
+
+def _assert_can_deliver(order: Order) -> None:
+    """Pul hisoblanishidan oldin: bekor qilingan yoki to'lanmagan P2P buyurtma 'Yetkazildi' bo'lolmaydi."""
+    if order.payment_method == "p2p" and not order.payment_verified:
+        raise HTTPException(status_code=400, detail="P2P to'lov hali tasdiqlanmagan — buyurtmani yetkazildi qilib bo'lmaydi")
+
+
 async def apply_cod_delivery_financials(db: AsyncSession, order: Order) -> None:
     """
     Buyurtma "Yetkazildi" (DELIVERED) deb belgilanganda avtomatik chaqiriladi.
@@ -1586,13 +1639,18 @@ async def apply_cod_delivery_financials(db: AsyncSession, order: Order) -> None:
     kerak (chaqiruvchi tomonda tekshiriladi) — aks holda bir xil buyurtma
     uchun pul ikki marta hisoblanib ketadi.
     """
+    # IDEMPOTENT: bir buyurtma uchun pul faqat BIR MARTA hisoblanadi
+    # (DELIVERED -> boshqa holat -> DELIVERED qilinsa ham ikkinchi marta yozilmaydi).
+    if getattr(order, "financials_applied", False):
+        return
+    order.financials_applied = True
     setting = await _get_or_create_setting(db)
-    courier_pct = setting.courier_share_percent / 100
+    courier_pct = (setting.courier_share_percent or 0) / 100
     if order.courier_id and order.courier_rating_bonus is None:
         order.courier_rating_bonus = await courier_rating_bonus_for(db, order.courier_id)
 
     courier_earning = _courier_earning(order, courier_pct)
-    courier_owes = (order.total_price + order.delivery_fee) - courier_earning
+    courier_owes = _cash_due(order) - courier_earning
 
     # YANGI MODEL (oldindan to'ldiriladigan balans):
     # - NAQD buyurtma: mijoz pulni kuryerga bergan, pul kuryer cho'ntagida
@@ -1634,10 +1692,10 @@ async def apply_cod_delivery_financials(db: AsyncSession, order: Order) -> None:
         partner_result = await db.execute(select(PartnerProfile).where(PartnerProfile.id == order.partner_id))
         partner = partner_result.scalars().first()
         if partner:
-            commission_rate = partner.commission_rate / 100
+            commission_rate = (partner.commission_rate or 0) / 100
             partner_due = order.total_price * (1 - commission_rate)
             if partner_due > 0:
-                partner.balance += partner_due
+                partner.balance = (partner.balance or 0) + partner_due
                 db.add(Transaction(
                     partner_id=partner.id,
                     type=TransactionType.DEPOSIT,
@@ -1656,11 +1714,11 @@ async def apply_cod_delivery_financials(db: AsyncSession, order: Order) -> None:
     if client:
         if setting.cashback_earn_percent and setting.cashback_earn_percent > 0:
             cashback_earned = order.total_price * (setting.cashback_earn_percent / 100)
-            client.cashback_balance += cashback_earned
+            client.cashback_balance = (client.cashback_balance or 0) + cashback_earned
             order.cashback_earned = cashback_earned
 
         # Referal bonusi — faqat BIRINCHI marta, faqat kimdir taklif qilgan bo'lsa
-        if client.referred_by_id and not client.referral_bonus_given and setting.referral_bonus_amount > 0:
+        if client.referred_by_id and client.referred_by_id != client.id and not client.referral_bonus_given and (setting.referral_bonus_amount or 0) > 0:
             delivered_count_result = await db.execute(
                 select(func.count(Order.id)).where(Order.client_id == client.id, Order.status == OrderStatus.DELIVERED)
             )
@@ -1670,8 +1728,8 @@ async def apply_cod_delivery_financials(db: AsyncSession, order: Order) -> None:
                 referrer = referrer_result.scalars().first()
                 if referrer:
                     bonus = setting.referral_bonus_amount
-                    client.cashback_balance += bonus
-                    referrer.cashback_balance += bonus
+                    client.cashback_balance = (client.cashback_balance or 0) + bonus
+                    referrer.cashback_balance = (referrer.cashback_balance or 0) + bonus
                     client.referral_bonus_given = True
                     try:
                         if referrer.telegram_id:
@@ -1915,15 +1973,19 @@ async def _apply_pickup_bonus(db: AsyncSession, order: Order, courier_id: int, s
 
 
 
+def _cash_due(order: Order) -> float:
+    """Mijoz kuryerga NAQD to'laydigan summa: mahsulotlar + yetkazish - chegirma/keshbek."""
+    total = (order.total_price or 0) + (order.delivery_fee or 0) - (order.discount_amount or 0)
+    return max(0.0, total)
+
+
 def _courier_cash_hold(order: Order, courier_pct: float) -> float:
     """Shu buyurtmani yetkazish uchun kuryer balansida KAMIDA qancha pul
     bo'lishi kerak. Naqd buyurtmada = platforma ulushi (jami - kuryer haqi);
     tasdiqlangan P2P buyurtmada = 0 (pul allaqachon platformada)."""
     if order.payment_method == "p2p" and order.payment_verified:
         return 0.0
-    fee = order.delivery_fee or 0
-    total = (order.total_price or 0) + fee
-    return max(0.0, total - _courier_earning(order, courier_pct))
+    return max(0.0, _cash_due(order) - _courier_earning(order, courier_pct))
 
 
 async def _courier_reserved_hold(db: AsyncSession, courier_id: int, courier_pct: float) -> float:
@@ -2014,7 +2076,7 @@ async def auto_assign_nearest_courier(db: AsyncSession, order: Order) -> Optiona
 
 @admin_router.post("/admin/settings/birthday")
 async def update_birthday_setting(
-    birthday_bonus_amount: float = Form(...),
+    birthday_bonus_amount: float = Form(..., allow_inf_nan=False),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_section("tugilgankun")),
 ):
@@ -2028,7 +2090,7 @@ async def update_birthday_setting(
 async def update_referral_setting(
     referral_program_text: str = Form(""),
     referral_visible: bool = Form(False),
-    referral_bonus_amount: float = Form(0.0),
+    referral_bonus_amount: float = Form(0.0, allow_inf_nan=False),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_section("referal")),
 ):
@@ -2044,7 +2106,7 @@ async def update_referral_setting(
 async def update_cashback_setting(
     bonus_cashback_text: str = Form(""),
     cashback_visible: bool = Form(False),
-    cashback_earn_percent: float = Form(0.0),
+    cashback_earn_percent: float = Form(0.0, allow_inf_nan=False),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_section("bonuscashback")),
 ):
@@ -2260,16 +2322,20 @@ async def update_order_status_and_courier(
     new_status: str = Form(...),
     courier_id: Optional[int] = Form(None),
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user),
 ):
     order_query = await db.execute(
         select(Order)
         .options(selectinload(Order.partner))
         .where(Order.id == order_id)
+        .with_for_update(of=Order)
     )
     order = order_query.scalars().first()
 
     if not order:
         raise HTTPException(status_code=404, detail="Buyurtma topilmadi")
+    if is_scoped_to_city(current_user) and order.partner is not None and order.partner.city_id != current_user.city_id:
+        raise HTTPException(status_code=403, detail="Bu buyurtma boshqa shaharga tegishli")
 
     old_status = order.status
     old_courier_id = order.courier_id
@@ -2278,8 +2344,10 @@ async def update_order_status_and_courier(
         order.status = OrderStatus(new_status)
     except ValueError:
         raise HTTPException(status_code=400, detail="Noto'g'ri buyurtma holati")
+    _guard_status_change(order, old_status)
 
     if courier_id:
+        await _validate_assignable_courier(db, courier_id)
         order.courier_id = courier_id
         if not order.courier_pickup_bonus:
             await _apply_pickup_bonus(db, order, courier_id)
@@ -2288,6 +2356,7 @@ async def update_order_status_and_courier(
     # birinchi marta "Yetkazildi" bo'layotgan bo'lsa (aks holda takroriy
     # saqlashda pul ikki marta hisoblanib ketardi).
     if order.status == OrderStatus.DELIVERED and old_status != OrderStatus.DELIVERED:
+        _assert_can_deliver(order)
         await apply_cod_delivery_financials(db, order)
 
     await db.commit()
@@ -2333,6 +2402,7 @@ async def update_order_status_json(
     new_status: str = Form(...),
     courier_id: Optional[int] = Form(None),
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user),
 ):
     """Yuqoridagi `/update` bilan AYNAN bir xil ish mantig'i (status,
     moliya, Telegram bildirishnomalari) — faqat sahifani qayta
@@ -2344,11 +2414,14 @@ async def update_order_status_json(
         select(Order)
         .options(selectinload(Order.partner))
         .where(Order.id == order_id)
+        .with_for_update(of=Order)
     )
     order = order_query.scalars().first()
 
     if not order:
         raise HTTPException(status_code=404, detail="Buyurtma topilmadi")
+    if is_scoped_to_city(current_user) and order.partner is not None and order.partner.city_id != current_user.city_id:
+        raise HTTPException(status_code=403, detail="Bu buyurtma boshqa shaharga tegishli")
 
     old_status = order.status
     old_courier_id = order.courier_id
@@ -2357,13 +2430,16 @@ async def update_order_status_json(
         order.status = OrderStatus(new_status)
     except ValueError:
         raise HTTPException(status_code=400, detail="Noto'g'ri buyurtma holati")
+    _guard_status_change(order, old_status)
 
     if courier_id:
+        await _validate_assignable_courier(db, courier_id)
         order.courier_id = courier_id
         if not order.courier_pickup_bonus:
             await _apply_pickup_bonus(db, order, courier_id)
 
     if order.status == OrderStatus.DELIVERED and old_status != OrderStatus.DELIVERED:
+        _assert_can_deliver(order)
         await apply_cod_delivery_financials(db, order)
 
     await db.commit()
@@ -2406,10 +2482,10 @@ async def create_partner(
     category: str = Form(...),
     address: str = Form(...),
     city_id: int = Form(...),
-    commission_rate: float = Form(10.0),
+    commission_rate: float = Form(10.0, allow_inf_nan=False),
     opening_time: str = Form("09:00"),
     closing_time: str = Form("23:00"),
-    min_order_amount: float = Form(0.0),
+    min_order_amount: float = Form(0.0, allow_inf_nan=False),
     login_phone: Optional[str] = Form(None),
     login_password: Optional[str] = Form(None),
     db: AsyncSession = Depends(get_db),
@@ -2466,10 +2542,10 @@ async def update_partner(
     category: str = Form(...),
     address: str = Form(...),
     city_id: int = Form(...),
-    commission_rate: float = Form(...),
+    commission_rate: float = Form(..., allow_inf_nan=False),
     opening_time: str = Form(...),
     closing_time: str = Form(...),
-    min_order_amount: float = Form(0.0),
+    min_order_amount: float = Form(0.0, allow_inf_nan=False),
     db: AsyncSession = Depends(get_db),
     owner: User = Depends(require_owner),
 ):
@@ -2546,8 +2622,18 @@ async def delete_partner(
     if not partner:
         raise HTTPException(status_code=404, detail="Do'kon topilmadi")
 
-    await db.delete(partner)
-    await db.commit()
+    has_orders = (await db.execute(select(func.count(Order.id)).where(Order.partner_id == partner_id))).scalar() or 0
+    if has_orders or abs(partner.balance or 0) > 0.5 or abs(getattr(partner, "frozen_balance", 0) or 0) > 0.5:
+        raise HTTPException(
+            status_code=400,
+            detail="Bu do'konda buyurtmalar tarixi yoki balans bor — o'chirib bo'lmaydi. Uni yopib qo'ying (o'chirish tugmasi o'rniga «yopiq» qiling).",
+        )
+    try:
+        await db.delete(partner)
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail="Do'konni o'chirib bo'lmadi — unga bog'langan yozuvlar bor. Uni yopib qo'ying.")
     return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -2556,7 +2642,7 @@ async def delete_partner(
 async def create_product(
     partner_id: int = Form(...),
     name: str = Form(...),
-    price: float = Form(...),
+    price: float = Form(..., allow_inf_nan=False),
     description: Optional[str] = Form(None),
     category: str = Form("Boshqa"),
     image: Optional[UploadFile] = File(None),
@@ -2593,7 +2679,7 @@ async def create_product(
 async def update_product(
     product_id: int,
     name: str = Form(...),
-    price: float = Form(...),
+    price: float = Form(..., allow_inf_nan=False),
     description: Optional[str] = Form(None),
     category: str = Form("Boshqa"),
     image: Optional[UploadFile] = File(None),
@@ -2645,8 +2731,18 @@ async def delete_product(product_id: int, db: AsyncSession = Depends(get_db), ow
     if not product:
         raise HTTPException(status_code=404, detail="Mahsulot topilmadi")
 
-    await db.delete(product)
-    await db.commit()
+    used = (await db.execute(select(func.count(OrderItem.id)).where(OrderItem.product_id == product_id))).scalar() or 0
+    if used:
+        # Buyurtma tarixida bor — tarix buzilmasligi uchun o'chirmaymiz, faqat yashiramiz
+        product.is_available = False
+        await db.commit()
+    else:
+        try:
+            await db.delete(product)
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise HTTPException(status_code=400, detail="Mahsulotni o'chirib bo'lmadi — u bilan bog'langan yozuvlar bor.")
     return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -2825,7 +2921,7 @@ async def update_courier(
     phone_number: str = Form(...),
     transport_type: str = Form(...),
     city_id: Optional[int] = Form(None),
-    credit_limit: Optional[float] = Form(None),
+    credit_limit: Optional[float] = Form(None, allow_inf_nan=False),
     new_password: Optional[str] = Form(None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_admin_user),
@@ -2916,8 +3012,21 @@ async def delete_courier(user_id: int, db: AsyncSession = Depends(get_db)):
     if not courier_user:
         raise HTTPException(status_code=404, detail="Kuryer topilmadi")
 
-    await db.delete(courier_user)
-    await db.commit()
+    n_orders = (await db.execute(select(func.count(Order.id)).where(Order.courier_id == user_id))).scalar() or 0
+    if n_orders:
+        # Tarix (buyurtmalar, pul harakatlari) saqlanishi uchun o'chirmaymiz — faqat faolsizlantiramiz
+        courier_user.is_active = False
+        cp = (await db.execute(select(CourierProfile).where(CourierProfile.user_id == user_id))).scalars().first()
+        if cp:
+            cp.is_online = False
+        await db.commit()
+    else:
+        try:
+            await db.delete(courier_user)
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise HTTPException(status_code=400, detail="Kuryerni o'chirib bo'lmadi — unga bog'langan yozuvlar bor. Bloklab qo'ying.")
     return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -3016,7 +3125,7 @@ async def delete_operator(user_id: int, db: AsyncSession = Depends(get_db)):
 async def update_courier_balance(
     user_id: int = Form(...),
     action: str = Form(...),  # "deposit" yoki "withdraw"
-    amount: float = Form(...),
+    amount: float = Form(..., allow_inf_nan=False),
     note: Optional[str] = Form(None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_owner),
@@ -3061,7 +3170,7 @@ async def update_courier_balance(
 async def update_partner_balance(
     partner_id: int = Form(...),
     action: str = Form(...),
-    amount: float = Form(...),
+    amount: float = Form(..., allow_inf_nan=False),
     note: Optional[str] = Form(None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_owner),
@@ -3568,7 +3677,7 @@ async def receipt_image(
 @finance_router.post("/receipts/{receipt_id}/approve")
 async def approve_receipt(
     receipt_id: int,
-    amount: Optional[float] = Form(None),
+    amount: Optional[float] = Form(None, allow_inf_nan=False),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_section("moliya")),
 ):
@@ -3688,6 +3797,11 @@ async def reset_system(
     # ("TOZALASH") kiritilishi shart. Bu — qaytarib bo'lmaydigan amal bo'lgani
     # uchun, tasodifan bosilib ketishning oldini olish uchun ataylab qattiq
     # qilingan.
+    if os.getenv("ALLOW_SYSTEM_RESET", "").lower() not in ("1", "true", "yes"):
+        raise HTTPException(
+            status_code=403,
+            detail="Tizimni tozalash o'chirilgan. Real ma'lumot himoyasi uchun faqat ALLOW_SYSTEM_RESET=1 bo'lganda ishlaydi.",
+        )
     if confirmation != "TOZALASH":
         raise HTTPException(
             status_code=400,
@@ -3704,8 +3818,12 @@ async def reset_system(
     await db.execute(text("DELETE FROM products"))
     await db.execute(text("DELETE FROM partner_profiles"))
     await db.execute(text("DELETE FROM courier_profiles"))
-    await db.execute(text("DELETE FROM users WHERE role IN ('client', 'courier')"))
-    await db.commit()
+    await db.execute(text("DELETE FROM users WHERE role IN ('CLIENT', 'COURIER')"))
+    try:
+        await db.commit()
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=f"Tozalab bo'lmadi (bog'liq yozuvlar bor): {str(e)[:200]}")
 
     return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
 
@@ -3779,8 +3897,13 @@ app.include_router(cities_router)
 # Redis kabi umumiy xotiraga ko'chirish kerak bo'ladi.
 bot_conversation_state: dict = {}
 
-DEFAULT_COURIER_TERMS = "Kuryer sifatida ishlash shartlari hali kiritilmagan. Iltimos, adminstratsiya bilan bog'laning."
-DEFAULT_PARTNER_TERMS = "Hamkorlik shartlari hali kiritilmagan. Iltimos, adminstratsiya bilan bog'laning."
+
+_WH_SECRET_ON = False   # webhook secret bilan ro'yxatdan o'tgandan KEYIN tekshiriladi (eski webhook ishdan chiqmasligi uchun)
+
+
+def _telegram_webhook_secret() -> str:
+    from telegram_bot import webhook_secret
+    return webhook_secret() if (_WH_SECRET_ON and os.getenv("TELEGRAM_BOT_TOKEN")) else ""
 
 
 @app.post("/telegram/webhook")
@@ -3788,13 +3911,17 @@ async def telegram_webhook(request: Request, db: AsyncSession = Depends(get_db))
     """Telegram har bir yangi xabar/harakat haqida shu manzilga POST
     so'rov yuboradi. Bu yerda: /start, telefon ulashish (contact), tugma
     bosish (callback_query) va PIN kiritish (oddiy matn) qayta ishlanadi."""
+    _wh_secret = _telegram_webhook_secret()
+    if _wh_secret and request.headers.get("x-telegram-bot-api-secret-token") != _wh_secret:
+        raise HTTPException(status_code=403, detail="Forbidden")
     update = await request.json()
 
     # DIQQAT (VAQTINCHALIK DEBUG): Telegram'dan har bir kelgan update'ni
     # to'liq ko'rish uchun. Muammo tuzatilgach, buni olib tashlash mumkin —
     # hozircha "tugma bosilganda hech narsa bo'lmayapti" degan xatoni
     # aniqlashtirish uchun eng ishonchli yo'l shu.
-    print(f"[TELEGRAM UPDATE KELDI] {update}")
+    if os.getenv("DEBUG_TELEGRAM", "").lower() in ("1", "true"):
+        print(f"[TELEGRAM UPDATE KELDI] {update}")
 
     # ---- TUGMA BOSILGANDA (masalan "Kuryer bo'lish", "Roziman") ----
     callback_query = update.get("callback_query")
@@ -4141,6 +4268,8 @@ async def telegram_set_webhook(request: Request, owner: User = Depends(require_o
     Masalan: https://eltuvchi-express.onrender.com/telegram/set-webhook"""
     webhook_url = get_public_base_url(request) + "/telegram/webhook"
     result = await set_telegram_webhook(webhook_url)
+    if isinstance(result, dict) and result.get("ok"):
+        globals()["_WH_SECRET_ON"] = True
     return {"webhook_url": webhook_url, "telegram_response": result}
 
 
@@ -4186,6 +4315,8 @@ class AppRegisterBody(BaseModel):
     bank_name: Optional[str] = None
     director_name: Optional[str] = None
     director_phone: Optional[str] = None
+    legal_type: Optional[str] = None
+    pinfl: Optional[str] = None
 
 
 @app_api_router.get("/config")
@@ -4281,6 +4412,7 @@ async def app_register(body: AppRegisterBody, request: Request, db: AsyncSession
         legal = _clean_legal_details(
             body.legal_name, body.stir, body.bank_account, body.mfo,
             body.bank_name, body.director_name, body.director_phone,
+            legal_type=body.legal_type if body.legal_type == "self_employed" else "legal", pinfl=body.pinfl,
         )
     if body.city_id is not None:
         city = (await db.execute(select(City).where(City.id == body.city_id))).scalars().first()
@@ -4341,8 +4473,10 @@ async def app_register(body: AppRegisterBody, request: Request, db: AsyncSession
         reply["message"] = "Arizangiz qabul qilindi! Administratsiya tez orada siz bilan bog'lanadi."
         notify_text = (
             f"🏪 Yangi HAMKOR arizasi!\n\n<b>Do'kon:</b> {body.brand_name.strip()}\n"
-            f"<b>Yuridik nomi:</b> {legal['legal_name']}\n<b>STIR:</b> {legal['stir']}\n"
-            f"<b>Direktor:</b> {legal['director_name']} ({legal['director_phone']})\n"
+            f"<b>Turi:</b> {'O‘z-o‘zini band qilgan shaxs' if legal.get('legal_type') == 'self_employed' else 'Yuridik shaxs / YTT'}\n"
+            f"<b>Nomi:</b> {html.escape(str(legal['legal_name']))}\n"
+            + (f"<b>PINFL:</b> {legal.get('pinfl')}\n" if legal.get('legal_type') == 'self_employed' else f"<b>STIR:</b> {legal['stir']}\n<b>Direktor:</b> {html.escape(str(legal['director_name']))}\n")
+            + f"<b>Telefon:</b> {legal['director_phone']}\n"
             f"<b>Aloqa:</b> {user.full_name}, {user.phone_number}\n\nAdmin panel → Arizalar bo'limidan ko'rib chiqing va bog'laning."
         )
 
@@ -5018,8 +5152,12 @@ async def shop_create_order(body: ShopOrderBody, db: AsyncSession = Depends(get_
 
     partner_result = await db.execute(select(PartnerProfile).where(PartnerProfile.id == body.partner_id))
     partner = partner_result.scalars().first()
-    if not partner:
+    if not partner or partner.application_status == "pending":
         raise HTTPException(status_code=404, detail="Do'kon topilmadi")
+    if partner.is_open is False:
+        raise HTTPException(status_code=400, detail="Do'kon hozir yopiq — keyinroq urinib ko'ring")
+    if not (body.delivery_address or "").strip():
+        raise HTTPException(status_code=400, detail="Yetkazish manzilini kiriting")
 
     # DIQQAT: bu yerda ham (admin panel'dagi kabi) narxni frontend'dan
     # ISHONIB OLMAYMIZ — bazadagi haqiqiy narxlar bo'yicha o'zimiz hisoblaymiz.
@@ -5034,6 +5172,10 @@ async def shop_create_order(body: ShopOrderBody, db: AsyncSession = Depends(get_
         product = prod_result.scalars().first()
         if not product:
             raise HTTPException(status_code=400, detail=f"Mahsulot topilmadi (id={item.product_id})")
+        if not product.is_available:
+            raise HTTPException(status_code=400, detail=f"«{product.name}» hozir mavjud emas")
+        if item.quantity > 99:
+            raise HTTPException(status_code=400, detail="Bitta mahsulotdan 99 tadan ko'p buyurtma qilib bo'lmaydi")
         total_price += product.price * item.quantity
         order_items_data.append((product, item.quantity))
 
@@ -5077,7 +5219,7 @@ async def shop_create_order(body: ShopOrderBody, db: AsyncSession = Depends(get_
 
     # ---- KESHBEKNI ISHLATISH (mavjud balansdan ko'p ishlatib bo'lmaydi) ----
     cashback_used = 0.0
-    if body.use_cashback and client.cashback_balance > 0:
+    if body.use_cashback and (client.cashback_balance or 0) > 0:
         remaining_after_promo = max(total_price - discount_amount, 0)
         cashback_used = min(client.cashback_balance, remaining_after_promo)
 
@@ -5352,7 +5494,7 @@ async def partner_order_track(
     }
 
 
-@partner_router.get("/cards")
+@partner_router.get("/cards", dependencies=[Depends(secure_action)])
 async def partner_list_cards(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_partner_user),
@@ -5391,7 +5533,7 @@ async def partner_delete_card(
 
 @partner_router.post("/withdraw", dependencies=[Depends(secure_action)])
 async def partner_request_withdrawal(
-    amount: float = Form(...),
+    amount: float = Form(..., allow_inf_nan=False),
     card_id: int = Form(...),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_partner_user),
@@ -5439,7 +5581,7 @@ async def partner_request_withdrawal(
 @partner_router.post("/products/create")
 async def partner_create_product(
     name: str = Form(...),
-    price: float = Form(...),
+    price: float = Form(..., allow_inf_nan=False),
     description: Optional[str] = Form(None),
     category: str = Form("Boshqa"),
     image: Optional[UploadFile] = File(None),
@@ -5472,7 +5614,7 @@ async def partner_create_product(
 async def partner_update_product(
     product_id: int,
     name: str = Form(...),
-    price: float = Form(...),
+    price: float = Form(..., allow_inf_nan=False),
     description: Optional[str] = Form(None),
     category: str = Form("Boshqa"),
     image: Optional[UploadFile] = File(None),
@@ -5546,8 +5688,8 @@ async def partner_toggle_open(
 async def partner_update_settings(
     brand_name: str = Form(...),
     address: str = Form(...),
-    latitude: Optional[float] = Form(None),
-    longitude: Optional[float] = Form(None),
+    latitude: Optional[float] = Form(None, allow_inf_nan=False),
+    longitude: Optional[float] = Form(None, allow_inf_nan=False),
     notification_sound: str = Form("chime1"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_partner_user),
@@ -5579,11 +5721,33 @@ def _clean_digits(value: Optional[str], length: int, label: str) -> str:
 def _clean_legal_details(
     legal_name: Optional[str], stir: Optional[str], bank_account: Optional[str], mfo: Optional[str],
     bank_name: Optional[str], director_name: Optional[str], director_phone: Optional[str],
+    legal_type: Optional[str] = "legal", pinfl: Optional[str] = None,
 ) -> dict:
-    """Hamkor yuridik rekvizitlarini tekshiradi va tozalab qaytaradi."""
+    """Hamkor yuridik rekvizitlarini tekshiradi va tozalab qaytaradi.
+    legal_type='self_employed' — o'z-o'zini band qilgan shaxs: F.I.Sh. + JSHSHIR (PINFL) + hisob raqami."""
     legal_name = (legal_name or "").strip()
     bank_name = (bank_name or "").strip()
     director_name = (director_name or "").strip()
+    if legal_type == "self_employed":
+        if not legal_name:
+            raise HTTPException(status_code=400, detail="F.I.Sh. ni kiriting")
+        if not bank_name:
+            raise HTTPException(status_code=400, detail="Bank nomini kiriting")
+        phone = normalize_phone(director_phone or "")
+        if not re.fullmatch(r"\+998\d{9}", phone or ""):
+            raise HTTPException(status_code=400, detail="Telefon raqami noto'g'ri (masalan: +998901234567)")
+        mfo_d = re.sub(r"\D", "", mfo or "")
+        return {
+            "legal_type": "self_employed",
+            "legal_name": legal_name[:200],
+            "pinfl": _clean_digits(pinfl, 14, "JSHSHIR (PINFL)"),
+            "stir": None,
+            "bank_account": _clean_digits(bank_account, 20, "Hisob-kitob raqami"),
+            "mfo": _clean_digits(mfo_d, 5, "MFO") if mfo_d else None,
+            "bank_name": bank_name[:120],
+            "director_name": legal_name[:120],
+            "director_phone": phone,
+        }
     if not legal_name:
         raise HTTPException(status_code=400, detail="Yuridik nomini kiriting (masalan: 'Gourmet Express' MChJ yoki 'Aliyev B.' YTT)")
     if not bank_name:
@@ -5594,6 +5758,8 @@ def _clean_legal_details(
     if not re.fullmatch(r"\+998\d{9}", phone or ""):
         raise HTTPException(status_code=400, detail="Direktor telefon raqami noto'g'ri (masalan: +998901234567)")
     return {
+        "legal_type": "legal",
+        "pinfl": None,
         "legal_name": legal_name[:200],
         "stir": _clean_digits(stir, 9, "STIR (INN)"),
         "bank_account": _clean_digits(bank_account, 20, "Hisob-kitob raqami"),
@@ -5613,16 +5779,28 @@ async def partner_update_legal(
     bank_name: str = Form(""),
     director_name: str = Form(""),
     director_phone: str = Form(""),
+    legal_type: str = Form("legal"),
+    pinfl: str = Form(""),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_partner_user),
 ):
-    """Hamkor yuridik rekvizitlari (STIR, hisob raqami, MFO, bank, direktor)."""
+    """Hamkor yuridik rekvizitlari (STIR, hisob raqami, MFO, bank, direktor) yoki o'z-o'zini band qilgan shaxs (PINFL)."""
     partner = await _get_own_partner(db, current_user)
-    data = _clean_legal_details(legal_name, stir, bank_account, mfo, bank_name, director_name, director_phone)
+    data = _clean_legal_details(legal_name, stir, bank_account, mfo, bank_name, director_name, director_phone,
+                                legal_type="self_employed" if legal_type == "self_employed" else "legal", pinfl=pinfl)
     for k, v in data.items():
         setattr(partner, k, v)
     await db.commit()
     return RedirectResponse(url="/partner", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@partner_router.get("/legal/data", dependencies=[Depends(secure_action)])
+async def partner_legal_data(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_partner_user)):
+    """To'liq rekvizitlar — FAQAT maxfiy javob tasdiqlangandan keyin (sahifada ular yashirin turadi)."""
+    p = await _get_own_partner(db, current_user)
+    return {"legal_type": p.legal_type or "legal", "legal_name": p.legal_name or "", "stir": p.stir or "", "pinfl": p.pinfl or "",
+            "bank_account": p.bank_account or "", "mfo": p.mfo or "", "bank_name": p.bank_name or "",
+            "director_name": p.director_name or "", "director_phone": p.director_phone or ""}
 
 
 @partner_router.get("/api/new-orders-count")
@@ -5859,8 +6037,8 @@ async def courier_toggle_online(
 
 @courier_router_app.post("/location")
 async def courier_update_location(
-    lat: float = Form(...),
-    lng: float = Form(...),
+    lat: float = Form(..., allow_inf_nan=False),
+    lng: float = Form(..., allow_inf_nan=False),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_courier_user),
 ):
@@ -5878,7 +6056,7 @@ async def courier_update_location(
     return JSONResponse({"ok": True})
 
 
-@courier_router_app.post("/settings/sound", dependencies=[Depends(secure_action)])
+@courier_router_app.post("/settings/sound")
 async def courier_update_sound(
     notification_sound: str = Form(...),
     db: AsyncSession = Depends(get_db),
@@ -5932,7 +6110,41 @@ async def courier_available_orders_json(
     return JSONResponse({"available_ids": ids, "my_active_ids": my_ids})
 
 
-@courier_router_app.get("/cards")
+@courier_router_app.get("/legal/data", dependencies=[Depends(secure_action)])
+async def courier_legal_data(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_courier_user)):
+    cp = (await db.execute(select(CourierProfile).where(CourierProfile.user_id == current_user.id))).scalars().first()
+    return {"se_name": (cp.se_name if cp else "") or "", "pinfl": (cp.pinfl if cp else "") or "",
+            "se_bank_name": (cp.se_bank_name if cp else "") or "", "se_account": (cp.se_account if cp else "") or ""}
+
+
+@courier_router_app.post("/legal", dependencies=[Depends(secure_action)])
+async def courier_update_legal(
+    se_name: str = Form(""),
+    pinfl: str = Form(""),
+    se_bank_name: str = Form(""),
+    se_account: str = Form(""),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_courier_user),
+):
+    """Kuryer — o'z-o'zini band qilgan shaxs rekvizitlari (to'lovlar uchun)."""
+    cp = (await db.execute(select(CourierProfile).where(CourierProfile.user_id == current_user.id))).scalars().first()
+    if not cp:
+        raise HTTPException(status_code=404, detail="Kuryer profili topilmadi")
+    name = (se_name or "").strip()
+    bank = (se_bank_name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="F.I.Sh. ni kiriting")
+    if not bank:
+        raise HTTPException(status_code=400, detail="Bank nomini kiriting")
+    cp.se_name = name[:150]
+    cp.pinfl = _clean_digits(pinfl, 14, "JSHSHIR (PINFL)")
+    cp.se_bank_name = bank[:120]
+    cp.se_account = _clean_digits(se_account, 20, "Hisob-kitob raqami")
+    await db.commit()
+    return RedirectResponse(url="/courier", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@courier_router_app.get("/cards", dependencies=[Depends(secure_action)])
 async def courier_list_cards(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_courier_user),
@@ -5971,7 +6183,7 @@ async def courier_delete_card(
 
 @courier_router_app.post("/withdraw", dependencies=[Depends(secure_action)])
 async def courier_request_withdrawal(
-    amount: float = Form(...),
+    amount: float = Form(..., allow_inf_nan=False),
     card_id: int = Form(...),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_courier_user),
@@ -6015,7 +6227,7 @@ async def courier_request_withdrawal(
 
 @courier_router_app.post("/topup")
 async def courier_topup_receipt(
-    amount: float = Form(...),
+    amount: float = Form(..., allow_inf_nan=False),
     comment: str = Form(""),
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
@@ -6044,7 +6256,7 @@ async def courier_accept_order(
         )
 
     order_result = await db.execute(
-        select(Order).where(Order.id == order_id, Order.status == OrderStatus.LOOKING_FOR_COURIER)
+        select(Order).where(Order.id == order_id, Order.status == OrderStatus.LOOKING_FOR_COURIER).with_for_update()
     )
     order = order_result.scalars().first()
     if not order:
@@ -6099,6 +6311,7 @@ async def courier_mark_delivered(
         select(Order)
         .options(selectinload(Order.partner))
         .where(Order.id == order_id, Order.courier_id == current_user.id)
+        .with_for_update(of=Order)
     )
     order = order_result.scalars().first()
     if not order:
@@ -6106,6 +6319,9 @@ async def courier_mark_delivered(
 
     if order.status == OrderStatus.DELIVERED:
         return RedirectResponse(url="/courier", status_code=status.HTTP_303_SEE_OTHER)
+    if order.status != OrderStatus.ON_THE_WAY:
+        raise HTTPException(status_code=400, detail="Faqat 'Yo'lda' holatidagi buyurtmani yetkazildi deb belgilash mumkin")
+    _assert_can_deliver(order)
 
     order.status = OrderStatus.DELIVERED
     await apply_cod_delivery_financials(db, order)
@@ -6915,6 +7131,16 @@ async def _aim_send(db: AsyncSession, m: AIMessage, users: list) -> int:
     return sent
 
 
+def _ai_audience_cond(audience: str):
+    """Auditoriya sharti. DIQQAT: multi-role tizimida kuryer/hamkorning User.role maydoni CLIENT bo'lib qoladi —
+    shuning uchun ular rol bo'yicha emas, PROFIL mavjudligi (tasdiqlangan) bo'yicha topiladi."""
+    if audience == "courier":
+        return User.id.in_(select(CourierProfile.user_id).where(CourierProfile.application_status != "pending"))
+    if audience == "partner":
+        return User.id.in_(select(PartnerProfile.user_id).where(PartnerProfile.application_status != "pending"))
+    return User.role == UserRole.CLIENT
+
+
 async def ai_campaign_tick() -> int:
     """«N soat kirmaganlarga» xabarlar: har daqiqada tekshiriladi, bir mijozga takror oralig'ida qayta yuborilmaydi."""
     total = 0
@@ -6924,14 +7150,12 @@ async def ai_campaign_tick() -> int:
             return 0
         now = datetime.utcnow()
         msgs = (await db.execute(select(AIMessage).where(AIMessage.is_active == True, AIMessage.inactive_hours.is_not(None)))).scalars().all()
-        role_map = {"client": UserRole.CLIENT, "courier": UserRole.COURIER, "partner": UserRole.PARTNER}
         for m in msgs:
-            role = role_map.get(m.audience)
-            if role is None:
+            if m.audience not in ("client", "courier", "partner"):
                 continue
             cutoff = now - timedelta(hours=max(int(m.inactive_hours or 1), 1))
             cands = (await db.execute(
-                select(User).where(User.role == role, User.is_active == True, User.telegram_id.is_not(None),
+                select(User).where(_ai_audience_cond(m.audience), User.is_active == True, User.telegram_id.is_not(None),
                                    func.coalesce(User.last_active_at, User.created_at) < cutoff).limit(300)
             )).scalars().all()
             if not cands:
@@ -7005,15 +7229,15 @@ async def admin_aim_send_now(mid: int, db: AsyncSession = Depends(get_db), curre
     if not _ai_flags(setting)["campaigns"]:
         raise HTTPException(status_code=403, detail="AI xabarlari o'chirilgan")
     m = await _aim_get(db, mid)
-    role = {"client": UserRole.CLIENT, "courier": UserRole.COURIER, "partner": UserRole.PARTNER}[m.audience]
-    users = (await db.execute(select(User).where(User.role == role, User.is_active == True, User.telegram_id.is_not(None)).limit(2000))).scalars().all()
+    aud_cond = _ai_audience_cond(m.audience)
+    users = (await db.execute(select(User).where(aud_cond, User.is_active == True, User.telegram_id.is_not(None)).limit(2000))).scalars().all()
     n = len(users)
     mid_ = m.id
 
     async def _run():
         async with AsyncSessionLocal() as db2:
             mm = (await db2.execute(select(AIMessage).where(AIMessage.id == mid_))).scalars().first()
-            us = (await db2.execute(select(User).where(User.role == role, User.is_active == True, User.telegram_id.is_not(None)).limit(2000))).scalars().all()
+            us = (await db2.execute(select(User).where(aud_cond, User.is_active == True, User.telegram_id.is_not(None)).limit(2000))).scalars().all()
             if mm:
                 await _aim_send(db2, mm, us)
     import asyncio as _a
