@@ -329,6 +329,7 @@
 
     <script src="/static/js/zm-support.js?v=2"></script>
     <script src="/static/js/zm-rating.js?v=1"></script>
+    <script src="/static/js/zm-extras.js?v=1"></script>
     <script src="/static/js/zm-ai.js?v=3"></script>
     <script>
         const tg = window.Telegram?.WebApp;
@@ -632,6 +633,7 @@
         let aiOrder = false; // AI orqali yig'ilgan buyurtma: faqat oldindan to'lov (karta) bilan
         async function initAI() {
             try { if (initData && window.ZMSupport) ZMSupport.mount({ client: true, base: '/api/shop/support', bottom: 86, initData: () => initData }); } catch (e) {}
+            try { if (initData && window.ZMExtras) ZMExtras.mount({ initData: () => initData, bottom: 86 }); } catch (e) {}
             try { if (initData && window.ZMRating) ZMRating.mount({ base: '/api/shop', initData: () => initData, onLow: (id) => { if (window.ZMSupport) ZMSupport.open("Buyurtma #" + id + " bo'yicha muammo: "); } }); } catch (e) {}
             try {
                 const r = await fetch('/api/shop/ai/status');

@@ -288,6 +288,9 @@
                 {% if is_owner or operator_perms.get('xabarlar', True) %}
                 <button onclick="showPage('xabarlar')" data-page-btn="xabarlar" class="nav-btn">💬 Chat va e'lonlar <span id="sup-nav-badge" class="hidden ml-1 bg-red-500 text-white text-[10px] font-bold rounded-full px-1.5 py-0.5"></span></button>
                 {% endif %}
+                {% if is_owner or operator_perms.get('xizmatlar', True) %}
+                <button onclick="showPage('xizmatlar')" data-page-btn="xizmatlar" class="nav-btn">🧩 Taxi va posilka</button>
+                {% endif %}
                 {% if is_owner or operator_perms.get('operatorlar') or operator_perms.get('shartlar') or operator_perms.get('banner') or operator_perms.get('moliya') %}
                 <div class="border-t my-2 dark:border-gray-700"></div>
                 {% endif %}
@@ -320,6 +323,7 @@
                 <option value="bonuscashback">💸 Bonus/Cashback</option>
                 <option value="dokonlar">🏪 Do'konlar</option>
                 {% if is_owner or operator_perms.get('xabarlar', True) %}<option value="xabarlar">💬 Chat va e'lonlar</option>{% endif %}
+                {% if is_owner or operator_perms.get('xizmatlar', True) %}<option value="xizmatlar">🧩 Taxi va posilka</option>{% endif %}
                 {% if is_owner %}
                 <option value="operatorlar">🧑‍💼 Operatorlar</option>
                 <option value="shartlar">📄 Shartlar</option>
@@ -1797,6 +1801,31 @@
         </section>
         {% endif %}
 
+        {% if is_owner or operator_perms.get('xizmatlar', True) %}
+        <section class="app-page" data-page="xizmatlar" style="display:none;">
+            <div class="card-bg bg-white p-4 rounded-xl shadow-md" id="xz-root">
+                <h2 class="theme-title text-lg font-bold mb-1 text-indigo-700">🧩 Qo'shimcha xizmatlar</h2>
+                <p class="text-xs text-gray-500 mb-3">Yangi xizmatlarni bitta tugma bilan yoqing/o'chiring. O'chiq xizmat ilovada umuman ko'rinmaydi.</p>
+                <div class="grid sm:grid-cols-2 gap-3 mb-4">
+                    <div class="border rounded-xl p-3 flex items-center justify-between"><div><div class="font-bold">📦 Shaxsiy buyum yuborish</div><div class="text-xs text-gray-500">Mijoz A→B jo'natma, kuryer olib boradi, kod bilan topshiriladi</div></div><button id="xz-f-parcel" class="xz-flag px-3 py-1.5 rounded-lg text-sm font-bold bg-gray-300" {% if not is_owner %}disabled{% endif %}>…</button></div>
+                    <div class="border rounded-xl p-3 flex items-center justify-between"><div><div class="font-bold">🚕 Taxi</div><div class="text-xs text-gray-500">Mijoz taxi chaqiradi, tasdiqlangan haydovchi qabul qiladi</div></div><button id="xz-f-taxi" class="xz-flag px-3 py-1.5 rounded-lg text-sm font-bold bg-gray-300" {% if not is_owner %}disabled{% endif %}>…</button></div>
+                </div>
+                {% if is_owner %}
+                <details class="mb-4"><summary class="font-bold cursor-pointer">⚙️ Narx va komissiya sozlamalari</summary>
+                    <div id="xz-cfg" class="grid sm:grid-cols-3 gap-2 mt-2 text-sm"></div>
+                    <button id="xz-cfg-save" class="mt-2 bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-bold">Saqlash</button>
+                </details>
+                {% endif %}
+                <h3 class="font-bold mb-1">🚕 Taxi haydovchilar</h3>
+                <div id="xz-drivers" class="text-sm mb-4 overflow-x-auto"></div>
+                <h3 class="font-bold mb-1">📦 So'nggi jo'natmalar</h3>
+                <div id="xz-parcels" class="text-sm mb-4 overflow-x-auto"></div>
+                <h3 class="font-bold mb-1">🚕 So'nggi taxi safarlar</h3>
+                <div id="xz-rides" class="text-sm overflow-x-auto"></div>
+            </div>
+        </section>
+        {% endif %}
+
         <!-- MINI APP BANNERLARI -->
         {% if is_owner or operator_perms.get('banner') %}
 
@@ -3135,5 +3164,32 @@
         document.addEventListener('DOMContentLoaded',function(){load();loadAim();});
     })();
     </script>
+<script>
+(function(){
+  function e(v){return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+  function api(u,m,b){var o={method:m||'GET',credentials:'same-origin',headers:{'Content-Type':'application/json'}};if(b)o.body=JSON.stringify(b);return fetch(u,o).then(function(r){return r.json().catch(function(){return {};}).then(function(j){if(!r.ok)throw new Error((j&&j.detail&&(j.detail.message||j.detail))||('Xato '+r.status));return j;});});}
+  var root=document.getElementById('xz-root'); if(!root) return;
+  var NAMES={parcel_base_price:'Posilka: boshlang\'ich narx',parcel_per_km:'Posilka: 1 km narxi',parcel_free_kg:'Posilka: bepul kg',parcel_per_extra_kg:'Posilka: ortiqcha kg narxi',parcel_max_kg:'Posilka: maks. kg',parcel_min_price:'Posilka: min. narx',parcel_courier_share:'Posilka: kuryer ulushi %',taxi_base_price:'Taxi: boshlang\'ich narx',taxi_per_km:'Taxi: 1 km narxi',taxi_min_price:'Taxi: min. narx',taxi_commission_percent:'Taxi: komissiya %',taxi_search_radius_km:'Taxi: qidiruv radiusi km',taxi_free_wait_min:'Taxi: kutish (daq)'};
+  var CFG={};
+  function tbl(rows,cols){if(!rows.length)return '<div class="text-gray-400 text-xs">Hozircha yo\'q</div>';return '<table class="w-full text-xs"><thead><tr>'+cols.map(function(c){return '<th class="text-left p-1">'+c[0]+'</th>';}).join('')+'</tr></thead><tbody>'+rows.map(function(r){return '<tr class="border-t">'+cols.map(function(c){return '<td class="p-1">'+c[1](r)+'</td>';}).join('')+'</tr>';}).join('')+'</tbody></table>';}
+  function setFlag(k,on){var b=document.getElementById('xz-f-'+k);if(!b)return;b.textContent=on?'Yoqilgan ✓':'O\'chiq';b.className='xz-flag px-3 py-1.5 rounded-lg text-sm font-bold '+(on?'bg-green-600 text-white':'bg-gray-300');b.dataset.on=on?'1':'0';}
+  function load(){
+    api('/admin/extras/state').then(function(s){setFlag('parcel',s.flags.parcel);setFlag('taxi',s.flags.taxi);CFG=s.config;var c=document.getElementById('xz-cfg');if(c){c.innerHTML=Object.keys(NAMES).map(function(k){return '<label class="text-xs">'+NAMES[k]+'<input data-k="'+k+'" type="number" step="any" min="0" value="'+e(CFG[k])+'" class="w-full border rounded p-1 mt-0.5 dark:bg-gray-800"></label>';}).join('');}}).catch(function(){});
+    api('/admin/extras/drivers').then(function(d){document.getElementById('xz-drivers').innerHTML=tbl(d.items,[['Ism',function(r){return e(r.name)+'<br>'+e(r.phone);}],['Mashina',function(r){return e(r.car)+' · '+e(r.plate);}],['Holat',function(r){return e(r.status)+(r.is_online?' 🟢':'');}],['Balans',function(r){return Math.round(r.balance).toLocaleString();}],['',function(r){return '<button data-st="approved" data-id="'+r.id+'" class="xz-act text-green-700 font-bold">Tasdiqlash</button> <button data-st="blocked" data-id="'+r.id+'" class="xz-act text-red-600 font-bold">Bloklash</button> <button data-bal="'+r.id+'" class="xz-act text-indigo-700 font-bold">+Balans</button>';}]]);}).catch(function(){});
+    api('/admin/extras/parcels').then(function(d){document.getElementById('xz-parcels').innerHTML=tbl(d.items,[['#',function(r){return r.id;}],['Qayerdan → qayerga',function(r){return e(r.pickup_address)+' → '+e(r.drop_address);}],['Holat',function(r){return e(r.status);}],['Narx',function(r){return Math.round(r.price).toLocaleString();}]]);}).catch(function(){});
+    api('/admin/extras/rides').then(function(d){document.getElementById('xz-rides').innerHTML=tbl(d.items,[['#',function(r){return r.id;}],['Qayerdan → qayerga',function(r){return e(r.pickup_address)+' → '+e(r.drop_address||'—');}],['Holat',function(r){return e(r.status);}],['Narx',function(r){return Math.round(r.price).toLocaleString();}]]);}).catch(function(){});
+  }
+  root.addEventListener('click',function(ev){
+    var t=ev.target;
+    if(t.classList.contains('xz-flag')&&!t.disabled){var k=t.id.replace('xz-f-','');var on=t.dataset.on!=='1';if(!confirm((on?'Yoqilsinmi: ':'O\'chirilsinmi: ')+(k==='taxi'?'Taxi':'Posilka')+'?'))return;api('/admin/extras/flag','POST',{key:k,enabled:on}).then(function(){setFlag(k,on);}).catch(function(x){alert(x.message);});}
+    else if(t.dataset&&t.dataset.st){api('/admin/extras/drivers/'+t.dataset.id+'/status','POST',{status:t.dataset.st}).then(load).catch(function(x){alert(x.message);});}
+    else if(t.dataset&&t.dataset.bal){var a=prompt('Balansga qo\'shiladigan summa (so\'m; ayirish uchun minus):');if(a===null)return;var n=Number(a);if(!isFinite(n)||!n)return;api('/admin/extras/drivers/'+t.dataset.bal+'/balance','POST',{amount:n,note:'Taxi hisobi (admin)'}).then(load).catch(function(x){alert(x.message);});}
+    else if(t.id==='xz-cfg-save'){var v={};root.querySelectorAll('#xz-cfg input').forEach(function(i){v[i.dataset.k]=i.value;});api('/admin/extras/config','POST',{values:v}).then(function(){alert('Saqlandi');load();}).catch(function(x){alert(x.message);});}
+  });
+  load();
+  document.addEventListener('click',function(ev){if(ev.target.closest&&ev.target.closest('[data-page-btn="xizmatlar"]'))setTimeout(load,60);});
+  document.addEventListener('change',function(ev){if(ev.target.id==='mobile-page-select'&&ev.target.value==='xizmatlar')setTimeout(load,60);});
+})();
+</script>
 </body>
 </html>

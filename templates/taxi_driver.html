@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="uz"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ZooMo Taxi — haydovchi</title>
+<style>
+:root{--bg:#f1f5f9;--card:#fff;--fg:#0f172a;--mut:#64748b;--pri:#4f46e5;--bd:#e2e8f0}
+@media(prefers-color-scheme:dark){:root{--bg:#0f172a;--card:#1e293b;--fg:#f1f5f9;--mut:#94a3b8;--bd:#334155}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,sans-serif;padding:14px;max-width:560px;margin:auto}
+h1{font-size:20px;margin:4px 0 10px}.c{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:12px;margin:10px 0;font-size:14px}
+input{width:100%;padding:10px;border:1px solid var(--bd);border-radius:10px;margin:4px 0 8px;background:var(--bg);color:var(--fg);font-size:15px}
+button{background:var(--pri);color:#fff;border:0;border-radius:12px;padding:12px;font-weight:700;width:100%;margin-top:6px;font-size:15px}
+button.g{background:#16a34a}button.r{background:#dc2626}button.s{background:var(--bd);color:var(--fg)}
+.m{color:var(--mut);font-size:12px}.top{display:flex;justify-content:space-between;align-items:center}a{color:var(--pri)}
+</style></head><body>
+<div class="top"><h1>🚕 Taxi haydovchi</h1><a href="/courier">← Panel</a></div>
+<div id="app"><div class="c">Yuklanmoqda…</div></div>
+<script>
+function e(v){return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+function money(n){return Math.round(n||0).toLocaleString('ru-RU')+" so'm";}
+function api(u,m,b){var o={method:m||'GET',credentials:'same-origin',headers:{'Content-Type':'application/json'}};if(b)o.body=JSON.stringify(b);
+  return fetch(u,o).then(function(r){if(r.status===401){location.href='/login';throw new Error('login');}return r.json().catch(function(){return {};}).then(function(j){if(!r.ok){var d=j&&j.detail;if(Array.isArray(d))d=d.map(function(x){return x.msg;}).join('; ');throw new Error(d||('Xato '+r.status));}return j;});});}
+var app=document.getElementById('app'),me=null,watch=null,tm=null,pos=null;
+function load(){api('/taxi/driver/me').then(function(m){me=m;view();}).catch(function(x){app.innerHTML='<div class="c">'+e(x.message)+'</div>';});}
+function view(){
+  clearInterval(tm);
+  if(!me.registered){app.innerHTML='<div class="c"><b>Haydovchi bo\'lish</b><div class="m">Ma\'lumot admin tomonidan tasdiqlanadi.</div><input id="cm" placeholder="Mashina modeli (Cobalt)" maxlength="60"><input id="cp" placeholder="Davlat raqami (01A123BC)" maxlength="15"><input id="cc" placeholder="Rangi" maxlength="30"><button id="ap">Ariza yuborish</button><div class="m" id="er" style="color:#dc2626"></div></div>';
+    document.getElementById('ap').onclick=function(){api('/taxi/driver/apply','POST',{car_model:cm.value,car_plate:cp.value,car_color:cc.value}).then(load).catch(function(x){er.textContent=x.message;});};return;}
+  if(me.status!=='approved'){app.innerHTML='<div class="c">Holat: <b>'+e(me.status==='pending'?'Ariza ko\'rib chiqilmoqda':'Bloklangan')+'</b><br><span class="m">'+e(me.car)+' · '+e(me.plate)+'</span></div>';return;}
+  app.innerHTML='<div class="c"><div class="top"><div><b>'+e(me.car)+'</b> · '+e(me.plate)+'<div class="m">Hisob: '+money(me.balance)+'</div></div><div id="on"></div></div></div><div id="act"></div><div id="av"></div>';
+  setOn();refresh();tm=setInterval(refresh,6000);
+}
+function setOn(){var b=document.getElementById('on');b.innerHTML='<button class="'+(me.is_online?'g':'s')+'" style="width:auto;padding:10px 14px" id="tg">'+(me.is_online?'🟢 Onlayn':'⚪ Oflayn')+'</button>';
+  document.getElementById('tg').onclick=function(){api('/taxi/driver/online','POST',{key:'online',enabled:!me.is_online}).then(function(r){me.is_online=r.is_online;setOn();track();refresh();}).catch(function(x){alert(x.message);});};track();}
+function track(){
+  if(watch!=null){navigator.geolocation.clearWatch(watch);watch=null;}
+  if(!me.is_online||!navigator.geolocation)return;
+  var last=0;watch=navigator.geolocation.watchPosition(function(p){pos=p.coords;var n=Date.now();if(n-last<8000)return;last=n;api('/taxi/driver/location','POST',{lat:p.coords.latitude,lng:p.coords.longitude}).catch(function(){});},function(){alert('Joylashuvga ruxsat bering');},{enableHighAccuracy:true,maximumAge:5000});
+}
+function refresh(){
+  api('/taxi/driver/active').then(function(r){var a=document.getElementById('act'),v=document.getElementById('av');if(!a)return;
+    if(r.ride){var x=r.ride;v.innerHTML='';
+      var st={accepted:'Mijoz oldiga boring',arrived:'Mijozni kutyapsiz',started:'Safar davom etmoqda'}[x.status]||x.status;
+      var btn=x.status==='accepted'?'<button data-a="arrived">Yetib keldim</button>':x.status==='arrived'?'<button class="g" data-a="start">Safarni boshlash</button>':'<button class="g" data-a="complete">Safarni yakunlash</button>';
+      a.innerHTML='<div class="c"><b>#'+x.id+' · '+e(st)+'</b><br>📍 '+e(x.pickup_address)+'<br>🏁 '+e(x.drop_address||'Mijoz aytadi')+'<br>👤 '+e(x.client_name||'')+' · <a href="tel:'+e(x.client_phone)+'">'+e(x.client_phone||'')+'</a><br>💵 '+money(x.price)+' (naqd)<br><a target="_blank" href="https://www.google.com/maps/dir/?api=1&destination='+x.pickup_lat+','+x.pickup_lng+'">🧭 Navigator (olish nuqtasi)</a>'+(x.drop_lat?' · <a target="_blank" href="https://www.google.com/maps/dir/?api=1&destination='+x.drop_lat+','+x.drop_lng+'">🏁 manzil</a>':'')+btn+'</div>';
+      a.querySelectorAll('[data-a]').forEach(function(b){b.onclick=function(){api('/taxi/driver/'+x.id+'/'+b.dataset.a,'POST').then(function(){api('/taxi/driver/me').then(function(m){me=m;});refresh();}).catch(function(z){alert(z.message);});};});return;}
+    a.innerHTML='';
+    api('/taxi/driver/available').then(function(d){var it=d.items||[];v.innerHTML=(d.note?'<div class="c m">'+e(d.note)+'</div>':'')+it.map(function(x){return '<div class="c"><b>#'+x.id+'</b> · '+x.pickup_dist_km+' km yaqin · '+money(x.price)+'<br>📍 '+e(x.pickup_address)+(x.drop_address?'<br>🏁 '+e(x.drop_address):'')+'<br><span class="m">'+x.passengers+' yo\'lovchi · komissiya '+money(x.commission)+'</span><button data-acc="'+x.id+'">Qabul qilish</button></div>';}).join('')||(me.is_online&&!d.note?'<div class="c m">Hozircha buyurtma yo\'q…</div>':'');
+      v.querySelectorAll('[data-acc]').forEach(function(b){b.onclick=function(){api('/taxi/driver/'+b.dataset.acc+'/accept','POST').then(function(){refresh();}).catch(function(z){alert(z.message);refresh();});};});});
+  }).catch(function(){});
+}
+load();
+</script></body></html>

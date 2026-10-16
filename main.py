@@ -80,6 +80,7 @@ from auth import (
     is_scoped_to_city,
 )
 from sec2fa import sec_router, secure_action
+import extras   # posilka + taxi (alohida jadvallar; FeatureFlag bilan yoqiladi)
 
 # Buyurtma statuslarining o'zbekcha nomlari — bazada inglizcha (created, on_the_way...)
 # saqlanadi (bu — kod uchun barqaror kalit), lekin admin panelda o'zbekcha ko'rsatiladi.
@@ -387,6 +388,7 @@ CSRF_EXEMPT_PREFIXES = (
     "/telegram/webhook",   # Telegram serveridan keladi — Origin sarlavhasi yo'q, lekin
                             # bu yo'l allaqachon boshqa yo'l bilan himoyalangan (faqat
                             # Telegram token orqali topiladigan maxfiy URL)
+    "/api/parcel/", "/api/taxi/",   # initData/token bilan tasdiqlanadi (cookie emas)
     "/api/shop/",           # Mini App so'rovlari — Telegram initData (HMAC imzo) orqali
                             # ALLAQACHON qattiq tasdiqlanadi, CSRF bu yerda ortiqcha
 )
@@ -508,6 +510,7 @@ SECTION_LABELS_UZ = {
     "bonuscashback": "💸 Bonus/Cashback sozlamalari",
     "tugilgankun": "🎂 Tug'ilgan kunlar ro'yxati",
     "xabarlar": "💬 Chat va e'lonlar (hamkor/kuryer/mijoz xabarlari)",
+    "xizmatlar": "🧩 Taxi va posilka (haydovchi tasdiqlash, jo'natmalar)",
 }
 DEFAULT_OPERATOR_SECTION_VISIBILITY = {
     # Kundalik operativ ish uchun shart bo'lgan bo'limlar — standart OCHIQ
@@ -527,6 +530,7 @@ DEFAULT_OPERATOR_SECTION_VISIBILITY = {
     "bonuscashback": True,
     "tugilgankun": True,
     "xabarlar": True,
+    "xizmatlar": True,
 }
 # "xavfzone" (tizimni butunlay tozalash) — BU YERDA ATAYLAB YO'Q: shu bo'lim
 # har doim, hech qanday sozlamadan qat'i nazar, FAQAT OWNER'ga ko'rinadi va
@@ -7745,6 +7749,7 @@ app.include_router(shop_router)
 app.include_router(app_api_router)
 app.include_router(applications_router)
 app.include_router(finance_router)
+extras.setup(app, _get_telegram_user_or_403, _ident_cond, send_telegram_message)
 
 @app.get("/", response_class=HTMLResponse)
 @app.get("/app", response_class=HTMLResponse)
