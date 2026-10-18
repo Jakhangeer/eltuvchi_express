@@ -329,7 +329,6 @@
 
     <script src="/static/js/zm-support.js?v=2"></script>
     <script src="/static/js/zm-rating.js?v=1"></script>
-    <script src="/static/js/zm-extras.js?v=1"></script>
     <script src="/static/js/zm-ai.js?v=3"></script>
     <script>
         const tg = window.Telegram?.WebApp;
@@ -633,7 +632,6 @@
         let aiOrder = false; // AI orqali yig'ilgan buyurtma: faqat oldindan to'lov (karta) bilan
         async function initAI() {
             try { if (initData && window.ZMSupport) ZMSupport.mount({ client: true, base: '/api/shop/support', bottom: 86, initData: () => initData }); } catch (e) {}
-            try { if (initData && window.ZMExtras) ZMExtras.mount({ initData: () => initData, bottom: 86 }); } catch (e) {}
             try { if (initData && window.ZMRating) ZMRating.mount({ base: '/api/shop', initData: () => initData, onLow: (id) => { if (window.ZMSupport) ZMSupport.open("Buyurtma #" + id + " bo'yicha muammo: "); } }); } catch (e) {}
             try {
                 const r = await fetch('/api/shop/ai/status');
@@ -947,7 +945,7 @@
             // butun sahifa ishlamay qolmasligi kerak.
             let promotions = { banners: [], referral: { visible: false, text: "" }, cashback: { visible: false, text: "" } };
             try {
-                promotions = await fetch(`/api/shop/promotions`).then(r => r.json());
+                promotions = await fetch(`/api/shop/promotions` + (currentCityId ? `?city_id=${currentCityId}` : '')).then(r => r.json());
             } catch (e) {
                 console.error("Promotions yuklashda xatolik:", e);
             }
@@ -972,7 +970,7 @@
                     colStyle = `style="background:${c};background-image:linear-gradient(135deg,${c},color-mix(in srgb,${c} 68%,#000))"`;
                 }
                 slidesHtml += `
-                    <div class="swiper-slide p-5 text-white relative overflow-hidden ${b.link_url ? 'cursor-pointer' : ''}" ${b.image_url ? bgStyle : colStyle} ${clickAttr}>
+                    <div class="swiper-slide p-5 text-white relative overflow-hidden ${b.link_url ? 'cursor-pointer' : ''}" ${b.slide_seconds ? `data-swiper-autoplay="${Math.round(b.slide_seconds * 1000)}"` : ''} ${b.image_url ? bgStyle : colStyle} ${clickAttr}>
                         ${b.image_url ? '<div class="absolute inset-0 bg-black/20"></div>' : ''}
                         <div class="relative">
                             ${b.title ? `<span class="bg-white/20 text-[10px] font-bold px-2 py-0.5 rounded-md uppercase tracking-wider">${b.title}</span>` : ''}

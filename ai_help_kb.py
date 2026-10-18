@@ -166,23 +166,6 @@ KB["admin"] += [
   "Kuchli maxfiy javoblar va noyob parollardan foydalaning, SESSION_SECRET_KEY va CARD_ENCRYPTION_KEY ni .env da saqlang, bazadan muntazam zaxira nusxa oling va .env ni hech kimga bermang."),
 ]
 
-KB["client"] += [
- ("Taxi chaqirish", ["taxi", "taksi", "mashina", "haydovchi", "такси"],
-  "Pastdagi chap «🚕 Taxi» tugmasini bosing (admin yoqqan bo'lsa). Xaritada A (qayerdan) va ixtiyoriy B (qayerga) ni belgilang — narx darhol ko'rinadi. «Taxi chaqirish» ni bosing; haydovchi qabul qilgach ismi, mashinasi va raqami chiqadi. To'lov — haydovchiga naqd."),
- ("Shaxsiy buyum yuborish", ["jo'natma", "jonatma", "posilka", "buyum yubor", "yuborish", "kuryer orqali", "посылка"],
-  "«📦 Jo'natma» tugmasi: xaritada olish (A) va yetkazish (B) nuqtalarini belgilang, qabul qiluvchi ismi/telefoni va nima yuborayotganingizni yozing, taqiqlangan narsa emasligini tasdiqlang. Kuryer olib boradi. Qabul qiluvchi kuryerga 4 xonali kodni aytganda jo'natma topshirilgan hisoblanadi. To'lov — kuryerga naqd."),
-]
-KB["courier"] += [
- ("Shaxsiy jo'natmalar", ["jo'natma", "jonatma", "posilka", "buyum", "kod", "topshir"],
-  "«📦 Jo'natmalar» tugmasida yangi jo'natmalar ro'yxati. Qabul qiling → «Buyumni oldim» → qabul qiluvchidan 4 xonali kodni so'rab «Topshirdim» ga kiriting. Naqd pulni mijozdan olasiz; platforma ulushi balansingizdan hisoblanadi."),
- ("Taxi haydovchi bo'lish", ["taxi", "taksi", "haydovchi", "mashina"],
-  "«🚕 Taxi haydovchi» sahifasida mashina ma'lumotini kiritib ariza bering. Admin tasdiqlagach onlayn bo'lib buyurtma qabul qilasiz. Komissiya balansdan ushlanadi — balans yetarli bo'lishi kerak."),
-]
-KB["admin"] += [
- ("Taxi va posilka (yoqish)", ["taxi", "taksi", "posilka", "jo'natma", "yoqish", "xizmat", "haydovchi"],
-  "«🧩 Taxi va posilka» bo'limida (egasi) ikkita tugma: posilka va taxi — bosilganda xizmat ilovada paydo bo'ladi/yo'qoladi. Shu yerda narxlar, komissiya, haydovchi arizalarini tasdiqlash va balansini to'ldirish, so'nggi jo'natma va safarlar ro'yxati bor."),
-]
-
 OVERVIEW_WORDS = ("qo'llanma", "qollanma", "hammasi", "to'liq", "toliq", "nima qila", "nimalar", "yordam", "help", "guide", "boshla", "tushuntir", "start")
 TITLE = {"client": "Mijoz paneli", "courier": "Kuryer paneli", "partner": "Hamkor paneli", "admin": "Admin/operator paneli"}
 

@@ -33,11 +33,12 @@ from cryptography.fernet import Fernet, InvalidToken
 _ENV_KEY = os.getenv("CARD_ENCRYPTION_KEY")
 if not _ENV_KEY:
     print(
-        "DIQQAT: CARD_ENCRYPTION_KEY .env'da yo'q — vaqtinchalik tasodifiy kalit "
-        "ishlatilyapti. PRODUCTION'DA BUNI ALBATTA .env GA QO'YING, aks holda "
-        "server qayta ishga tushganda barcha saqlangan kartalar o'qilmay qoladi!"
+        "DIQQAT: CARD_ENCRYPTION_KEY .env'da yo'q — bazadan hisoblangan zaxira kalit ishlatilyapti. "
+        "PRODUCTION'DA alohida kalit qo'ying (.env). Muhim: keyin kalitni o'zgartirsangiz, "
+        "avval saqlangan kartalar o'qilmay qoladi!"
     )
-    _ENV_KEY = Fernet.generate_key().decode()
+    from stable_keys import derive_fernet_key
+    _ENV_KEY = derive_fernet_key("cards")
 
 _fernet = Fernet(_ENV_KEY.encode() if isinstance(_ENV_KEY, str) else _ENV_KEY)
 

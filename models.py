@@ -593,6 +593,14 @@ class Banner(Base):
     display_order = Column(Integer, default=0)
     bg_color = Column(String, nullable=True)  # matnli banner foni (#rrggbb)
     created_at = Column(DateTime, default=datetime.utcnow)
+    # ---- Ko'rsatish sozlamalari ----
+    # city_id: qaysi shahar mijozlariga ko'rinadi (NULL = barcha shaharlarga).
+    # starts_at / ends_at: ko'rinish muddati (UTC; NULL = cheklanmagan).
+    # slide_seconds: slaydda necha soniya turadi (NULL = standart 3.5 soniya).
+    city_id = Column(Integer, ForeignKey("cities.id"), nullable=True)
+    starts_at = Column(DateTime, nullable=True)
+    ends_at = Column(DateTime, nullable=True)
+    slide_seconds = Column(Float, nullable=True)
 
 
 class PromoCode(Base):

@@ -80,7 +80,7 @@ from auth import (
     is_scoped_to_city,
 )
 from sec2fa import sec_router, secure_action
-import extras   # posilka + taxi (alohida jadvallar; FeatureFlag bilan yoqiladi)
+from pg_enum_sync import sync_pg_enums
 
 # Buyurtma statuslarining o'zbekcha nomlari — bazada inglizcha (created, on_the_way...)
 # saqlanadi (bu — kod uchun barqaror kalit), lekin admin panelda o'zbekcha ko'rsatiladi.
@@ -312,6 +312,7 @@ async def lifespan(app: FastAPI):
         # 2-qadam: mavjud jadvallardagi yetishmayotgan ustunlarni avtomatik qo'shish
         await auto_sync_missing_columns(conn)
 
+    await sync_pg_enums(engine, Base)
     print("PostgreSQL jadvallari tayyor va sinxronlashtirildi.")
     try:
         # Eski yetkazilgan buyurtmalar uchun pul allaqachon hisoblangan — qayta hisoblanmasin
@@ -364,12 +365,14 @@ app = FastAPI(title="ZooMo API", lifespan=lifespan)
 # bilib olsa, sessiyani soxtalashtirishi mumkin bo'ladi.
 SESSION_SECRET_KEY = os.getenv("SESSION_SECRET_KEY")
 if not SESSION_SECRET_KEY:
-    print("DIQQAT: SESSION_SECRET_KEY .env'da yo'q — vaqtinchalik tasodifiy kalit ishlatilyapti.")
-    import secrets as _secrets
-    SESSION_SECRET_KEY = _secrets.token_hex(32)
+    print("DIQQAT: SESSION_SECRET_KEY .env'da yo'q — barqaror zaxira kalit ishlatilyapti (bazadan hisoblanadi). "
+          ".env ga alohida SESSION_SECRET_KEY qo'yish tavsiya etiladi.")
+    from stable_keys import derive_hex as _dh
+    SESSION_SECRET_KEY = _dh("session")
 
-_https_env = (os.getenv("PUBLIC_BASE_URL") or os.getenv("RENDER_EXTERNAL_URL") or "").startswith("https://")
-app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET_KEY, same_site="lax", https_only=_https_env)
+# DIQQAT: https_only (Secure cookie) ATAYLAB qo'yilmagan — http orqali (lokal tarmoq, proksi ortida) ochilganda
+# brauzer cookie'ni rad etib, foydalanuvchini qayta-qayta login oynasiga qaytarar edi.
+app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET_KEY, same_site="lax", max_age=60 * 60 * 24 * 30)
 
 
 # ==================== CSRF HIMOYASI ====================
@@ -388,7 +391,6 @@ CSRF_EXEMPT_PREFIXES = (
     "/telegram/webhook",   # Telegram serveridan keladi — Origin sarlavhasi yo'q, lekin
                             # bu yo'l allaqachon boshqa yo'l bilan himoyalangan (faqat
                             # Telegram token orqali topiladigan maxfiy URL)
-    "/api/parcel/", "/api/taxi/",   # initData/token bilan tasdiqlanadi (cookie emas)
     "/api/shop/",           # Mini App so'rovlari — Telegram initData (HMAC imzo) orqali
                             # ALLAQACHON qattiq tasdiqlanadi, CSRF bu yerda ortiqcha
 )
@@ -450,6 +452,12 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 
 @app.exception_handler(RedirectToLogin)
 async def redirect_to_login_handler(request: Request, exc: RedirectToLogin):
+    try:   # diagnostika: nega login'ga qaytarildi (cookie yo'qmi, yaroqsizmi, foydalanuvchi o'chirilganmi)
+        _ck = "session" in (request.cookies or {})
+        _uid = bool(request.session.get("user_id"))
+        print(f"[LOGIN'GA QAYTARILDI] {request.method} {request.url.path} cookie={'bor' if _ck else 'YOQ'} sessiyada_user={'bor' if _uid else 'YOQ'}")
+    except Exception:
+        pass
     return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -510,7 +518,6 @@ SECTION_LABELS_UZ = {
     "bonuscashback": "💸 Bonus/Cashback sozlamalari",
     "tugilgankun": "🎂 Tug'ilgan kunlar ro'yxati",
     "xabarlar": "💬 Chat va e'lonlar (hamkor/kuryer/mijoz xabarlari)",
-    "xizmatlar": "🧩 Taxi va posilka (haydovchi tasdiqlash, jo'natmalar)",
 }
 DEFAULT_OPERATOR_SECTION_VISIBILITY = {
     # Kundalik operativ ish uchun shart bo'lgan bo'limlar — standart OCHIQ
@@ -530,7 +537,6 @@ DEFAULT_OPERATOR_SECTION_VISIBILITY = {
     "bonuscashback": True,
     "tugilgankun": True,
     "xabarlar": True,
-    "xizmatlar": True,
 }
 # "xavfzone" (tizimni butunlay tozalash) — BU YERDA ATAYLAB YO'Q: shu bo'lim
 # har doim, hech qanday sozlamadan qat'i nazar, FAQAT OWNER'ga ko'rinadi va
@@ -701,7 +707,7 @@ async def login_submit(
     _lg_phone = normalize_phone(phone_number) or phone_number
     _lg_ip = request.client.host if request.client else "?"
     _lg_keys = [f"lp:{phone_tail(_lg_phone)}", f"li:{_lg_ip}"]
-    if any(_rate_limited(k, limit=(8 if k.startswith("lp:") else 30)) for k in _lg_keys):
+    if any(_rate_limited(k, limit=(8 if k.startswith("lp:") else 100)) for k in _lg_keys):
         return templates.TemplateResponse(
             request=request, name="login.html",
             context={"error": "Juda ko'p urinish. 15 daqiqadan keyin qayta urinib ko'ring."},
@@ -1084,8 +1090,10 @@ async def admin_dashboard(
     # (partner.commission_rate), shuning uchun buni SQL darajasida bitta
     # formula bilan hisoblab bo'lmaydi — har bir buyurtmani alohida ko'rib,
     # o'sha buyurtmaning o'z hamkoriga tegishli foizi bilan hisoblaymiz.
-    banners_result = await db.execute(select(Banner).order_by(Banner.display_order, Banner.id))
-    banners = banners_result.scalars().all()
+    _bq = select(Banner).order_by(Banner.display_order, Banner.id)
+    if is_scoped_to_city(current_user):
+        _bq = _bq.where(or_(Banner.city_id.is_(None), Banner.city_id == current_user.city_id))
+    banners = (await db.execute(_bq)).scalars().all()
 
     analytics = None
     if is_owner:
@@ -1183,6 +1191,8 @@ async def admin_dashboard(
             "receipt_by_order": receipt_by_order,
             "birthday_clients_today": birthday_clients_today,
             "banners": banners,
+            "now_utc": datetime.utcnow(),
+            "current_city_scope": current_user.city_id if is_scoped_to_city(current_user) else None,
             "analytics": analytics,
             "operator_perms": operator_perms,
             "section_labels": SECTION_LABELS_UZ,
@@ -2122,6 +2132,49 @@ async def update_cashback_setting(
     return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
 
 
+def _parse_local_dt(v: str):
+    """«2026-10-20T14:30» (O'zbekiston vaqti, datetime-local) -> UTC naive datetime; bo'sh bo'lsa None."""
+    v = (v or "").strip()
+    if not v:
+        return None
+    for fmt in ("%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(v, fmt) - UZB_TZ_OFFSET
+        except ValueError:
+            continue
+    raise HTTPException(status_code=400, detail="Sana/vaqt formati noto'g'ri")
+
+
+def _banner_schedule_values(city_id: str, starts_at: str, ends_at: str, slide_seconds: str, current_user: User):
+    """Banner ko'rsatish sozlamalarini tekshirib qaytaradi. Operator — faqat o'z shahri uchun."""
+    cid = None
+    if (city_id or "").strip():
+        try:
+            cid = int(city_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Shahar noto'g'ri")
+    if is_scoped_to_city(current_user):
+        cid = current_user.city_id          # operator umumiy (hamma shahar) banner qo'sha olmaydi
+    st, en = _parse_local_dt(starts_at), _parse_local_dt(ends_at)
+    if st and en and en <= st:
+        raise HTTPException(status_code=400, detail="Tugash vaqti boshlanishdan keyin bo'lsin")
+    secs = None
+    if (slide_seconds or "").strip():
+        try:
+            secs = float(slide_seconds)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Soniya son bo'lishi kerak")
+        if not (1.0 <= secs <= 60.0):
+            raise HTTPException(status_code=400, detail="Slayd vaqti 1–60 soniya oralig'ida bo'lsin")
+    return cid, st, en, secs
+
+
+def _banner_guard(banner: "Banner", current_user: User):
+    """Operator faqat o'z shahri bannerlarini o'zgartira oladi (umumiy bannerlarni — faqat egasi)."""
+    if is_scoped_to_city(current_user) and banner.city_id != current_user.city_id:
+        raise HTTPException(status_code=403, detail="Bu banner sizning shahringizga tegishli emas")
+
+
 @app.post("/admin/banners/create")
 async def create_banner(
     title: str = Form(""),
@@ -2130,9 +2183,14 @@ async def create_banner(
     display_order: int = Form(0),
     banner_image: Optional[UploadFile] = File(None),
     bg_color: str = Form(""),
+    city_id: str = Form(""),
+    starts_at: str = Form(""),
+    ends_at: str = Form(""),
+    slide_seconds: str = Form(""),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_section("banner")),
 ):
+    _cid, _st, _en, _secs = _banner_schedule_values(city_id, starts_at, ends_at, slide_seconds, current_user)
     bg_color = bg_color if re.fullmatch(r"#[0-9a-fA-F]{6}", bg_color or "") else None
     image_data, image_mime = None, None
     if banner_image and banner_image.filename:
@@ -2151,6 +2209,7 @@ async def create_banner(
             image_mime=image_mime,
             bg_color=bg_color,
             is_active=True,
+            city_id=_cid, starts_at=_st, ends_at=_en, slide_seconds=_secs,
         ))
         await db.commit()
     except Exception as e:
@@ -2174,11 +2233,27 @@ async def create_banner(
     return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
 
 
+@app.post("/admin/banners/{banner_id}/schedule")
+async def banner_set_schedule(
+    banner_id: int,
+    city_id: str = Form(""), starts_at: str = Form(""), ends_at: str = Form(""), slide_seconds: str = Form(""),
+    db: AsyncSession = Depends(get_db), current_user: User = Depends(require_section("banner")),
+):
+    banner = (await db.execute(select(Banner).where(Banner.id == banner_id))).scalars().first()
+    if not banner:
+        raise HTTPException(status_code=404, detail="Banner topilmadi")
+    _banner_guard(banner, current_user)
+    banner.city_id, banner.starts_at, banner.ends_at, banner.slide_seconds = _banner_schedule_values(city_id, starts_at, ends_at, slide_seconds, current_user)
+    await db.commit()
+    return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
+
+
 @app.post("/admin/banners/{banner_id}/color")
 async def banner_set_color(banner_id: int, bg_color: str = Form(""), db: AsyncSession = Depends(get_db), current_user: User = Depends(require_section("banner"))):
     banner = (await db.execute(select(Banner).where(Banner.id == banner_id))).scalars().first()
     if not banner:
         raise HTTPException(status_code=404, detail="Banner topilmadi")
+    _banner_guard(banner, current_user)
     if not re.fullmatch(r"#[0-9a-fA-F]{6}", bg_color or ""):
         raise HTTPException(status_code=400, detail="Rang noto'g'ri")
     banner.bg_color = bg_color
@@ -2192,6 +2267,7 @@ async def toggle_banner(banner_id: int, db: AsyncSession = Depends(get_db), curr
     banner = result.scalars().first()
     if not banner:
         raise HTTPException(status_code=404, detail="Banner topilmadi")
+    _banner_guard(banner, current_user)
     banner.is_active = not banner.is_active
     await db.commit()
     return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
@@ -2203,6 +2279,7 @@ async def delete_banner(banner_id: int, db: AsyncSession = Depends(get_db), curr
     banner = result.scalars().first()
     if not banner:
         raise HTTPException(status_code=404, detail="Banner topilmadi")
+    _banner_guard(banner, current_user)
     await db.delete(banner)
     await db.commit()
     return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
@@ -4648,17 +4725,22 @@ shop_router = APIRouter(prefix="/api/shop", tags=["Mijoz Mini App"])
 
 
 @shop_router.get("/promotions")
-async def shop_promotions(db: AsyncSession = Depends(get_db)):
+async def shop_promotions(city_id: Optional[int] = None, db: AsyncSession = Depends(get_db)):
     """Mini App tepasidagi banner(lar) va referal/cashback ma'lumotlarini
     qaytaradi — bularning barchasi OWNER tomonidan boshqariladi.
     Frontend (shop.html) shu manzilni chaqirib, mos joylarni chizadi."""
     setting = await _get_or_create_setting(db)
     await db.commit()  # _get_or_create_setting yangi qator yaratgan bo'lishi mumkin
 
-    banners_result = await db.execute(
-        select(Banner).where(Banner.is_active == True).order_by(Banner.display_order, Banner.id)
+    _now = datetime.utcnow()
+    _bq = select(Banner).where(
+        Banner.is_active == True,
+        or_(Banner.starts_at.is_(None), Banner.starts_at <= _now),
+        or_(Banner.ends_at.is_(None), Banner.ends_at >= _now),
     )
-    banners = banners_result.scalars().all()
+    # Shahar: umumiy (NULL) bannerlar hammaga; shahar bannerlari — faqat shu shahar mijoziga
+    _bq = _bq.where(or_(Banner.city_id.is_(None), Banner.city_id == city_id)) if city_id is not None else _bq.where(Banner.city_id.is_(None))
+    banners = (await db.execute(_bq.order_by(Banner.display_order, Banner.id))).scalars().all()
 
     return {
         "banners": [
@@ -4669,6 +4751,7 @@ async def shop_promotions(db: AsyncSession = Depends(get_db)):
                 "image_url": f"/media/banner/{b.id}" if b.image_data else None,
                 "link_url": b.link_url,
                 "bg_color": b.bg_color,
+                "slide_seconds": b.slide_seconds,
             }
             for b in banners
         ],
@@ -7749,7 +7832,6 @@ app.include_router(shop_router)
 app.include_router(app_api_router)
 app.include_router(applications_router)
 app.include_router(finance_router)
-extras.setup(app, _get_telegram_user_or_403, _ident_cond, send_telegram_message)
 
 @app.get("/", response_class=HTMLResponse)
 @app.get("/app", response_class=HTMLResponse)
