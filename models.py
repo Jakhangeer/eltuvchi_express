@@ -205,6 +205,10 @@ class PartnerProfile(Base):
     longitude = Column(Float, nullable=True)
     terms_accepted_at = Column(DateTime, nullable=True)
 
+    # Reklama huquqlari — FAQAT egasi beradi (NULL/False = hamkorda bu bo'lim ko'rinmaydi)
+    led_allowed = Column(Boolean, nullable=True, default=False)      # kuryer sumkasidagi LED reklama so'rovi
+    banner_allowed = Column(Boolean, nullable=True, default=False)   # mijoz ilovasidagi banner reklama so'rovi
+
     # ---- YURIDIK REKVIZITLAR (hamkor ro'yxatdan o'tganda kiritadi) ----
     legal_name = Column(String, nullable=True)        # masalan: 'Gourmet Express' MChJ yoki 'Aliyev B.' YTT
     stir = Column(String, nullable=True)              # STIR (INN) — 9 xonali raqam
@@ -394,6 +398,8 @@ class SystemSetting(Base):
     ai_partner_enabled = Column(Boolean, default=True)
     ai_dispatcher_enabled = Column(Boolean, default=True)   # AI-dispetcher: kechikishda mijozga avto xabar + promo
     ai_led_enabled = Column(Boolean, default=True)          # Kuryer sumkasidagi LED reklama
+    # Hamkorning mijoz ilovasidagi BANNER reklamasi: bir kunlik narx (so'm) — faqat egasi belgilaydi
+    partner_banner_price_per_day = Column(Float, nullable=True)
     ai_help_enabled = Column(Boolean, default=True)         # AI yordamchi (panel bo'yicha savol-javob)
     ai_campaigns_enabled = Column(Boolean, default=True)    # Admin AI xabarlari (bildirishnoma)
     ai_delay_promo_amount = Column(Float, default=5000.0)   # kechikish uchun promo-kod summasi
@@ -721,6 +727,30 @@ class LedAd(Base):
     seconds = Column(Integer, nullable=True)     # admin belgilagan ekranda turish vaqti (soniya); bo'sh bo'lsa AI hisoblaydi
     is_active = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+    partner = relationship("PartnerProfile")
+
+
+class BannerRequest(Base):
+    """Hamkorning mijoz ilovasiga banner joylashtirish SO'ROVI.
+    pending -> (to'lov) -> egasi tasdiqlaydi -> Banner yaratiladi (hamkorning o'z shahri mijozlariga, `days` kunga)."""
+    __tablename__ = "banner_requests"
+
+    id = Column(Integer, primary_key=True, index=True)
+    partner_id = Column(Integer, ForeignKey("partner_profiles.id", ondelete="CASCADE"), nullable=False, index=True)
+    city_id = Column(Integer, ForeignKey("cities.id"), nullable=True)
+    title = Column(String, nullable=True)
+    text_content = Column(String, nullable=True)
+    bg_color = Column(String, default="#f59e0b")
+    image_data = Column(LargeBinary, nullable=True)
+    image_mime = Column(String, nullable=True)
+    days = Column(Integer, default=7)
+    price = Column(Float, default=0.0)            # so'rov yuborilgan paytdagi narx (kunlik narx * kun)
+    status = Column(String, default="pending")    # pending | approved | rejected
+    admin_note = Column(String, nullable=True)
+    banner_id = Column(Integer, ForeignKey("banners.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    decided_at = Column(DateTime, nullable=True)
 
     partner = relationship("PartnerProfile")
 
