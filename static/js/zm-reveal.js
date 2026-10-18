@@ -29,13 +29,24 @@
   }
   function legal(opt) {
     var btn = document.getElementById(opt.button), form = document.getElementById(opt.form), info = document.getElementById(opt.info);
+    var hideBtn = opt.hide ? document.getElementById(opt.hide) : null;
     if (!btn || !form) return;
+    var hasData = opt.hasData !== false;   // false: hali kiritilmagan — faqat maxfiy javob tekshiriladi, keyin forma ochiladi
+    function openForm(d) {
+      Object.keys(d || {}).forEach(function (k) { var el = form.elements[k]; if (el) { el.value = d[k]; el.dispatchEvent(new Event('change', { bubbles: true })); } });
+      form.classList.remove('hidden'); if (info) info.classList.add('hidden');
+    }
+    function closeForm() {
+      // yopilganda DOMda ma'lumot qolib ketmasin — maydonlar tozalanadi
+      try { form.reset(); form.elements.legal_type && form.elements.legal_type.dispatchEvent(new Event('change', { bubbles: true })); } catch (e) {}
+      form.classList.add('hidden'); if (info) info.classList.remove('hidden');
+    }
     btn.onclick = function () {
-      getJson(opt.base + '/legal/data').then(function (d) {
-        Object.keys(d).forEach(function (k) { var el = form.elements[k]; if (el) { el.value = d[k]; el.dispatchEvent(new Event('change', { bubbles: true })); } });
-        form.classList.remove('hidden'); if (info) info.classList.add('hidden');
-      }).catch(function (e) { if (e && e.message !== 'cancel') alert(e.message); });
+      var p = hasData ? getJson(opt.base + '/legal/data')
+        : (window.ZMSec && ZMSec.ensure ? ZMSec.ensure().then(function () { return {}; }) : Promise.resolve({}));
+      p.then(openForm).catch(function (e) { if (e && e.message !== 'cancel') alert(e.message); });
     };
+    if (hideBtn) hideBtn.onclick = closeForm;
   }
   window.ZMReveal = { cards: cards, legal: legal };
 })();

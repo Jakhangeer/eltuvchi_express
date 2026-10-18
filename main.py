@@ -60,6 +60,7 @@ from models import (
     PromoCode,
     PromoCodeUsage,
     BonusRule,
+    BannerRequest,
     FavoriteProduct,
     Card,
     OperatorPermission,
@@ -520,6 +521,7 @@ SECTION_LABELS_UZ = {
     "tugilgankun": "🎂 Tug'ilgan kunlar ro'yxati",
     "xabarlar": "💬 Chat va e'lonlar (hamkor/kuryer/mijoz xabarlari)",
     "mahsulot_qoshish": "🍕 Do'konga yangi mahsulot qo'shish (o'z shahrida)",
+    "banner_sorovlari": "📣 Hamkorlarning banner reklama so'rovlarini ko'rish (o'z shahrida)",
 }
 DEFAULT_OPERATOR_SECTION_VISIBILITY = {
     # Kundalik operativ ish uchun shart bo'lgan bo'limlar — standart OCHIQ
@@ -539,6 +541,7 @@ DEFAULT_OPERATOR_SECTION_VISIBILITY = {
     "bonuscashback": True,
     "tugilgankun": True,
     "xabarlar": True,
+    "banner_sorovlari": False,   # standart YOPIQ — egasi ruxsat bergandagina operator ko'radi
     "mahsulot_qoshish": False,   # standart YOPIQ — egasi ruxsat bergandagina operator mahsulot qo'sha oladi
 }
 # "xavfzone" (tizimni butunlay tozalash) — BU YERDA ATAYLAB YO'Q: shu bo'lim
@@ -2901,6 +2904,19 @@ async def update_partner(
 
     await db.commit()
     return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@partners_router.get("/{partner_id}/legal", dependencies=[Depends(require_owner), Depends(secure_action)])
+async def owner_view_partner_legal(partner_id: int, db: AsyncSession = Depends(get_db)):
+    """Hamkor yuridik rekvizitlari — FAQAT egasi va faqat maxfiy javob tasdiqlangandan keyin (sahifada ular umuman yozilmaydi)."""
+    p = (await db.execute(select(PartnerProfile).where(PartnerProfile.id == partner_id))).scalars().first()
+    if not p:
+        raise HTTPException(status_code=404, detail="Do'kon topilmadi")
+    return JSONResponse({"legal_type": p.legal_type or "legal", "legal_name": p.legal_name or "", "stir": p.stir or "",
+                         "pinfl": p.pinfl or "", "bank_account": p.bank_account or "", "mfo": p.mfo or "",
+                         "bank_name": p.bank_name or "", "director_name": p.director_name or "",
+                         "director_phone": p.director_phone or ""},
+                        headers={"Cache-Control": "no-store"})
 
 
 @partners_router.post("/{partner_id}/toggle")
@@ -5783,7 +5799,9 @@ async def partner_dashboard(
             "MAX_CARDS": partner_card_limit,
             "ai_on": _ai_flags(await _get_or_create_setting(db))["partner"],
             "ai_help_on": _ai_flags(await _get_or_create_setting(db))["help"],
-            "ai_led_on": _ai_flags(await _get_or_create_setting(db))["led"],
+            "ai_led_on": bool(_ai_flags(await _get_or_create_setting(db))["led"] and partner.led_allowed),
+            "banner_ads_on": bool(partner.banner_allowed),
+            "category_suggestions": [c for c in (await db.execute(select(PartnerProfile.category).where(PartnerProfile.category.isnot(None)).distinct().limit(60))).scalars().all() if c],
             "MIN_WITHDRAWAL_AMOUNT": MIN_WITHDRAWAL_AMOUNT,
             "MAX_WITHDRAWAL_AMOUNT": MAX_WITHDRAWAL_AMOUNT,
         },
@@ -6037,6 +6055,7 @@ async def partner_toggle_open(
 async def partner_update_settings(
     brand_name: str = Form(...),
     address: str = Form(...),
+    category: Optional[str] = Form(None),
     latitude: Optional[float] = Form(None, allow_inf_nan=False),
     longitude: Optional[float] = Form(None, allow_inf_nan=False),
     notification_sound: str = Form("chime1"),
@@ -6051,7 +6070,11 @@ async def partner_update_settings(
     partner = await _get_own_partner(db, current_user)
     partner.brand_name = brand_name
     partner.address = address
+    if category is not None and category.strip():
+        partner.category = category.strip()[:60]
     if latitude is not None and longitude is not None:
+        if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
+            raise HTTPException(status_code=400, detail="Joylashuv koordinatasi noto'g'ri")
         partner.latitude = latitude
         partner.longitude = longitude
     if notification_sound in ("chime1", "chime2", "chime3"):
@@ -7209,6 +7232,8 @@ def _led_clean(body: LedAdBody):
 async def partner_led_list(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_partner_user)):
     await _ai_require(db, "led")
     partner = await _get_own_partner(db, current_user)
+    if not partner.led_allowed:
+        raise HTTPException(status_code=403, detail="LED reklama sizga yoqilmagan — administrator bilan bog'laning")
     ads = (await db.execute(select(LedAd).options(selectinload(LedAd.partner)).where(LedAd.partner_id == partner.id)
                             .order_by(LedAd.id.desc()))).scalars().all()
     return {"ads": [_led_dict(a) for a in ads], "pay_card": await _get_topup_card_info(db)}
@@ -7220,6 +7245,8 @@ async def partner_led_create(body: LedAdBody, db: AsyncSession = Depends(get_db)
     """Hamkor reklama SO'ROVI yuboradi. U ekranga chiqmaydi — admin to'lovni tasdiqlab yoqmaguncha."""
     await _ai_require(db, "led")
     partner = await _get_own_partner(db, current_user)
+    if not partner.led_allowed:
+        raise HTTPException(status_code=403, detail="LED reklama sizga yoqilmagan — administrator bilan bog'laning")
     title, text, color, radius = _led_clean(body)
     cnt = (await db.execute(select(func.count(LedAd.id)).where(LedAd.partner_id == partner.id, LedAd.status == "pending"))).scalar() or 0
     if cnt >= 5:
@@ -7234,6 +7261,8 @@ async def partner_led_delete(ad_id: int, db: AsyncSession = Depends(get_db), cur
     """Hamkor faqat hali tasdiqlanmagan (yoki rad etilgan) so'rovini bekor qila oladi."""
     await _ai_require(db, "led")
     partner = await _get_own_partner(db, current_user)
+    if not partner.led_allowed:
+        raise HTTPException(status_code=403, detail="LED reklama sizga yoqilmagan — administrator bilan bog'laning")
     ad = (await db.execute(select(LedAd).where(LedAd.id == ad_id, LedAd.partner_id == partner.id))).scalars().first()
     if not ad:
         raise HTTPException(status_code=404, detail="Reklama topilmadi")
@@ -7278,6 +7307,200 @@ def _led_playlist(ads: list, now=None) -> list:
         item["seconds"] = int(pick["seconds"]) if pick.get("seconds") else int(7 + min(5, round(pick["_w"])))
         out.append(item)
     return out
+
+
+# ==================== HAMKOR BANNER REKLAMASI (mijoz ilovasida) ====================
+# Egasi hamkorga ruxsat beradi (PartnerProfile.banner_allowed) va kunlik narxni belgilaydi.
+# Hamkor so'rov yuboradi (rasm/matn/sarlavha/rang) -> egasi to'lovni tasdiqlab ruxsat beradi -> Banner
+# hamkorning O'Z SHAHRI mijozlariga `days` kun ko'rsatiladi.
+banner_req_admin_router = APIRouter(tags=["Hamkor banner so'rovlari"])
+BANNER_REQ_MAX_PENDING = 5
+
+
+def _bq_dict(r: "BannerRequest") -> dict:
+    return {"id": r.id, "title": r.title or "", "text": r.text_content or "", "bg_color": r.bg_color or "#f59e0b",
+            "has_image": bool(r.image_data), "days": r.days, "price": r.price or 0.0, "status": r.status or "pending",
+            "admin_note": r.admin_note or "", "at": r.created_at.isoformat() if r.created_at else None,
+            "partner": r.partner.brand_name if r.partner else "?", "partner_id": r.partner_id, "city_id": r.city_id}
+
+
+async def _partner_banner_guard(db: AsyncSession, current_user: User) -> PartnerProfile:
+    partner = await _get_own_partner(db, current_user)
+    if not partner.banner_allowed:
+        raise HTTPException(status_code=403, detail="Banner reklama sizga yoqilmagan — administrator bilan bog'laning")
+    return partner
+
+
+@partner_router.get("/banner-ads")
+async def partner_banner_ads(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_partner_user)):
+    partner = await _partner_banner_guard(db, current_user)
+    setting = await _get_or_create_setting(db)
+    rows = (await db.execute(select(BannerRequest).options(selectinload(BannerRequest.partner))
+                             .where(BannerRequest.partner_id == partner.id).order_by(BannerRequest.id.desc()).limit(50))).scalars().all()
+    city = (await db.execute(select(City.name).where(City.id == partner.city_id))).scalars().first() if partner.city_id else None
+    return {"price_per_day": setting.partner_banner_price_per_day or 0.0, "city": city,
+            "requests": [_bq_dict(r) for r in rows], "pay_card": await _get_topup_card_info(db)}
+
+
+@partner_router.post("/banner-ads")
+async def partner_banner_ads_create(
+    title: str = Form(""), text_content: str = Form(""), bg_color: str = Form("#f59e0b"),
+    days: int = Form(7), image: Optional[UploadFile] = File(None),
+    db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_partner_user),
+):
+    partner = await _partner_banner_guard(db, current_user)
+    if partner.city_id is None:
+        raise HTTPException(status_code=400, detail="Do'koningiz shahri belgilanmagan — administrator bilan bog'laning")
+    title = (title or "").strip()[:60]
+    text_content = (text_content or "").strip()[:300]
+    has_img = bool(image and image.filename)
+    if not has_img and not (title or text_content):
+        raise HTTPException(status_code=400, detail="Rasm yoki sarlavha/matn kiriting")
+    if not (1 <= days <= 60):
+        raise HTTPException(status_code=400, detail="Muddat 1 dan 60 kungacha bo'lsin")
+    color = bg_color if re.fullmatch(r"#[0-9a-fA-F]{6}", bg_color or "") else "#f59e0b"
+    pending = (await db.execute(select(func.count(BannerRequest.id)).where(
+        BannerRequest.partner_id == partner.id, BannerRequest.status == "pending"))).scalar() or 0
+    if pending >= BANNER_REQ_MAX_PENDING:
+        raise HTTPException(status_code=400, detail=f"Tasdiq kutayotgan {BANNER_REQ_MAX_PENDING} tadan ortiq so'rov bo'lishi mumkin emas")
+    img, mime = (None, None)
+    if has_img:
+        img, mime = await process_uploaded_image(image)
+        # Hamkor yuklagan rasm BARCHA mijozlarga ko'rsatiladi — kengaytma emas, haqiqiy fayl sarlavhasini ham tekshiramiz
+        if not (img[:8] == b"\x89PNG\r\n\x1a\n" or img[:3] == b"\xff\xd8\xff" or (img[:4] == b"RIFF" and img[8:12] == b"WEBP")):
+            raise HTTPException(status_code=400, detail="Bu haqiqiy rasm fayli emas (JPG, PNG yoki WEBP yuklang)")
+    setting = await _get_or_create_setting(db)
+    price = float(setting.partner_banner_price_per_day or 0.0) * days
+    db.add(BannerRequest(partner_id=partner.id, city_id=partner.city_id, title=title, text_content=text_content, bg_color=color,
+                         image_data=img, image_mime=mime, days=days, price=price, status="pending"))
+    await db.commit()
+    return {"ok": True, "price": price}
+
+
+@partner_router.post("/banner-ads/{req_id}/delete")
+async def partner_banner_ads_delete(req_id: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_partner_user)):
+    partner = await _partner_banner_guard(db, current_user)
+    r = (await db.execute(select(BannerRequest).where(BannerRequest.id == req_id, BannerRequest.partner_id == partner.id))).scalars().first()
+    if not r:
+        raise HTTPException(status_code=404, detail="So'rov topilmadi")
+    if r.status == "approved":
+        raise HTTPException(status_code=403, detail="Tasdiqlangan bannerni faqat administrator o'zgartiradi")
+    await db.delete(r)
+    await db.commit()
+    return {"ok": True}
+
+
+@partner_router.get("/banner-ads/{req_id}/image")
+async def partner_banner_ads_image(req_id: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_partner_user)):
+    partner = await _get_own_partner(db, current_user)
+    r = (await db.execute(select(BannerRequest).where(BannerRequest.id == req_id, BannerRequest.partner_id == partner.id))).scalars().first()
+    if not r or not r.image_data:
+        raise HTTPException(status_code=404, detail="Rasm topilmadi")
+    return Response(content=r.image_data, media_type=r.image_mime or "image/jpeg", headers={"Cache-Control": "private, max-age=3600"})
+
+
+async def _banner_req_viewer(db: AsyncSession, current_user: User) -> Optional[int]:
+    """Egasi — hammasi (None). Operator — faqat egasi ruxsat bergan bo'lsa va faqat o'z shahri (city_id qaytaradi)."""
+    if current_user.role == UserRole.OWNER:
+        return None
+    if not await operator_can_see(db, current_user, "banner_sorovlari") or current_user.city_id is None:
+        raise HTTPException(status_code=403, detail="Bu bo'limni ko'rish huquqingiz yo'q — administrator bilan bog'laning.")
+    return current_user.city_id
+
+
+@banner_req_admin_router.get("/admin/banner-requests")
+async def admin_banner_requests(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_admin_user)):
+    scope_city = await _banner_req_viewer(db, current_user)
+    q = select(BannerRequest).options(selectinload(BannerRequest.partner)).order_by(BannerRequest.id.desc()).limit(100)
+    if scope_city is not None:
+        q = q.where(BannerRequest.city_id == scope_city)
+    rows = (await db.execute(q)).scalars().all()
+    cn = {c.id: c.name for c in (await db.execute(select(City))).scalars().all()}
+    out = []
+    for r in rows:
+        d = _bq_dict(r)
+        d["city"] = cn.get(r.city_id, "—")
+        out.append(d)
+    setting = await _get_or_create_setting(db)
+    return {"items": out, "can_decide": True, "price_per_day": setting.partner_banner_price_per_day or 0.0}
+
+
+@banner_req_admin_router.get("/admin/banner-requests/{req_id}/image")
+async def admin_banner_request_image(req_id: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_admin_user)):
+    scope_city = await _banner_req_viewer(db, current_user)
+    r = (await db.execute(select(BannerRequest).where(BannerRequest.id == req_id))).scalars().first()
+    if not r or not r.image_data or (scope_city is not None and r.city_id != scope_city):
+        raise HTTPException(status_code=404, detail="Rasm topilmadi")
+    return Response(content=r.image_data, media_type=r.image_mime or "image/jpeg", headers={"Cache-Control": "private, max-age=3600"})
+
+
+class BannerDecideBody(BaseModel):
+    note: Optional[str] = ""
+
+
+@banner_req_admin_router.post("/admin/banner-requests/{req_id}/approve")
+async def admin_banner_request_approve(req_id: int, body: BannerDecideBody, db: AsyncSession = Depends(get_db),
+                                       owner: User = Depends(get_current_admin_user)):
+    """To'lovni qabul qilgach tasdiqlash (egasi yoki — ruxsat berilgan — o'z shahri operatori):
+    Banner hamkor shahri mijozlariga `days` kun chiqadi."""
+    scope_city = await _banner_req_viewer(db, owner)
+    r = (await db.execute(select(BannerRequest).where(BannerRequest.id == req_id).with_for_update())).scalars().first()
+    if not r or (scope_city is not None and r.city_id != scope_city):
+        raise HTTPException(status_code=404, detail="So'rov topilmadi")
+    if r.status != "pending":
+        raise HTTPException(status_code=400, detail="Bu so'rov allaqachon ko'rib chiqilgan")
+    now = datetime.utcnow()
+    b = Banner(title=r.title, text_content=r.text_content, image_data=r.image_data, image_mime=r.image_mime,
+               bg_color=r.bg_color, is_active=True, display_order=0, city_id=r.city_id,
+               starts_at=now, ends_at=now + timedelta(days=r.days or 7))
+    db.add(b)
+    await db.flush()
+    r.status = "approved"
+    r.banner_id = b.id
+    r.decided_at = now
+    r.admin_note = (body.note or "").strip()[:200] or None
+    await db.commit()
+    return {"ok": True, "banner_id": b.id}
+
+
+@banner_req_admin_router.post("/admin/banner-requests/{req_id}/reject")
+async def admin_banner_request_reject(req_id: int, body: BannerDecideBody, db: AsyncSession = Depends(get_db),
+                                      owner: User = Depends(get_current_admin_user)):
+    scope_city = await _banner_req_viewer(db, owner)
+    r = (await db.execute(select(BannerRequest).where(BannerRequest.id == req_id))).scalars().first()
+    if not r or (scope_city is not None and r.city_id != scope_city):
+        raise HTTPException(status_code=404, detail="So'rov topilmadi")
+    if r.status != "pending":
+        raise HTTPException(status_code=400, detail="Bu so'rov allaqachon ko'rib chiqilgan")
+    r.status = "rejected"
+    r.decided_at = datetime.utcnow()
+    r.admin_note = (body.note or "").strip()[:200] or None
+    await db.commit()
+    return {"ok": True}
+
+
+@banner_req_admin_router.post("/admin/settings/banner-price")
+async def admin_set_banner_price(price_per_day: float = Form(..., allow_inf_nan=False), db: AsyncSession = Depends(get_db),
+                                 owner: User = Depends(require_owner)):
+    if price_per_day < 0 or price_per_day > 100_000_000:
+        raise HTTPException(status_code=400, detail="Narx noto'g'ri")
+    setting = await _get_or_create_setting(db)
+    setting.partner_banner_price_per_day = price_per_day
+    await db.commit()
+    return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@banner_req_admin_router.post("/admin/partners/{partner_id}/ads-access")
+async def admin_partner_ads_access(partner_id: int, led_allowed: Optional[str] = Form(None), banner_allowed: Optional[str] = Form(None),
+                                   db: AsyncSession = Depends(get_db), owner: User = Depends(require_owner)):
+    p = (await db.execute(select(PartnerProfile).where(PartnerProfile.id == partner_id))).scalars().first()
+    if not p:
+        raise HTTPException(status_code=404, detail="Do'kon topilmadi")
+    p.led_allowed = bool(led_allowed)
+    p.banner_allowed = bool(banner_allowed)
+    await db.commit()
+    return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
+
 
 
 @courier_router_app.get("/led/feed")
@@ -8095,6 +8318,7 @@ async def admin_rating_bonus_save(city_id: int, body: RatingBonusBody, db: Async
 app.include_router(sec_router)
 app.include_router(courier_router_app)
 app.include_router(ai_admin_router)
+app.include_router(banner_req_admin_router)
 app.include_router(support_admin_router)
 app.include_router(partner_router)
 app.include_router(shop_router)

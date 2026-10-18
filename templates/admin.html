@@ -330,7 +330,7 @@
                 {% if is_owner or operator_perms.get('xabarlar', True) %}
                 <button onclick="showPage('xabarlar')" data-page-btn="xabarlar" class="nav-btn">💬 Chat va e'lonlar <span id="sup-nav-badge" class="hidden ml-1 bg-red-500 text-white text-[10px] font-bold rounded-full px-1.5 py-0.5"></span></button>
                 {% endif %}
-                {% if is_owner or operator_perms.get('operatorlar') or operator_perms.get('shartlar') or operator_perms.get('banner') or operator_perms.get('moliya') %}
+                {% if is_owner or operator_perms.get('operatorlar') or operator_perms.get('shartlar') or operator_perms.get('banner') or operator_perms.get('banner_sorovlari') or operator_perms.get('moliya') %}
                 <div class="border-t my-2 dark:border-gray-700"></div>
                 {% endif %}
                 {% if is_owner or operator_perms.get('operatorlar') %}
@@ -339,7 +339,7 @@
                 {% if is_owner or operator_perms.get('shartlar') %}
                 <button onclick="showPage('shartlar')" data-page-btn="shartlar" class="nav-btn">📄 Shartlar</button>
                 {% endif %}
-                {% if is_owner or operator_perms.get('banner') %}
+                {% if is_owner or operator_perms.get('banner') or operator_perms.get('banner_sorovlari') %}
                 <button onclick="showPage('banner')" data-page-btn="banner" class="nav-btn">🖼️ Banner</button>
                 {% endif %}
                 {% if is_owner or operator_perms.get('moliya') %}
@@ -369,6 +369,7 @@
                 <option value="moliya">💰 Moliya</option>
                 <option value="xavfzone">⚠️ Reset</option>
                 {% endif %}
+                {% if not is_owner and (operator_perms.get('banner') or operator_perms.get('banner_sorovlari')) %}<option value="banner">🖼️ Banner</option>{% endif %}
             </select>
 
 
@@ -1579,7 +1580,7 @@
                     {% for partner in partners %}
                     <div class="border rounded-lg p-3 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
                         <div class="flex justify-between items-center mb-1">
-                            <span class="font-bold text-sm">{{ partner.brand_name }}</span>
+                            <span class="font-bold text-sm">{{ partner.brand_name }}{% if partner.category %} <span class="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700">🏷️ {{ partner.category }}</span>{% endif %}</span>
                             <div class="flex items-center gap-1">
                                 {% if is_owner %}
                                 <button type="button" 
@@ -1614,17 +1615,23 @@
                         </div>
                         <p class="text-[11px] text-gray-500">📍 {{ partner.address }} {% if partner.city %}| 🏙️ {{ partner.city.name }}{% endif %} | 🕒 {{ partner.opening_time }}-{{ partner.closing_time }} {% if is_owner %} | 🏷️ {{ partner.commission_rate }}% | 💰 {{ "%.0f"|format(partner.balance or 0) }} so'm{% endif %}</p>
                         
+                        {% if is_owner %}
+                        <form action="/admin/partners/{{ partner.id }}/ads-access" method="POST" class="flex flex-wrap items-center gap-3 mt-1 text-[11px]">
+                            <span class="font-semibold text-gray-600 dark:text-gray-300">📣 Reklama ruxsati:</span>
+                            <label class="flex items-center gap-1"><input type="checkbox" name="led_allowed" value="1" {% if partner.led_allowed %}checked{% endif %} onchange="this.form.submit()"> 📺 LED</label>
+                            <label class="flex items-center gap-1"><input type="checkbox" name="banner_allowed" value="1" {% if partner.banner_allowed %}checked{% endif %} onchange="this.form.submit()"> 🖼️ Banner</label>
+                        </form>
+                        {% endif %}
                         {% if partner.legal_name or partner.stir %}
-                        <details class="text-[11px] text-gray-500 mt-1">
-                            <summary class="cursor-pointer font-semibold text-indigo-600">📄 Rekvizitlar</summary>
-                            <div class="mt-1 space-y-0.5">
-                                <p>Yuridik nomi: <b>{{ partner.legal_name or '—' }}</b></p>
-                                <p>STIR: <b>{{ partner.stir or '—' }}</b> · MFO: <b>{{ partner.mfo or '—' }}</b></p>
-                                <p>Hisob raqami: <b class="font-mono">{{ partner.bank_account or '—' }}</b></p>
-                                <p>Bank: <b>{{ partner.bank_name or '—' }}</b></p>
-                                <p>Direktor: <b>{{ partner.director_name or '—' }}</b> {{ partner.director_phone or '' }}</p>
-                            </div>
-                        </details>
+                        <div class="text-[11px] text-gray-500 mt-1" data-legal-box="{{ partner.id }}">
+                            <span class="font-semibold">📄 Rekvizitlar kiritilgan ✅</span>
+                            {% if is_owner %}
+                            <button type="button" data-legal-view="{{ partner.id }}" class="ml-2 px-2 py-0.5 rounded bg-amber-500 text-white font-bold">🔐 Ko'rish</button>
+                            <div data-legal-out class="hidden mt-1 p-2 rounded-lg border dark:border-gray-700 space-y-0.5"></div>
+                            {% else %}
+                            <span class="ml-1 opacity-70">(faqat egasi ko'ra oladi)</span>
+                            {% endif %}
+                        </div>
                         {% endif %}
                         <div class="divide-y dark:divide-gray-700 border-t dark:border-gray-700 pt-2 mt-2">
                             {% for product in products %}
@@ -1901,9 +1908,10 @@
         {% endif %}
 
         <!-- MINI APP BANNERLARI -->
-        {% if is_owner or operator_perms.get('banner') %}
+        {% if is_owner or operator_perms.get('banner') or operator_perms.get('banner_sorovlari') %}
 
         <section class="app-page" data-page="banner" style="display:none;">
+        {% if is_owner or operator_perms.get('banner') %}
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div class="card-bg bg-white p-6 rounded-xl shadow-md col-span-1">
                 <h2 class="theme-title text-lg font-bold mb-2 text-indigo-700">🖼️ Yangi Banner</h2>
@@ -2008,6 +2016,48 @@
                 </div>
             </div>
         </div>
+        {% endif %}
+
+        {% if is_owner or operator_perms.get('banner_sorovlari') %}
+        <div class="card-bg bg-white p-6 rounded-xl shadow-md mt-6" id="bq-box">
+            <h2 class="theme-title text-lg font-bold mb-1 text-indigo-700">📣 Hamkorlarning banner reklama so'rovlari</h2>
+            <p class="text-xs text-gray-500 mb-3">Hamkor o'z kabinetidan banner tayyorlab yuboradi. To'lovni qabul qilgach «Tasdiqlash»ni bosing — banner hamkorning o'z shahri mijozlariga chiqadi.{% if not is_owner %} Siz faqat o'z shahringiz so'rovlarini ko'rasiz.{% endif %}</p>
+            {% if is_owner %}
+            <form action="/admin/settings/banner-price" method="POST" class="flex flex-wrap items-end gap-2 mb-4 p-3 rounded-lg border dark:border-gray-700">
+                <div><label class="block text-[11px] font-medium">Banner narxi (bir kun uchun, so'm)</label>
+                <input type="number" min="0" step="1000" name="price_per_day" value="{{ '%g'|format(system_setting.partner_banner_price_per_day or 0) if system_setting else 0 }}" class="mt-1 p-2 border rounded-lg text-sm dark:bg-gray-800"></div>
+                <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white py-2 px-4 rounded-lg font-bold text-sm">Narxni saqlash</button>
+                <p class="text-[11px] text-gray-500 w-full">Hamkor tanlagan kunlar soniga ko'paytirilib, so'rov paytidagi narx qotiriladi. Hamkorga banner/LED ruxsatini «🏪 Do'konlar» bo'limida har bir do'kon yonidan berasiz.</p>
+            </form>
+            {% endif %}
+            <div id="bq-list" class="space-y-2 text-sm"><p class="text-xs text-gray-400">Yuklanmoqda…</p></div>
+        </div>
+        <script>
+        (function(){
+            function e(v){return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+            var ST={pending:['⏳ Kutilmoqda','bg-amber-100 text-amber-800'],approved:['✅ Tasdiqlangan (efirda)','bg-green-100 text-green-800'],rejected:['⛔ Rad etilgan','bg-red-100 text-red-700']};
+            function api(u,b){return fetch(u,{method:b?'POST':'GET',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:b?JSON.stringify(b):undefined}).then(function(r){return r.json().catch(function(){return {};}).then(function(d){if(!r.ok)throw new Error(typeof d.detail==='string'?d.detail:'Xatolik');return d;});});}
+            function load(){api('/admin/banner-requests').then(function(d){
+                var el=document.getElementById('bq-list');if(!el)return;
+                el.innerHTML=(d.items||[]).map(function(r){var st=ST[r.status]||[r.status,'bg-gray-100'];
+                    var prev=r.has_image?'<img src="/admin/banner-requests/'+r.id+'/image" class="w-full max-w-xs rounded-lg border" style="max-height:140px;object-fit:cover">':'<div class="rounded-lg p-3 text-white text-xs font-bold max-w-xs" style="background:'+e(r.bg_color)+'">'+e(r.title||'')+(r.text?'<div class="font-normal">'+e(r.text)+'</div>':'')+'</div>';
+                    return '<div class="p-3 border rounded-lg dark:border-gray-700"><div class="flex flex-wrap items-center gap-2 mb-1"><b>'+e(r.partner)+'</b><span class="text-xs">📍 '+e(r.city)+'</span><span class="text-xs">🗓 '+r.days+' kun</span><span class="text-xs">💰 '+Math.round(r.price).toLocaleString()+' so\'m</span><span class="px-2 py-0.5 rounded text-[11px] '+st[1]+'">'+st[0]+'</span></div>'
+                      +(r.has_image&&(r.title||r.text)?'<div class="text-xs text-gray-600 mb-1"><b>'+e(r.title)+'</b> '+e(r.text)+'</div>':'')+prev
+                      +(r.admin_note?'<div class="text-[11px] text-gray-500 mt-1">Izoh: '+e(r.admin_note)+'</div>':'')
+                      +(d.can_decide&&r.status==='pending'?'<div class="flex gap-2 mt-2"><button data-a="approve" data-id="'+r.id+'" class="px-3 py-1 rounded bg-green-600 text-white text-xs font-bold">✅ Tasdiqlash</button><button data-a="reject" data-id="'+r.id+'" class="px-3 py-1 rounded bg-red-600 text-white text-xs font-bold">⛔ Rad etish</button></div>':'')+'</div>';
+                }).join('')||'<p class="text-xs text-gray-400">Hozircha so\'rov yo\'q.</p>';
+            }).catch(function(x){var el=document.getElementById('bq-list');if(el)el.innerHTML='<p class="text-xs text-red-500">'+e(x.message)+'</p>';});}
+            document.addEventListener('click',function(ev){var b=ev.target.closest('#bq-list [data-a]');if(!b)return;
+                var a=b.dataset.a,note='';
+                if(a==='reject'){note=prompt('Rad etish sababi (ixtiyoriy):')||'';}else if(!confirm('To\'lov qabul qilindimi? Banner hamkor shahri mijozlariga chiqariladi.'))return;
+                api('/admin/banner-requests/'+b.dataset.id+'/'+a,{note:note}).then(function(){load();}).catch(function(x){alert(x.message);});});
+            document.addEventListener('click',function(ev){if(ev.target.closest('[data-page-btn="banner"]'))setTimeout(load,50);});
+            document.addEventListener('change',function(ev){if(ev.target.id==='mobile-page-select'&&ev.target.value==='banner')setTimeout(load,50);});
+            document.addEventListener('DOMContentLoaded',load);
+        })();
+        </script>
+        {% endif %}
+
         </section>
         {% endif %}
 
@@ -3219,6 +3269,28 @@
             document.addEventListener('DOMContentLoaded',function(){setSec('partner');unread();});
             setInterval(function(){unread();if(visible()){threads();if(uid)thread(true);}},8000);
             window.addEventListener('pageshow',unread);}
+    })();
+    </script>
+    <script>
+    (function(){
+        function e(v){return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+        var timers={};
+        function hide(box){var out=box.querySelector('[data-legal-out]'),b=box.querySelector('[data-legal-view]');out.innerHTML='';out.classList.add('hidden');if(b)b.textContent='🔐 Ko\'rish';}
+        document.addEventListener('click',function(ev){
+            var b=ev.target.closest('[data-legal-view]');if(!b)return;
+            var id=b.dataset.legalView,box=b.closest('[data-legal-box]'),out=box.querySelector('[data-legal-out]');
+            if(!out.classList.contains('hidden')){hide(box);return;}
+            // zm-secure.js 428 kelganda maxfiy javob oynasini ochadi va so'rovni qayta yuboradi
+            fetch('/admin/partners/'+id+'/legal',{credentials:'same-origin',cache:'no-store'}).then(function(r){return r.json().catch(function(){return {};}).then(function(d){if(!r.ok)throw new Error(typeof d.detail==='string'?d.detail:'Maxfiy javob tasdiqlanmadi');return d;});}).then(function(d){
+                var se=d.legal_type==='self_employed';
+                out.innerHTML='<p>Turi: <b>'+(se?'O\'z-o\'zini band qilgan shaxs':'Yuridik shaxs / YTT')+'</b></p><p>'+(se?'F.I.Sh.':'Yuridik nomi')+': <b>'+e(d.legal_name||'—')+'</b></p>'
+                  +(se?'<p>JSHSHIR (PINFL): <b class="font-mono">'+e(d.pinfl||'—')+'</b></p>':'<p>STIR: <b>'+e(d.stir||'—')+'</b> · MFO: <b>'+e(d.mfo||'—')+'</b></p>')
+                  +'<p>Hisob raqami: <b class="font-mono">'+e(d.bank_account||'—')+'</b></p><p>Bank: <b>'+e(d.bank_name||'—')+'</b></p><p>'+(se?'Telefon':'Direktor')+': <b>'+e(d.director_name||'')+'</b> '+e(d.director_phone||'')+'</p>'
+                  +'<p class="opacity-60">⏱ 60 soniyadan keyin avtomatik yopiladi</p>';
+                out.classList.remove('hidden');b.textContent='🙈 Yopish';
+                clearTimeout(timers[id]);timers[id]=setTimeout(function(){hide(box);},60000);
+            }).catch(function(x){if(x&&x.message!=='cancel')alert(x.message);});
+        });
     })();
     </script>
     <script src="/static/js/zm-secure.js?v=2"></script>

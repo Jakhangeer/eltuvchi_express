@@ -127,7 +127,7 @@
         <div class="flex justify-between items-center">
             <div>
                 <h1 class="text-base font-extrabold flex items-center gap-2"><img src="/static/images/logo-mark.png" alt="ZooMo" class="w-8 h-8 object-contain rounded-lg bg-white p-1 shrink-0"> {{ partner.brand_name }}</h1>
-                <p class="text-[11px] text-slate-400">{{ current_user.full_name }}</p>
+                <p class="text-[11px] text-slate-400">{% if partner.category %}🏷️ {{ partner.category }} · {% endif %}{{ current_user.full_name }}</p>
             </div>
             <div id="live-clock" class="text-[11px] font-mono text-slate-400 hidden sm:block glass rounded-full px-2.5 py-1"></div>
             <div class="flex items-center gap-2">
@@ -169,6 +169,7 @@
         <button onclick="showTab('menu')" data-tab-btn="menu" class="tab-btn px-4 py-3 text-sm whitespace-nowrap font-semibold">📋 Menyu</button>
         <button onclick="showTab('balance')" data-tab-btn="balance" class="tab-btn px-4 py-3 text-sm whitespace-nowrap font-semibold">💰 Balans</button>
         {% if ai_on %}<button onclick="showTab('ai')" data-tab-btn="ai" class="tab-btn px-4 py-3 text-sm whitespace-nowrap font-semibold">🤖 AI</button>{% endif %}
+        {% if banner_ads_on %}<button onclick="showTab('banner')" data-tab-btn="banner" class="tab-btn px-4 py-3 text-sm whitespace-nowrap font-semibold">📣 Reklama</button>{% endif %}
         <button onclick="showTab('settings')" data-tab-btn="settings" class="tab-btn px-4 py-3 text-sm whitespace-nowrap font-semibold">⚙️ Sozlamalar</button>
     </div>
 
@@ -421,6 +422,70 @@
         </div>
         {% endif %}
 
+        {% if banner_ads_on %}
+        <!-- BANNER REKLAMA (mijoz ilovasida) -->
+        <div id="tab-banner" class="tab-page fade-up hidden glass p-5 rounded-2xl" data-live-hold>
+            <h2 class="text-base font-extrabold mb-1 text-grad">📣 Mijoz ilovasida banner reklama</h2>
+            <p class="text-[11px] text-slate-400 mb-3">Bannerni o'zingiz tayyorlang va so'rov yuboring. To'lovdan keyin administrator tasdiqlasa, banner <b id="bn-city">shahringiz</b> mijozlariga ilovaning tepasida chiqadi.</p>
+            <div id="bn-price" class="text-sm font-bold mb-2"></div>
+            <div id="bn-pay" class="text-[11px] font-semibold mb-3"></div>
+            <div class="space-y-2 mb-3">
+                <input id="bn-title" maxlength="60" placeholder="Sarlavha" class="glass-input w-full p-2.5 rounded-lg text-sm">
+                <textarea id="bn-text" maxlength="300" rows="2" placeholder="Reklama matni" class="glass-input w-full p-2.5 rounded-lg text-sm"></textarea>
+                <div class="flex flex-wrap items-center gap-3 text-xs">
+                    <label class="flex items-center gap-2">Rang <input id="bn-color" type="color" value="#f59e0b" class="w-10 h-8 p-0 border-0 bg-transparent"></label>
+                    <label class="flex items-center gap-2">Necha kun <input id="bn-days" type="number" min="1" max="60" value="7" class="glass-input w-20 p-2 rounded-lg text-sm"></label>
+                </div>
+                <label class="block text-xs">Rasm (ixtiyoriy)
+                    <input id="bn-image" type="file" accept="image/png,image/jpeg,image/webp" class="glass-input w-full mt-1 p-2 rounded-lg text-xs"></label>
+                <div id="bn-preview" class="rounded-xl overflow-hidden text-white text-sm font-bold" style="background:#f59e0b"></div>
+                <div id="bn-total" class="text-xs text-slate-300"></div>
+                <button type="button" id="bn-send" class="btn-press accent-bg accent-glow w-full text-white py-2.5 rounded-lg text-sm font-bold">📨 Banner so'rovini yuborish</button>
+            </div>
+            <h3 class="text-sm font-bold mb-1">So'rovlarim</h3>
+            <div id="bn-list" class="space-y-2"></div>
+        </div>
+        <script>
+        (function(){
+            function e(v){return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+            function $(i){return document.getElementById(i);}
+            var price=0,ST={pending:'⏳ To\'lov va tasdiq kutilmoqda',approved:'✅ Tasdiqlangan — efirda',rejected:'⛔ Rad etildi'};
+            function money(n){return Math.round(n).toLocaleString('uz-UZ').replace(/,/g,' ')+' so\'m';}
+            function jerr(r){return r.json().catch(function(){return {};}).then(function(d){if(!r.ok)throw new Error(typeof d.detail==='string'?d.detail:'Xatolik');return d;});}
+            function preview(){
+                var f=$('bn-image').files[0],t=$('bn-title').value,x=$('bn-text').value,pv=$('bn-preview');
+                pv.style.background=$('bn-color').value;
+                var txt='<div class="p-3">'+e(t||'Sarlavha')+(x?'<div class="font-normal text-xs mt-0.5">'+e(x)+'</div>':'')+'</div>';
+                if(f){var u=URL.createObjectURL(f);pv.innerHTML='<img src="'+u+'" style="width:100%;max-height:160px;object-fit:cover">';}else pv.innerHTML=txt;
+                var d=parseInt($('bn-days').value)||0;$('bn-total').textContent=price>0&&d>0?('Jami narx: '+d+' kun × '+money(price)+' = '+money(price*d)):'';
+            }
+            ['bn-title','bn-text','bn-color','bn-days','bn-image'].forEach(function(i){$(i).addEventListener('input',preview);$(i).addEventListener('change',preview);});
+            function load(){fetch('/partner/banner-ads',{credentials:'same-origin'}).then(jerr).then(function(d){
+                price=d.price_per_day||0;$('bn-price').textContent=price>0?('💰 Narx: '+money(price)+' / kun'):'💰 Narx hozircha belgilanmagan — administrator bilan kelishing';
+                if(d.city)$('bn-city').textContent=d.city;
+                var c=d.pay_card;$('bn-pay').innerHTML=c?('To\'lov kartasi: <span class="text-amber-300">'+e(c.card_number)+'</span> · '+e(c.bank_name||'')+' · '+e(c.card_holder_name||'')):'';
+                $('bn-list').innerHTML=(d.requests||[]).map(function(r){
+                    var pv=r.has_image?'<img src="/partner/banner-ads/'+r.id+'/image" style="width:100%;max-height:110px;object-fit:cover;border-radius:8px">':'<div class="rounded-lg p-2 text-white text-xs font-bold" style="background:'+e(r.bg_color)+'">'+e(r.title)+'</div>';
+                    return '<div class="p-3 rounded-xl border border-slate-700 text-xs"><div class="flex flex-wrap gap-2 mb-1"><b>'+r.days+' kun</b><span>'+money(r.price)+'</span><span>'+(ST[r.status]||r.status)+'</span></div>'+pv
+                      +(r.admin_note?'<div class="text-slate-400 mt-1">Izoh: '+e(r.admin_note)+'</div>':'')
+                      +(r.status!=='approved'?'<button data-del="'+r.id+'" class="mt-2 text-red-400 font-bold">🗑 Bekor qilish</button>':'')+'</div>';
+                }).join('')||'<p class="text-xs text-slate-500">Hozircha so\'rov yo\'q.</p>';
+            }).catch(function(x){$('bn-list').innerHTML='<p class="text-xs text-red-400">'+e(x.message)+'</p>';});}
+            $('bn-send').onclick=function(){
+                var fd=new FormData();fd.append('title',$('bn-title').value);fd.append('text_content',$('bn-text').value);fd.append('bg_color',$('bn-color').value);fd.append('days',$('bn-days').value||'7');
+                var f=$('bn-image').files[0];if(f)fd.append('image',f);
+                fetch('/partner/banner-ads',{method:'POST',credentials:'same-origin',body:fd}).then(jerr).then(function(r){
+                    alert('So\'rov yuborildi. '+(r.price?('To\'lov summasi: '+money(r.price)+'. '):'')+'To\'lovdan keyin administrator tasdiqlaydi.');
+                    $('bn-title').value='';$('bn-text').value='';$('bn-image').value='';preview();load();}).catch(function(x){alert(x.message);});};
+            document.addEventListener('click',function(ev){
+                var b=ev.target.closest('#bn-list [data-del]');if(b){if(!confirm('So\'rov bekor qilinsinmi?'))return;
+                    fetch('/partner/banner-ads/'+b.dataset.del+'/delete',{method:'POST',credentials:'same-origin'}).then(jerr).then(load).catch(function(x){alert(x.message);});return;}
+                if(ev.target.closest('[data-tab-btn="banner"]'))setTimeout(load,50);});
+            document.addEventListener('DOMContentLoaded',function(){preview();load();});
+        })();
+        </script>
+        {% endif %}
+
         <!-- SOZLAMALAR -->
         <div id="tab-settings" class="tab-page fade-up hidden glass p-5 rounded-2xl">
             <h2 class="text-base font-extrabold mb-1 text-grad">⚙️ Do'kon Sozlamalari</h2>
@@ -445,6 +510,12 @@
                     <input type="text" name="brand_name" value="{{ partner.brand_name }}" class="glass-input w-full p-2.5 rounded-lg text-sm" required>
                 </div>
                 <div>
+                    <label class="block text-xs font-semibold text-slate-400 mb-1">Do'kon kategoriyasi</label>
+                    <input type="text" name="category" value="{{ partner.category or '' }}" maxlength="60" list="partner-cat-list" placeholder="Masalan: Fast Food, Pitsa, Ichimliklar" class="glass-input w-full p-2.5 rounded-lg text-sm" required>
+                    <datalist id="partner-cat-list">{% for c in category_suggestions %}<option value="{{ c }}">{% endfor %}</datalist>
+                    <p class="text-[10px] text-slate-500 mt-1">Mijoz ilovasida do'kon nomi ostida shu kategoriya ko'rinadi.</p>
+                </div>
+                <div>
                     <label class="block text-xs font-semibold text-slate-400 mb-1">Manzil (matn)</label>
                     <input type="text" name="address" value="{{ partner.address }}" class="glass-input w-full p-2.5 rounded-lg text-sm" required>
                 </div>
@@ -453,19 +524,17 @@
                     <label class="block text-xs font-semibold text-slate-400 mb-1.5">Xaritadagi joylashuv</label>
                     <input type="hidden" name="latitude" id="partner-lat" value="{{ partner.latitude or '' }}">
                     <input type="hidden" name="longitude" id="partner-lng" value="{{ partner.longitude or '' }}">
-                    <button type="button" onclick="detectLocation()" class="w-full py-2.5 rounded-lg text-sm font-semibold mb-2 glass-input">📍 Joylashuvni aniqlash (GPS)</button>
+                    <button type="button" id="loc-detect" onclick="detectLocation()" class="w-full py-2.5 rounded-lg text-sm font-semibold mb-2 glass-input">📍 Joylashuvni aniqlash (GPS)</button>
                     <p id="location-status" class="text-[11px] text-slate-500">
                         {% if partner.latitude and partner.longitude %}
-                        ✅ Joylashuv belgilangan ({{ "%.5f"|format(partner.latitude) }}, {{ "%.5f"|format(partner.longitude) }})
+                        ✅ Saqlangan joylashuv ({{ "%.5f"|format(partner.latitude) }}, {{ "%.5f"|format(partner.longitude) }})
                         {% else %}
                         Hali joylashuv belgilanmagan.
                         {% endif %}
                     </p>
-                    {% if partner.latitude and partner.longitude %}
-                    <iframe id="map-preview" class="w-full h-40 rounded-lg mt-2" style="border:1px solid rgba(255,255,255,.12); filter:invert(0.92) hue-rotate(180deg) contrast(0.9);"
-                        src="https://www.openstreetmap.org/export/embed.html?bbox={{ partner.longitude - 0.005 }}%2C{{ partner.latitude - 0.005 }}%2C{{ partner.longitude + 0.005 }}%2C{{ partner.latitude + 0.005 }}&marker={{ partner.latitude }}%2C{{ partner.longitude }}">
-                    </iframe>
-                    {% endif %}
+                    <p class="text-[10px] text-slate-500 mt-1">Xaritada do'kon joyini barmoq bilan bosing yoki 📌 belgisini sudrab aniq joyiga qo'ying. Keyin pastdagi «Saqlash»ni bosing.</p>
+                    <div id="loc-map" class="w-full rounded-lg mt-2" style="height:340px;border:1px solid rgba(255,255,255,.12);"></div>
+                    <button type="button" id="loc-reset" class="text-[11px] underline opacity-80 mt-1">↩️ Saqlangan joylashuvga qaytarish</button>
                 </div>
 
                 <div>
@@ -489,13 +558,16 @@
                 <h2 class="text-base font-extrabold mb-1 text-grad">📄 Yuridik rekvizitlar</h2>
                 <p class="text-xs text-slate-500 mb-4">Shartnoma va to'lovlar uchun kerak. Ma'lumotlar xavfsiz saqlanadi, faqat administratsiyaga va sizga ko'rinadi. Sahifada yashirin turadi — ko'rish uchun maxfiy javobingiz so'raladi.</p>
                 {% set has_legal = partner.legal_name %}
-                {% if has_legal %}
                 <div id="legal-info" class="rounded-xl p-3 mb-3 flex items-center justify-between gap-2" style="background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08)">
+                    {% if has_legal %}
                     <div class="text-xs"><b>🔒 Rekvizitlar yashirin</b><div class="text-[11px] opacity-70">{% if partner.legal_type == 'self_employed' %}O'z-o'zini band qilgan shaxs{% else %}Yuridik shaxs / YTT{% endif %} · kiritilgan ✅</div></div>
                     <button type="button" id="legal-show" class="px-3 py-1.5 rounded-lg text-xs font-bold" style="background:#f59e0b;color:#fff">👁 Ko'rsatish</button>
+                    {% else %}
+                    <div class="text-xs"><b>🔒 Rekvizitlar hali kiritilmagan</b><div class="text-[11px] opacity-70">Kiritish uchun avval maxfiy javobingiz so'raladi.</div></div>
+                    <button type="button" id="legal-show" class="px-3 py-1.5 rounded-lg text-xs font-bold" style="background:#f59e0b;color:#fff">✏️ Kiritish</button>
+                    {% endif %}
                 </div>
-                {% endif %}
-                <form id="legal-form" action="/partner/legal" method="POST" class="js-haptic-form space-y-3 {% if has_legal %}hidden{% endif %}">
+                <form id="legal-form" action="/partner/legal" method="POST" class="js-haptic-form space-y-3 hidden">
                     <div>
                         <label class="block text-xs font-semibold text-slate-400 mb-1">Turi</label>
                         <select name="legal_type" id="lg-type" class="glass-input w-full p-2.5 rounded-lg text-sm">
@@ -540,6 +612,7 @@
                         </div>
                     </div>
                     <button type="submit" class="btn-press accent-bg accent-glow w-full text-white py-2.5 rounded-lg text-sm font-bold">💾 Rekvizitlarni saqlash</button>
+                    <button type="button" id="legal-hide" class="w-full py-2 rounded-lg text-xs font-semibold glass-input">🙈 Yopish (yashirish)</button>
                 </form>
             </div>
             <script>
@@ -554,7 +627,7 @@
                     document.getElementById('lg-phone-lab').textContent=se?'Telefon raqami':'Direktor telefoni';}
                 f.elements.legal_type.addEventListener('change',apply); apply();
                 document.addEventListener('DOMContentLoaded',function(){
-                    if(window.ZMReveal){ZMReveal.cards({box:'cards-box',base:'/partner'});ZMReveal.legal({button:'legal-show',form:'legal-form',info:'legal-info',base:'/partner'});}});
+                    if(window.ZMReveal){ZMReveal.cards({box:'cards-box',base:'/partner'});ZMReveal.legal({button:'legal-show',form:'legal-form',info:'legal-info',hide:'legal-hide',base:'/partner',hasData:{{ 'true' if has_legal else 'false' }}});}});
             })();
             </script>
         </div>
@@ -570,6 +643,7 @@
             document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
             document.querySelector(`[data-tab-btn="${tabName}"]`).classList.add('active');
             localStorage.setItem('partner_active_tab', tabName);
+            if (tabName === 'settings') { setTimeout(function () { try { initLocMap(); if (LOC.map) LOC.map.invalidateSize(); } catch (e) {} }, 60); }
         }
 
         // ---- JONLI SOAT ----
@@ -585,26 +659,66 @@
             el.textContent = `🕐 ${formatted}`;
         }
 
-        // ---- JOYLASHUVNI GPS ORQALI ANIQLASH ----
+        // ---- DO'KON JOYLASHUVI: interaktiv xarita (marker sudraladi / xaritaga bosiladi / GPS) ----
+        var LOC = { map: null, marker: null, circle: null, saved: {% if partner.latitude and partner.longitude %}[{{ partner.latitude }}, {{ partner.longitude }}]{% else %}null{% endif %}, watch: null };
+        function locSet(lat, lng, opts) {
+            opts = opts || {};
+            document.getElementById('partner-lat').value = lat.toFixed(6);
+            document.getElementById('partner-lng').value = lng.toFixed(6);
+            if (LOC.marker) LOC.marker.setLatLng([lat, lng]);
+            if (LOC.map && opts.pan !== false) LOC.map.setView([lat, lng], Math.max(LOC.map.getZoom(), 17));
+            var st = document.getElementById('location-status');
+            if (st && !opts.keepStatus) st.textContent = '📍 Tanlandi (' + lat.toFixed(5) + ', ' + lng.toFixed(5) + ') — pastdagi «Saqlash»ni bosing.';
+        }
+        function initLocMap() {
+            if (LOC.map || !window.L) return;
+            var el = document.getElementById('loc-map'); if (!el) return;
+            var c = LOC.saved || [41.5504, 60.6318];
+            LOC.map = L.map('loc-map', { zoomControl: true }).setView(c, LOC.saved ? 17 : 13);
+            var osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' });
+            var sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, attribution: 'Esri' });
+            osm.addTo(LOC.map);
+            L.control.layers({ '🗺 Xarita': osm, '🛰 Sun\'iy yo\'ldosh': sat }, null, { position: 'topright' }).addTo(LOC.map);
+            LOC.marker = L.marker(c, { draggable: true }).addTo(LOC.map);
+            LOC.marker.on('dragend', function () { var p = LOC.marker.getLatLng(); locSet(p.lat, p.lng, { pan: false }); });
+            LOC.map.on('click', function (e) { locSet(e.latlng.lat, e.latlng.lng, { pan: false }); });
+            setTimeout(function () { LOC.map.invalidateSize(); }, 150);
+            document.getElementById('loc-reset').onclick = function () {
+                if (!LOC.saved) return;
+                locSet(LOC.saved[0], LOC.saved[1], { keepStatus: true });
+                document.getElementById('location-status').textContent = '↩️ Saqlangan joylashuvga qaytarildi.';
+            };
+        }
         function detectLocation() {
-            const status = document.getElementById('location-status');
-            if (!navigator.geolocation) {
-                status.textContent = "Bu brauzer joylashuvni aniqlashni qo'llab-quvvatlamaydi.";
-                return;
+            var status = document.getElementById('location-status');
+            if (!navigator.geolocation) { status.textContent = "Bu brauzer joylashuvni aniqlashni qo'llab-quvvatlamaydi."; return; }
+            initLocMap();
+            if (LOC.watch != null) { navigator.geolocation.clearWatch(LOC.watch); LOC.watch = null; }
+            status.textContent = "🔄 Aniqlanmoqda... (bir necha soniya — eng aniq natijani kutamiz)";
+            var best = null, t0 = Date.now();
+            function finish(why) {
+                if (LOC.watch != null) { navigator.geolocation.clearWatch(LOC.watch); LOC.watch = null; }
+                if (!best) { status.textContent = "Joylashuvni aniqlab bo'lmadi. Xaritada do'kon joyini o'zingiz belgilang."; return; }
+                var acc = Math.round(best.coords.accuracy);
+                locSet(best.coords.latitude, best.coords.longitude, { keepStatus: true });
+                status.textContent = '✅ Aniqlandi (±' + acc + ' m): ' + best.coords.latitude.toFixed(5) + ', ' + best.coords.longitude.toFixed(5) + ' — «Saqlash»ni bosing.' +
+                    (acc > 100 ? ' ⚠️ Aniqlik past — 📌 belgisini xaritada aniq joyiga o\'zingiz sudrab qo\'ying.' : '');
+                if (navigator.vibrate) navigator.vibrate(16);
             }
-            status.textContent = "🔄 Aniqlanmoqda...";
-            navigator.geolocation.getCurrentPosition(
-                (pos) => {
-                    document.getElementById('partner-lat').value = pos.coords.latitude;
-                    document.getElementById('partner-lng').value = pos.coords.longitude;
-                    status.textContent = `✅ Aniqlandi (${pos.coords.latitude.toFixed(5)}, ${pos.coords.longitude.toFixed(5)}) — "Saqlash" bosing.`;
-                    if (navigator.vibrate) navigator.vibrate(16);
-                },
-                (err) => {
-                    status.textContent = "Joylashuvni aniqlab bo'lmadi: " + err.message + ". Brauzer sozlamalarida joylashuvga ruxsat berilganini tekshiring.";
-                },
-                { enableHighAccuracy: true, timeout: 10000 }
-            );
+            LOC.watch = navigator.geolocation.watchPosition(function (pos) {
+                if (!best || pos.coords.accuracy < best.coords.accuracy) {
+                    best = pos;
+                    locSet(pos.coords.latitude, pos.coords.longitude, { keepStatus: true });
+                    if (LOC.circle) LOC.map.removeLayer(LOC.circle);
+                    LOC.circle = L.circle([pos.coords.latitude, pos.coords.longitude], { radius: pos.coords.accuracy, weight: 1, fillOpacity: .12 }).addTo(LOC.map);
+                    status.textContent = '🔄 Aniqlanmoqda... hozircha ±' + Math.round(pos.coords.accuracy) + ' m';
+                }
+                if (pos.coords.accuracy <= 20 || Date.now() - t0 > 12000) finish();
+            }, function (err) {
+                if (best) finish(); else status.textContent = "Joylashuvni aniqlab bo'lmadi: " + err.message + ". Brauzer sozlamalarida joylashuvga ruxsat bering yoki xaritada o'zingiz belgilang.";
+                if (LOC.watch != null) { navigator.geolocation.clearWatch(LOC.watch); LOC.watch = null; }
+            }, { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 });
+            setTimeout(function () { if (LOC.watch != null) finish(); }, 13000);
         }
 
         document.querySelectorAll('.sound-radio').forEach(radio => {
@@ -838,7 +952,7 @@
         });
     </script>
     <script src="/static/js/zm-secure.js?v=2"></script>
-    <script src="/static/js/zm-reveal.js?v=1"></script>
+    <script src="/static/js/zm-reveal.js?v=2"></script>
     <script src="/static/js/zm-support.js?v=2"></script>
     <script src="/static/js/zm-ai.js?v=3"></script>
     <script>document.addEventListener("DOMContentLoaded",function(){if(window.ZMSupport)ZMSupport.mount({base:"/partner/support",ratingUrl:"/partner/rating"});});</script>
