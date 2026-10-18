@@ -1,3 +1,45 @@
+{% macro rules_block(kind, title, unit, hint) %}
+<div class="card-bg bg-white p-6 rounded-xl shadow-md mt-4">
+    <h3 class="theme-title text-base font-bold mb-1 text-indigo-700">🗓️ {{ title }}</h3>
+    <p class="text-[11px] text-gray-500 mb-3">{{ hint }} Shahar qoidasi umumiy qoidadan, umumiy qoida esa yuqoridagi asosiy sozlamadan USTUN turadi. Muddati tugagan yoki o'chirilgan qoida o'z-o'zidan to'xtaydi.</p>
+    <form action="/admin/bonus-rules/create" method="POST" class="grid grid-cols-1 md:grid-cols-6 gap-2 items-end mb-3">
+        <input type="hidden" name="kind" value="{{ kind }}">
+        <div><label class="block text-[11px] font-medium">Qiymat ({{ unit }})</label><input type="number" step="0.01" min="0" name="value" required class="w-full mt-1 p-2 border rounded-lg text-sm dark:bg-gray-800"></div>
+        <div><label class="block text-[11px] font-medium">Shahar</label>
+            <select name="city_id" class="w-full mt-1 p-2 border rounded-lg text-sm dark:bg-gray-800">
+                {% if is_owner or not current_city_scope %}<option value="">🌍 Barcha shaharlar</option>{% endif %}
+                {% for city in all_cities %}{% if is_owner or not current_city_scope or city.id == current_city_scope %}<option value="{{ city.id }}" {% if current_city_scope == city.id %}selected{% endif %}>{{ city.name }}</option>{% endif %}{% endfor %}
+            </select></div>
+        <div><label class="block text-[11px] font-medium">Boshlanishi</label><input type="datetime-local" name="starts_at" class="w-full mt-1 p-2 border rounded-lg text-sm dark:bg-gray-800"></div>
+        <div><label class="block text-[11px] font-medium">Tugashi</label><input type="datetime-local" name="ends_at" class="w-full mt-1 p-2 border rounded-lg text-sm dark:bg-gray-800"></div>
+        <div><label class="block text-[11px] font-medium">Izoh</label><input type="text" name="note" maxlength="200" placeholder="Masalan: Navro'z aksiyasi" class="w-full mt-1 p-2 border rounded-lg text-sm dark:bg-gray-800"></div>
+        <button type="submit" class="bg-green-600 hover:bg-green-700 text-white py-2 rounded-lg font-bold text-sm">+ Qoida</button>
+    </form>
+    <div class="space-y-2">
+        {% for r in bonus_rules if r.kind == kind %}
+        {% set expired = r.ends_at and r.ends_at < now_utc %}
+        {% set pending = r.starts_at and r.starts_at > now_utc %}
+        <div class="flex flex-wrap items-center gap-2 p-2 border rounded-lg text-xs dark:border-gray-700">
+            <b>{{ '%g'|format(r.value) }} {{ unit }}</b>
+            <span>📍 {{ city_names.get(r.city_id, 'Barcha shaharlar') if r.city_id else 'Barcha shaharlar' }}</span>
+            <span>⏱ {{ (r.starts_at|uzb_time('%d.%m.%Y %H:%M')) if r.starts_at else 'darhol' }} → {{ (r.ends_at|uzb_time('%d.%m.%Y %H:%M')) if r.ends_at else 'cheksiz' }}</span>
+            {% if r.note %}<span class="text-gray-500">{{ r.note }}</span>{% endif %}
+            {% if expired %}<span class="px-2 py-0.5 rounded bg-gray-200 text-gray-700">muddati tugagan</span>
+            {% elif pending %}<span class="px-2 py-0.5 rounded bg-blue-100 text-blue-700">hali boshlanmagan</span>
+            {% elif r.is_active %}<span class="px-2 py-0.5 rounded bg-green-100 text-green-700">amalda</span>
+            {% else %}<span class="px-2 py-0.5 rounded bg-red-100 text-red-700">o'chirilgan (pauza)</span>{% endif %}
+            <span class="ml-auto flex gap-2">
+                <form action="/admin/bonus-rules/{{ r.id }}/toggle" method="POST"><button class="px-2 py-1 rounded bg-amber-500 text-white font-bold">{{ 'Pauza' if r.is_active else 'Yoqish' }}</button></form>
+                <form action="/admin/bonus-rules/{{ r.id }}/delete" method="POST" onsubmit="return confirm('Qoida o\'chirilsinmi?')"><button class="px-2 py-1 rounded bg-red-600 text-white font-bold">O'chirish</button></form>
+            </span>
+        </div>
+        {% else %}
+        <p class="text-xs text-gray-400">Hozircha shahar/muddatli qoida yo'q — asosiy sozlama amal qiladi.</p>
+        {% endfor %}
+    </div>
+</div>
+{% endmacro %}
+{% set city_names = {} %}{% for c in all_cities %}{% set _x = city_names.update({c.id: c.name}) %}{% endfor %}
 <!DOCTYPE html>
 <html lang="uz">
 <head>
@@ -1417,8 +1459,7 @@
         <!-- PARTNERS & PRODUCTS -->
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
 
-            {% if is_owner %}
-            <!-- Do'kon Qo'shish Formasi (faqat OWNER) -->
+            <!-- Do'kon Qo'shish Formasi (OWNER hammasini; operator — o'z shahri, komissiyasiz, PINsiz) -->
             <div class="card-bg bg-white p-6 rounded-xl shadow-md col-span-1">
                 <h2 class="theme-title text-lg font-bold mb-4 text-indigo-700">🏪 Yangi Do'kon Qo'shish</h2>
                 <form action="/admin/partners/create" method="POST" class="space-y-3">
@@ -1432,22 +1473,24 @@
                     </div>
                     <div>
                         <label class="block text-xs font-medium">Shahar</label>
-                        <select name="city_id" class="w-full mt-1 p-2 border rounded-lg text-sm dark:bg-gray-800" required>
+                        {% if is_owner %}<select name="city_id" class="w-full mt-1 p-2 border rounded-lg text-sm dark:bg-gray-800" required>
                             <option value="">Shaharni tanlang</option>
                             {% for city in all_cities %}
                             <option value="{{ city.id }}">{{ city.name }}</option>
                             {% endfor %}
-                        </select>
+                        </select>{% else %}<div class="mt-1 p-2 border rounded-lg text-sm bg-gray-50 dark:bg-gray-800">{% for city in all_cities %}{% if city.id == current_city_scope %}{{ city.name }}{% endif %}{% endfor %} <span class="text-[11px] text-gray-500">(faqat o'z shahringiz)</span></div>{% endif %}
                     </div>
                     <div>
                         <label class="block text-xs font-medium">Manzil</label>
                         <input type="text" name="address" placeholder="Mustaqillik ko'chasi, 5" class="w-full mt-1 p-2 border rounded-lg text-sm dark:bg-gray-800" required>
                     </div>
                     <div class="grid grid-cols-2 gap-2">
+                        {% if is_owner %}
                         <div>
                             <label class="block text-xs font-medium">Komissiya (%)</label>
                             <input type="number" step="0.1" name="commission_rate" value="{{ system_setting.service_commission_percent if system_setting else 10.0 }}" class="w-full mt-1 p-2 border rounded-lg text-sm dark:bg-gray-800" required>
                         </div>
+                        {% endif %}
                         <div>
                             <label class="block text-xs font-medium">Ish vaqti</label>
                             <div class="flex gap-1 items-center mt-1">
@@ -1462,6 +1505,13 @@
                         <input type="number" name="min_order_amount" value="0" class="w-full mt-1 p-2 border rounded-lg text-sm dark:bg-gray-800">
                         <p class="text-[11px] text-gray-500 mt-1">0 = cheklov yo'q</p>
                     </div>
+                    {% if not is_owner %}
+                    <div class="border-t pt-3 mt-1 dark:border-gray-700">
+                        <p class="text-xs font-semibold mb-2 text-gray-600 dark:text-gray-300">📱 Hamkor telefon raqami</p>
+                        <p class="text-[11px] text-gray-500 mb-2">PIN-ni siz kiritmaysiz — do'kon egasi ariza tasdiqlangach, kabinetiga birinchi kirishida o'zi o'rnatadi.</p>
+                        <input type="text" name="login_phone" placeholder="+998..." required class="w-full p-2 border rounded-lg text-sm dark:bg-gray-800">
+                    </div>
+                    {% else %}
                     <div class="border-t pt-3 mt-1 dark:border-gray-700">
                         <p class="text-xs font-semibold mb-2 text-gray-600 dark:text-gray-300">🔑 Hamkor kabineti (ixtiyoriy)</p>
                         <p class="text-[11px] text-gray-500 mb-2">Kiritsangiz, do'kon egasi shu telefon+parol bilan o'z kabinetiga kirib, menyusini va buyurtmalarini o'zi boshqara oladi. Bo'sh qoldirsangiz, do'konni faqat siz boshqarasiz.</p>
@@ -1469,12 +1519,13 @@
                         <input type="text" name="login_password" placeholder="4 xonali PIN" maxlength="4" pattern="[0-9]{4}" inputmode="numeric" class="w-full p-2 border rounded-lg text-sm dark:bg-gray-800">
                     </div>
                     <button type="submit" class="w-full bg-green-600 hover:bg-green-700 text-white py-2 rounded-lg font-bold text-sm">+ Qo'shish</button>
-                </form>
+                    {% endif %}
+</form>
             </div>
-            {% endif %}
+            
 
-            {% if is_owner %}
-            <!-- Mahsulot Qo'shish Formasi (faqat OWNER) -->
+            {% if is_owner or operator_perms.get('mahsulot_qoshish') %}
+            <!-- Mahsulot Qo'shish Formasi (OWNER; operator — faqat egasi ruxsat bergan bo'lsa) -->
             <div class="card-bg bg-white p-6 rounded-xl shadow-md col-span-1">
                 <h2 class="theme-title text-lg font-bold mb-4 text-indigo-700">🍕 Yangi Mahsulot Qo'shish</h2>
                 <form action="/admin/products/create" method="POST" enctype="multipart/form-data" class="space-y-3">
@@ -1561,7 +1612,7 @@
                                 {% endif %}
                             </div>
                         </div>
-                        <p class="text-[11px] text-gray-500">📍 {{ partner.address }} {% if partner.city %}| 🏙️ {{ partner.city.name }}{% endif %} | 🕒 {{ partner.opening_time }}-{{ partner.closing_time }} | 🏷️ {{ partner.commission_rate }}%{% if is_owner %} | 💰 {{ "%.0f"|format(partner.balance or 0) }} so'm{% endif %}</p>
+                        <p class="text-[11px] text-gray-500">📍 {{ partner.address }} {% if partner.city %}| 🏙️ {{ partner.city.name }}{% endif %} | 🕒 {{ partner.opening_time }}-{{ partner.closing_time }} {% if is_owner %} | 🏷️ {{ partner.commission_rate }}% | 💰 {{ "%.0f"|format(partner.balance or 0) }} so'm{% endif %}</p>
                         
                         {% if partner.legal_name or partner.stir %}
                         <details class="text-[11px] text-gray-500 mt-1">
@@ -1622,10 +1673,10 @@
 
         </div>
 
-        {% if is_owner %}
-</section>
+        </section>
         {% endif %}
 
+        {% if is_owner %}
         <section class="app-page" data-page="xavfzone" style="display:none;">
         <!-- XAVF ZONASI (faqat OWNER) -->
         <div class="card-bg bg-white p-6 rounded-xl shadow-md border-2 border-red-500">
@@ -1643,8 +1694,8 @@
                 <button type="submit" class="bg-red-600 hover:bg-red-700 text-white py-2 px-4 rounded-lg font-bold text-sm whitespace-nowrap">🗑️ Hammasini Tozalash</button>
             </form>
         </div>
-        {% endif %}
 </section>
+        {% endif %}
 
         <!-- TUG'ILGAN KUNLAR -->
         {% if is_owner or operator_perms.get('tugilgankun') %}
@@ -1701,6 +1752,7 @@
             </div>
             {% endif %}
         </div>
+        {{ rules_block('birthday','Tug\'ilgan kun bonusi — shahar va muddat bo\'yicha','so\'m','Masalan: bir shahar uchun boshqa summa.') }}
         </section>
         {% endif %}
 
@@ -1729,6 +1781,7 @@
             <p class="text-[11px] text-gray-400 mt-2">Bu bo'limni faqat egasi tahrirlay oladi.</p>
             {% endif %}
         </div>
+        {{ rules_block('referral','Referal bonusi — shahar va muddat bo\'yicha','so\'m','Masalan: faqat Toshkentda 1–30 noyabr 20 000 so\'m.') }}
         </section>
         {% endif %}
 
@@ -1757,6 +1810,51 @@
             <p class="text-[11px] text-gray-400 mt-2">Bu bo'limni faqat egasi tahrirlay oladi.</p>
             {% endif %}
         </div>
+        
+        <div class="card-bg bg-white p-6 rounded-xl shadow-md mt-4">
+            <h3 class="theme-title text-base font-bold mb-1 text-indigo-700">🏷️ Promo-kodlar</h3>
+            <p class="text-[11px] text-gray-500 mb-3">Mijoz savatda kodni kiritadi. Foiz YOKI summa (bittasi) kiritiladi. Bitta mijoz bitta kodni bir marta ishlatadi; «Foydalanish soni» — hamma mijozlar bo'yicha umumiy limit (bo'sh = cheksiz).</p>
+            <form action="/admin/promo/create" method="POST" class="grid grid-cols-1 md:grid-cols-4 gap-2 items-end mb-3">
+                <div><label class="block text-[11px] font-medium">Kod nomi</label><input type="text" name="code" required maxlength="32" placeholder="NAVRUZ20" style="text-transform:uppercase" class="w-full mt-1 p-2 border rounded-lg text-sm dark:bg-gray-800"></div>
+                <div><label class="block text-[11px] font-medium">Chegirma (%)</label><input type="number" step="0.1" min="0" max="100" name="discount_percent" class="w-full mt-1 p-2 border rounded-lg text-sm dark:bg-gray-800"></div>
+                <div><label class="block text-[11px] font-medium">yoki Summa (so'm)</label><input type="number" step="1" min="0" name="discount_amount" class="w-full mt-1 p-2 border rounded-lg text-sm dark:bg-gray-800"></div>
+                <div><label class="block text-[11px] font-medium">Necha marta ishlatiladi</label><input type="number" step="1" min="1" name="max_uses" placeholder="cheksiz" class="w-full mt-1 p-2 border rounded-lg text-sm dark:bg-gray-800"></div>
+                <div><label class="block text-[11px] font-medium">Shahar</label>
+                    <select name="city_id" class="w-full mt-1 p-2 border rounded-lg text-sm dark:bg-gray-800">
+                        {% if is_owner or not current_city_scope %}<option value="">🌍 Barcha shaharlar</option>{% endif %}
+                        {% for city in all_cities %}{% if is_owner or not current_city_scope or city.id == current_city_scope %}<option value="{{ city.id }}" {% if current_city_scope == city.id %}selected{% endif %}>{{ city.name }}</option>{% endif %}{% endfor %}
+                    </select></div>
+                <div><label class="block text-[11px] font-medium">Boshlanishi</label><input type="datetime-local" name="starts_at" class="w-full mt-1 p-2 border rounded-lg text-sm dark:bg-gray-800"></div>
+                <div><label class="block text-[11px] font-medium">Tugashi</label><input type="datetime-local" name="expires_at" class="w-full mt-1 p-2 border rounded-lg text-sm dark:bg-gray-800"></div>
+                <button type="submit" class="bg-green-600 hover:bg-green-700 text-white py-2 rounded-lg font-bold text-sm">+ Promo-kod</button>
+            </form>
+            <div class="space-y-2">
+                {% for pc in promo_codes %}
+                {% set p_expired = pc.expires_at and pc.expires_at < now_utc %}
+                {% set p_pending = pc.starts_at and pc.starts_at > now_utc %}
+                {% set p_full = pc.max_uses and pc.used_count >= pc.max_uses %}
+                <div class="flex flex-wrap items-center gap-2 p-2 border rounded-lg text-xs dark:border-gray-700">
+                    <b class="font-mono text-sm">{{ pc.code }}</b>
+                    <span>{% if pc.discount_percent %}{{ '%g'|format(pc.discount_percent) }}%{% else %}{{ '%g'|format(pc.discount_amount or 0) }} so'm{% endif %}</span>
+                    <span>📍 {{ city_names.get(pc.city_id, '—') if pc.city_id else 'Barcha shaharlar' }}</span>
+                    <span>🔢 {{ pc.used_count or 0 }}/{{ pc.max_uses if pc.max_uses else '∞' }}</span>
+                    <span>⏱ {{ (pc.starts_at|uzb_time('%d.%m.%Y %H:%M')) if pc.starts_at else 'darhol' }} → {{ (pc.expires_at|uzb_time('%d.%m.%Y %H:%M')) if pc.expires_at else 'cheksiz' }}</span>
+                    {% if p_expired %}<span class="px-2 py-0.5 rounded bg-gray-200 text-gray-700">muddati tugagan</span>
+                    {% elif p_full %}<span class="px-2 py-0.5 rounded bg-gray-200 text-gray-700">limit tugagan</span>
+                    {% elif p_pending %}<span class="px-2 py-0.5 rounded bg-blue-100 text-blue-700">hali boshlanmagan</span>
+                    {% elif pc.is_active %}<span class="px-2 py-0.5 rounded bg-green-100 text-green-700">faol</span>
+                    {% else %}<span class="px-2 py-0.5 rounded bg-red-100 text-red-700">o'chirilgan (pauza)</span>{% endif %}
+                    <span class="ml-auto flex gap-2">
+                        <form action="/admin/promo/{{ pc.id }}/toggle" method="POST"><button class="px-2 py-1 rounded bg-amber-500 text-white font-bold">{{ 'Pauza' if pc.is_active else 'Yoqish' }}</button></form>
+                        <form action="/admin/promo/{{ pc.id }}/delete" method="POST" onsubmit="return confirm('Promo-kod o\'chirilsinmi?')"><button class="px-2 py-1 rounded bg-red-600 text-white font-bold">O'chirish</button></form>
+                    </span>
+                </div>
+                {% else %}
+                <p class="text-xs text-gray-400">Hozircha promo-kod yo'q.</p>
+                {% endfor %}
+            </div>
+        </div>
+        {{ rules_block('cashback','Cashback foizi — shahar va muddat bo\'yicha','%','Masalan: Samarqandda dekabr oyida 5% cashback.') }}
         </section>
         {% endif %}
 
@@ -1770,14 +1868,19 @@
                     <button type="button" data-sec="courier" class="px-3 py-2 rounded-lg border text-sm font-bold dark:border-gray-700">🛵 Kuryerlar <span class="sup-b hidden bg-red-500 text-white text-[10px] rounded-full px-1.5 py-0.5"></span></button>
                     <button type="button" data-sec="client" class="px-3 py-2 rounded-lg border text-sm font-bold dark:border-gray-700">👥 Mijozlar <span class="sup-b hidden bg-red-500 text-white text-[10px] rounded-full px-1.5 py-0.5"></span></button>
                 </div>
+                {% if is_owner %}
                 <details class="mb-3 rounded-xl border-2 border-dashed p-3 dark:border-gray-700" style="border-color:var(--accent)">
                     <summary class="text-sm font-extrabold cursor-pointer">📢 <span id="sup-ann-title">Barchaga e'lon</span></summary>
                     <div class="mt-2 space-y-2">
+                        <select id="sup-ann-city" class="w-full p-2 border rounded-lg text-sm dark:bg-gray-800 dark:border-gray-700"><option value="">🌍 Barcha shaharlar</option>{% for city in all_cities %}<option value="{{ city.id }}">{{ city.name }}</option>{% endfor %}</select>
                         <textarea id="sup-ann-text" maxlength="1500" rows="3" placeholder="E'lon matni — bo'limdagi har bir kishiga Telegramdan boradi va ilovada ovozli oyna bo'lib chiqadi (Tushundim bosilguncha yopilmaydi)" class="w-full p-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700 text-sm"></textarea>
                         <button type="button" id="sup-ann-send" class="px-4 py-2 rounded-lg bg-amber-500 text-white text-sm font-bold">📢 Yuborish</button>
                         <div id="sup-ann-list" class="text-[11px] text-gray-500 space-y-1"></div>
                     </div>
                 </details>
+                {% else %}
+                <div class="mb-3 text-[11px] text-gray-500"><b>📢 Shahringizdagi e'lonlar</b> (e'lonni faqat egasi beradi — siz faqat savol-javob yozasiz)<div id="sup-ann-list" class="mt-1 space-y-1"></div></div>
+                {% endif %}
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
                     <div class="md:col-span-1 border rounded-xl dark:border-gray-700 overflow-y-auto" style="max-height:60vh"><div id="sup-threads" class="divide-y dark:divide-gray-700 text-sm"></div></div>
                     <div class="md:col-span-2 border rounded-xl dark:border-gray-700 flex flex-col" style="height:60vh">
@@ -3089,8 +3192,8 @@
             document.getElementById('sup-head').innerHTML='👤 '+e(d.user.name)+' · <a class="text-indigo-600" href="tel:'+e(d.user.phone)+'">'+e(d.user.phone)+'</a>'+(d.user.telegram?'':' <span class="text-[10px] text-amber-600">(Telegram ulanmagan)</span>');
             var box=document.getElementById('sup-msgs');box.innerHTML=d.messages.map(function(m){var me=m.sender==='staff';return '<div class="flex '+(me?'justify-end':'')+'"><div class="max-w-[80%] px-3 py-2 rounded-2xl '+(me?'bg-indigo-600 text-white':'bg-gray-200 dark:bg-gray-700')+'">'+e(m.text)+'<div class="text-[9px] opacity-70 mt-0.5">'+tm(m.at)+'</div></div></div>';}).join('');
             if(!keepScroll)box.scrollTop=box.scrollHeight;unread();});}
-        function anns(){api('/admin/support/announcements?audience='+sec).then(function(d){document.getElementById('sup-ann-list').innerHTML=(d.items||[]).map(function(a){return '<div>• '+tm(a.at)+' — '+e(a.text.slice(0,60))+' <b>(Telegram: '+a.sent+', ko\'rdi: '+a.seen+')</b></div>';}).join('');});}
-        function setSec(s){sec=s;uid=null;document.getElementById('sup-msgs').innerHTML='';document.getElementById('sup-head').textContent='Suhbatni tanlang';document.getElementById('sup-ann-title').textContent='Barcha '+AU[s]+' e\'lon';
+        function anns(){api('/admin/support/announcements?audience='+sec).then(function(d){var _al=document.getElementById('sup-ann-list');if(_al)_al.innerHTML=(d.items||[]).map(function(a){return '<div>• '+tm(a.at)+' — 📍'+e(a.city||'')+' — '+e(a.text.slice(0,60))+' <b>(Telegram: '+a.sent+', ko\'rdi: '+a.seen+')</b></div>';}).join('');});}
+        function setSec(s){sec=s;uid=null;document.getElementById('sup-msgs').innerHTML='';document.getElementById('sup-head').textContent='Suhbatni tanlang';var _at=document.getElementById('sup-ann-title');if(_at)_at.textContent='Barcha '+AU[s]+' e\'lon';
             document.querySelectorAll('#sup-tabs button').forEach(function(b){b.classList.toggle('bg-indigo-600',b.dataset.sec===s);b.classList.toggle('text-white',b.dataset.sec===s);});threads();anns();}
         document.addEventListener('click',function(ev){
             var t=ev.target.closest('#sup-tabs button');if(t){setSec(t.dataset.sec);return;}
@@ -3109,9 +3212,10 @@
         if(rs){rs.onclick=function(){var ta=document.getElementById('sup-reply'),v=ta.value.trim();if(!v||!uid)return;ta.value='';
             api('/admin/support/thread/'+uid+'/reply?section='+sec,'POST',{text:v}).then(function(r){thread();threads();if(!r.telegram)console.log('Telegramga yuborilmadi (ilova ichida baribir ko\'rinadi)');}).catch(function(x){alert(x.message);ta.value=v;});};
             document.getElementById('sup-reply').onkeydown=function(ev){if(ev.key==='Enter'&&!ev.shiftKey){ev.preventDefault();rs.click();}};
-            document.getElementById('sup-ann-send').onclick=function(){var ta=document.getElementById('sup-ann-text'),v=ta.value.trim();if(v.length<2)return;
-                if(!confirm('Barcha '+AU[sec]+' majburiy e\'lon yuborilsinmi?'))return;
-                api('/admin/support/announce','POST',{audience:sec,text:v}).then(function(r){ta.value='';alert('Yuborildi: '+r.recipients+' kishi (Telegram: '+r.telegram+')');anns();}).catch(function(x){alert(x.message);});};
+            var _as=document.getElementById('sup-ann-send');if(_as)_as.onclick=function(){var ta=document.getElementById('sup-ann-text'),v=ta.value.trim();if(v.length<2)return;
+                var cs=document.getElementById('sup-ann-city'),cid=cs&&cs.value?parseInt(cs.value):null,cname=cs&&cs.value?cs.options[cs.selectedIndex].text:'barcha shaharlardagi';
+                if(!confirm(cname+' '+AU[sec]+' majburiy e\'lon yuborilsinmi?'))return;
+                api('/admin/support/announce','POST',{audience:sec,text:v,city_id:cid}).then(function(r){ta.value='';alert('Yuborildi: '+r.recipients+' kishi (Telegram: '+r.telegram+')');anns();}).catch(function(x){alert(x.message);});};
             document.addEventListener('DOMContentLoaded',function(){setSec('partner');unread();});
             setInterval(function(){unread();if(visible()){threads();if(uid)thread(true);}},8000);
             window.addEventListener('pageshow',unread);}

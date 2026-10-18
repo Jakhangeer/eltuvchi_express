@@ -351,6 +351,7 @@
         let p2pCardLoading = false;
         let promoCode = '';
         let promoDiscountPercent = 0;
+        let promoFixedAmount = 0;
         let orderComment = '';
         let userLocation = null;
 
@@ -1301,7 +1302,7 @@
             const app = document.getElementById("app");
             const originalTotal = items.reduce((s, i) => s + i.product.price * i.qty, 0);
 
-            const promoDiscount = Math.round((originalTotal * promoDiscountPercent) / 100);
+            const promoDiscount = promoDiscountPercent > 0 ? Math.round((originalTotal * promoDiscountPercent) / 100) : Math.min(Math.round(promoFixedAmount), originalTotal);
             const totalAfterPromo = originalTotal - promoDiscount;
 
             // Keshbek hisobi
@@ -1353,7 +1354,7 @@
                                 Qo'llash
                             </button>
                         </div>
-                        ${promoDiscountPercent > 0 ? `<p class="text-[10px] text-emerald-600 font-bold mt-1">✓ ${promoDiscountPercent}% chegirma qo'llanildi!</p>` : ''}
+                        ${promoDiscountPercent > 0 ? `<p class="text-[10px] text-emerald-600 font-bold mt-1">✓ ${promoDiscountPercent}% chegirma qo'llanildi!</p>` : (promoFixedAmount > 0 ? `<p class="text-[10px] text-emerald-600 font-bold mt-1">✓ ${Math.round(promoFixedAmount).toLocaleString()} so'm chegirma qo'llanildi!</p>` : '')}
                     </div>
 
                     <div class="border-t border-slate-100/10 pt-3">
@@ -1506,18 +1507,21 @@
             });
         }
 
-        function applyPromoCode() {
+        async function applyPromoCode() {
             const code = document.getElementById("promo-input").value.trim().toUpperCase();
-            if (code === "PROMO10") {
-                promoCode = code;
-                promoDiscountPercent = 10;
-                alert("PROMO10 kod qabul qilindi! 10% chegirma berildi.");
-            } else if (code === "") {
-                promoCode = "";
-                promoDiscountPercent = 0;
-            } else {
-                alert("Noto'g'ri promo-kod!");
-                promoDiscountPercent = 0;
+            if (code === "") {
+                promoCode = ""; promoDiscountPercent = 0; promoFixedAmount = 0;
+                openCart(); return;
+            }
+            try {
+                const r = await api("/promo/check", { code });
+                promoCode = r.code;
+                promoDiscountPercent = r.percent || 0;
+                promoFixedAmount = r.percent ? 0 : (r.amount || 0);
+                alert("Promo-kod qabul qilindi!");
+            } catch (e) {
+                promoCode = ""; promoDiscountPercent = 0; promoFixedAmount = 0;
+                alert(e.message);
             }
             openCart();
         }
@@ -1663,6 +1667,7 @@
                 useCashback = false;
                 promoCode = '';
                 promoDiscountPercent = 0;
+                promoFixedAmount = 0;
                 if (tg && paymentMethod !== 'p2p') setTimeout(() => tg.close(), 3000);
             } catch (e) {
                 alert("Xatolik: " + e.message);

@@ -59,6 +59,7 @@ from models import (
     Banner,
     PromoCode,
     PromoCodeUsage,
+    BonusRule,
     FavoriteProduct,
     Card,
     OperatorPermission,
@@ -518,6 +519,7 @@ SECTION_LABELS_UZ = {
     "bonuscashback": "💸 Bonus/Cashback sozlamalari",
     "tugilgankun": "🎂 Tug'ilgan kunlar ro'yxati",
     "xabarlar": "💬 Chat va e'lonlar (hamkor/kuryer/mijoz xabarlari)",
+    "mahsulot_qoshish": "🍕 Do'konga yangi mahsulot qo'shish (o'z shahrida)",
 }
 DEFAULT_OPERATOR_SECTION_VISIBILITY = {
     # Kundalik operativ ish uchun shart bo'lgan bo'limlar — standart OCHIQ
@@ -537,6 +539,7 @@ DEFAULT_OPERATOR_SECTION_VISIBILITY = {
     "bonuscashback": True,
     "tugilgankun": True,
     "xabarlar": True,
+    "mahsulot_qoshish": False,   # standart YOPIQ — egasi ruxsat bergandagina operator mahsulot qo'sha oladi
 }
 # "xavfzone" (tizimni butunlay tozalash) — BU YERDA ATAYLAB YO'Q: shu bo'lim
 # har doim, hech qanday sozlamadan qat'i nazar, FAQAT OWNER'ga ko'rinadi va
@@ -1095,6 +1098,14 @@ async def admin_dashboard(
         _bq = _bq.where(or_(Banner.city_id.is_(None), Banner.city_id == current_user.city_id))
     banners = (await db.execute(_bq)).scalars().all()
 
+    _pq = select(PromoCode).order_by(PromoCode.id.desc())
+    _rq = select(BonusRule).order_by(BonusRule.id.desc())
+    if is_scoped_to_city(current_user):
+        _pq = _pq.where(PromoCode.city_id == current_user.city_id)
+        _rq = _rq.where(BonusRule.city_id == current_user.city_id)
+    promo_codes = (await db.execute(_pq)).scalars().all()
+    bonus_rules = (await db.execute(_rq)).scalars().all()
+
     analytics = None
     if is_owner:
         month_start = today.replace(day=1)
@@ -1192,6 +1203,8 @@ async def admin_dashboard(
             "birthday_clients_today": birthday_clients_today,
             "banners": banners,
             "now_utc": datetime.utcnow(),
+            "promo_codes": promo_codes,
+            "bonus_rules": bonus_rules,
             "current_city_scope": current_user.city_id if is_scoped_to_city(current_user) else None,
             "analytics": analytics,
             "operator_perms": operator_perms,
@@ -1597,6 +1610,56 @@ async def find_or_create_login_user(
     return new_user
 
 
+async def effective_bonus_value(db: AsyncSession, kind: str, city_id, default: float) -> float:
+    """Mijoz shahri va hozirgi vaqt bo'yicha amaldagi qiymat: shahar qoidasi > umumiy qoida > asosiy sozlama."""
+    now = datetime.utcnow()
+    rows = (await db.execute(
+        select(BonusRule).where(
+            BonusRule.kind == kind,
+            BonusRule.is_active == True,
+            or_(BonusRule.starts_at.is_(None), BonusRule.starts_at <= now),
+            or_(BonusRule.ends_at.is_(None), BonusRule.ends_at >= now),
+            or_(BonusRule.city_id.is_(None), BonusRule.city_id == city_id) if city_id is not None else BonusRule.city_id.is_(None),
+        ).order_by(BonusRule.id.desc())
+    )).scalars().all()
+    for r in rows:
+        if r.city_id is not None and r.city_id == city_id:
+            return r.value or 0.0
+    for r in rows:
+        if r.city_id is None:
+            return r.value or 0.0
+    return default or 0.0
+
+
+async def validate_promo_for_client(db: AsyncSession, code: str, client: User, lock: bool = False):
+    """Promo-kodni TO'LIQ tekshiradi (faol, muddat, shahar, limit, mijoz avval ishlatmaganmi).
+    (promo, None) yoki (None, xato_matni) qaytaradi."""
+    code = (code or "").strip().upper()
+    if not code:
+        return None, "Promo-kodni kiriting"
+    q = select(PromoCode).where(PromoCode.code == code)
+    if lock:
+        q = q.with_for_update()
+    promo = (await db.execute(q)).scalars().first()
+    if not promo or not promo.is_active:
+        return None, "Bunday promo-kod topilmadi yoki o'chirilgan"
+    now = datetime.utcnow()
+    if promo.starts_at and promo.starts_at > now:
+        return None, "Bu promo-kod hali boshlanmagan"
+    if promo.expires_at and promo.expires_at < now:
+        return None, "Bu promo-kodning muddati tugagan"
+    if promo.city_id is not None and promo.city_id != client.city_id:
+        return None, "Bu promo-kod sizning shahringizda amal qilmaydi"
+    if promo.max_uses and (promo.used_count or 0) >= promo.max_uses:
+        return None, "Bu promo-kod limiti tugagan"
+    used = (await db.execute(
+        select(PromoCodeUsage.id).where(PromoCodeUsage.promo_code_id == promo.id, PromoCodeUsage.client_id == client.id)
+    )).first()
+    if used:
+        return None, "Siz bu promo-koddan allaqachon foydalangansiz"
+    return promo, None
+
+
 async def _get_or_create_setting(db: AsyncSession) -> SystemSetting:
     result = await db.execute(select(SystemSetting))
     setting = result.scalars().first()
@@ -1726,13 +1789,15 @@ async def apply_cod_delivery_financials(db: AsyncSession, order: Order) -> None:
     client_result = await db.execute(select(User).where(User.id == order.client_id))
     client = client_result.scalars().first()
     if client:
-        if setting.cashback_earn_percent and setting.cashback_earn_percent > 0:
-            cashback_earned = order.total_price * (setting.cashback_earn_percent / 100)
+        _cb_pct = await effective_bonus_value(db, "cashback", client.city_id, setting.cashback_earn_percent)
+        if _cb_pct and _cb_pct > 0:
+            cashback_earned = order.total_price * (_cb_pct / 100)
             client.cashback_balance = (client.cashback_balance or 0) + cashback_earned
             order.cashback_earned = cashback_earned
 
         # Referal bonusi — faqat BIRINCHI marta, faqat kimdir taklif qilgan bo'lsa
-        if client.referred_by_id and client.referred_by_id != client.id and not client.referral_bonus_given and (setting.referral_bonus_amount or 0) > 0:
+        _ref_amt = await effective_bonus_value(db, "referral", client.city_id, setting.referral_bonus_amount)
+        if client.referred_by_id and client.referred_by_id != client.id and not client.referral_bonus_given and _ref_amt > 0:
             delivered_count_result = await db.execute(
                 select(func.count(Order.id)).where(Order.client_id == client.id, Order.status == OrderStatus.DELIVERED)
             )
@@ -1741,7 +1806,7 @@ async def apply_cod_delivery_financials(db: AsyncSession, order: Order) -> None:
                 referrer_result = await db.execute(select(User).where(User.id == client.referred_by_id))
                 referrer = referrer_result.scalars().first()
                 if referrer:
-                    bonus = setting.referral_bonus_amount
+                    bonus = _ref_amt
                     client.cashback_balance = (client.cashback_balance or 0) + bonus
                     referrer.cashback_balance = (referrer.cashback_balance or 0) + bonus
                     client.referral_bonus_given = True
@@ -2128,6 +2193,166 @@ async def update_cashback_setting(
     setting.bonus_cashback_text = bonus_cashback_text
     setting.cashback_visible = cashback_visible
     setting.cashback_earn_percent = cashback_earn_percent
+    await db.commit()
+    return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
+
+
+
+# ==================== PROMO-KODLAR va SHAHAR/MUDDATLI BONUS QOIDALARI ====================
+def _city_scope_value(city_id: str, current_user: User):
+    cid = None
+    if (city_id or "").strip():
+        try:
+            cid = int(city_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Shahar noto'g'ri")
+    if is_scoped_to_city(current_user):
+        cid = current_user.city_id  # operator faqat o'z shahri uchun
+    return cid
+
+
+def _opt_float(v: str, name: str, minimum: float = 0.0):
+    if not (v or "").strip():
+        return None
+    try:
+        f = float(v.replace(",", "."))
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"{name} son bo'lishi kerak")
+    if f != f or f in (float("inf"), float("-inf")) or f < minimum:
+        raise HTTPException(status_code=400, detail=f"{name} noto'g'ri")
+    return f
+
+
+def _scope_guard(obj, current_user: User):
+    if is_scoped_to_city(current_user) and obj.city_id != current_user.city_id:
+        raise HTTPException(status_code=403, detail="Bu yozuv sizning shahringizga tegishli emas")
+
+
+@admin_router.post("/admin/promo/create")
+async def promo_create(
+    code: str = Form(...),
+    discount_percent: str = Form(""),
+    discount_amount: str = Form(""),
+    max_uses: str = Form(""),
+    city_id: str = Form(""),
+    starts_at: str = Form(""),
+    expires_at: str = Form(""),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_section("bonuscashback")),
+):
+    code = (code or "").strip().upper().replace(" ", "")
+    if len(code) < 3 or len(code) > 32 or not code.replace("_", "").replace("-", "").isalnum():
+        raise HTTPException(status_code=400, detail="Kod 3–32 belgi: harf, raqam, - yoki _")
+    pct = _opt_float(discount_percent, "Foiz")
+    amt = _opt_float(discount_amount, "Summa")
+    if bool(pct) == bool(amt):
+        raise HTTPException(status_code=400, detail="Faqat bittasini kiriting: foiz YOKI summa")
+    if pct and pct > 100:
+        raise HTTPException(status_code=400, detail="Foiz 100 dan oshmasin")
+    mu = _opt_float(max_uses, "Foydalanish soni")
+    mu_i = int(mu) if mu else None
+    st, en = _parse_local_dt(starts_at), _parse_local_dt(expires_at)
+    if st and en and en <= st:
+        raise HTTPException(status_code=400, detail="Tugash vaqti boshlanishdan keyin bo'lsin")
+    exists = (await db.execute(select(PromoCode.id).where(PromoCode.code == code))).first()
+    if exists:
+        raise HTTPException(status_code=400, detail="Bunday kod allaqachon bor")
+    db.add(PromoCode(code=code, discount_percent=pct, discount_amount=amt, max_uses=mu_i, used_count=0,
+                     is_active=True, city_id=_city_scope_value(city_id, current_user), starts_at=st, expires_at=en))
+    await db.commit()
+    return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@admin_router.post("/admin/promo/{promo_id}/toggle")
+async def promo_toggle(promo_id: int, db: AsyncSession = Depends(get_db),
+                       current_user: User = Depends(require_section("bonuscashback"))):
+    p = await db.get(PromoCode, promo_id)
+    if not p:
+        raise HTTPException(status_code=404, detail="Topilmadi")
+    _scope_guard(p, current_user)
+    p.is_active = not p.is_active
+    await db.commit()
+    return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@admin_router.post("/admin/promo/{promo_id}/delete")
+async def promo_delete(promo_id: int, db: AsyncSession = Depends(get_db),
+                       current_user: User = Depends(require_section("bonuscashback"))):
+    p = await db.get(PromoCode, promo_id)
+    if not p:
+        raise HTTPException(status_code=404, detail="Topilmadi")
+    _scope_guard(p, current_user)
+    # Buyurtmalardagi havola va foydalanish tarixi saqlanadi: ishlatilgan kod o'chirilmaydi, o'chiriladi = nofaol
+    used = (await db.execute(select(PromoCodeUsage.id).where(PromoCodeUsage.promo_code_id == p.id).limit(1))).first()
+    ordered = (await db.execute(select(Order.id).where(Order.promo_code_id == p.id).limit(1))).first()
+    if used or ordered:
+        p.is_active = False
+    else:
+        await db.delete(p)
+    await db.commit()
+    return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
+
+
+_RULE_SECTION = {"cashback": "bonuscashback", "referral": "referal", "birthday": "tugilgankun"}
+
+
+async def _rule_section_check(db: AsyncSession, kind: str, current_user: User):
+    sec = _RULE_SECTION.get(kind)
+    if not sec:
+        raise HTTPException(status_code=400, detail="Qoida turi noto'g'ri")
+    if not await operator_can_see(db, current_user, sec):
+        raise HTTPException(status_code=403, detail="Bu bo'limga huquqingiz yo'q")
+
+
+@admin_router.post("/admin/bonus-rules/create")
+async def bonus_rule_create(
+    kind: str = Form(...),
+    value: str = Form(...),
+    note: str = Form(""),
+    city_id: str = Form(""),
+    starts_at: str = Form(""),
+    ends_at: str = Form(""),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user),
+):
+    await _rule_section_check(db, kind, current_user)
+    v = _opt_float(value, "Qiymat")
+    if v is None:
+        raise HTTPException(status_code=400, detail="Qiymatni kiriting")
+    if kind == "cashback" and v > 100:
+        raise HTTPException(status_code=400, detail="Cashback foizi 100 dan oshmasin")
+    st, en = _parse_local_dt(starts_at), _parse_local_dt(ends_at)
+    if st and en and en <= st:
+        raise HTTPException(status_code=400, detail="Tugash vaqti boshlanishdan keyin bo'lsin")
+    db.add(BonusRule(kind=kind, value=v, note=(note or "").strip()[:200] or None,
+                     city_id=_city_scope_value(city_id, current_user), starts_at=st, ends_at=en,
+                     is_active=True, created_by_id=current_user.id))
+    await db.commit()
+    return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@admin_router.post("/admin/bonus-rules/{rule_id}/toggle")
+async def bonus_rule_toggle(rule_id: int, db: AsyncSession = Depends(get_db),
+                            current_user: User = Depends(get_current_admin_user)):
+    r = await db.get(BonusRule, rule_id)
+    if not r:
+        raise HTTPException(status_code=404, detail="Topilmadi")
+    await _rule_section_check(db, r.kind, current_user)
+    _scope_guard(r, current_user)
+    r.is_active = not r.is_active
+    await db.commit()
+    return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
+
+
+@admin_router.post("/admin/bonus-rules/{rule_id}/delete")
+async def bonus_rule_delete(rule_id: int, db: AsyncSession = Depends(get_db),
+                            current_user: User = Depends(get_current_admin_user)):
+    r = await db.get(BonusRule, rule_id)
+    if not r:
+        raise HTTPException(status_code=404, detail="Topilmadi")
+    await _rule_section_check(db, r.kind, current_user)
+    _scope_guard(r, current_user)
+    await db.delete(r)
     await db.commit()
     return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
 
@@ -2570,8 +2795,20 @@ async def create_partner(
     login_phone: Optional[str] = Form(None),
     login_password: Optional[str] = Form(None),
     db: AsyncSession = Depends(get_db),
-    owner: User = Depends(require_owner),
+    owner: User = Depends(get_current_admin_user),
 ):
+    operator_mode = owner.role != UserRole.OWNER
+    if operator_mode:
+        # Operator: faqat o'z shahri; komissiyani o'zi belgilay olmaydi (tizim standarti);
+        # hamkor PIN-ni operator kiritmaydi — hamkor o'zi o'rnatadi.
+        if not is_scoped_to_city(owner) or owner.city_id is None:
+            raise HTTPException(status_code=403, detail="Shahringiz belgilanmagan — egasi bilan bog'laning")
+        city_id = owner.city_id
+        _st = await _get_or_create_setting(db)
+        commission_rate = _st.service_commission_percent if _st and _st.service_commission_percent is not None else 10.0
+        login_password = None
+        if not (login_phone or "").strip():
+            raise HTTPException(status_code=400, detail="Hamkorning telefon raqamini kiriting")
     new_partner = PartnerProfile(
         brand_name=brand_name,
         category=category,
@@ -2594,6 +2831,23 @@ async def create_partner(
     partner_user = None
     if login_phone and login_password:
         partner_user = await find_or_create_login_user(db, login_phone, login_password, brand_name, city_id)
+        new_partner.user_id = partner_user.id
+    elif operator_mode:
+        # Faqat raqam: mavjud akkauntning parolini O'ZGARTIRMAYMIZ; yangi bo'lsa tasodifiy
+        # (hech kim bilmaydigan) parol bilan yaratiladi — hamkor PIN-ni keyin o'zi o'rnatadi.
+        import secrets as _sec
+        _ph = normalize_phone(login_phone) or login_phone.strip()
+        _u = await find_user_by_phone(db, _ph)
+        if _u:
+            if _u.role in (UserRole.OWNER, UserRole.ADMIN):
+                raise HTTPException(status_code=400, detail="Bu raqam admin/operator akkauntiga tegishli")
+            partner_user = _u
+        else:
+            partner_user = User(full_name=brand_name, phone_number=_ph,
+                                password_hash=hash_password(_sec.token_hex(8)),
+                                role=UserRole.CLIENT, city_id=city_id, is_active=True)
+            db.add(partner_user)
+            await db.flush()
         new_partner.user_id = partner_user.id
 
     await db.commit()
@@ -2728,11 +2982,17 @@ async def create_product(
     category: str = Form("Boshqa"),
     image: Optional[UploadFile] = File(None),
     db: AsyncSession = Depends(get_db),
-    owner: User = Depends(require_owner),
+    owner: User = Depends(get_current_admin_user),
 ):
     partner_query = await db.execute(select(PartnerProfile).where(PartnerProfile.id == partner_id))
-    if not partner_query.scalars().first():
+    _pp = partner_query.scalars().first()
+    if not _pp:
         raise HTTPException(status_code=404, detail="Bunday do'kon topilmadi")
+    if owner.role != UserRole.OWNER:
+        if not await operator_can_see(db, owner, "mahsulot_qoshish"):
+            raise HTTPException(status_code=403, detail="Mahsulot qo'shishga egasi ruxsat bermagan")
+        if _pp.city_id != owner.city_id:
+            raise HTTPException(status_code=403, detail="Bu do'kon sizning shahringizga tegishli emas")
 
     image_data, image_mime = None, None
     if image and image.filename:
@@ -3143,7 +3403,7 @@ async def mark_birthday_bonus_given(
     db.add(Transaction(
         user_id=client.id,
         type=TransactionType.DEPOSIT,
-        amount=setting.birthday_bonus_amount,
+        amount=await effective_bonus_value(db, "birthday", client.city_id, setting.birthday_bonus_amount),
         note=f"Tug'ilgan kun bonusi — {client.full_name}",
         created_by_id=owner.id,
     ))
@@ -4724,6 +4984,25 @@ async def reject_courier_application(
 shop_router = APIRouter(prefix="/api/shop", tags=["Mijoz Mini App"])
 
 
+class PromoCheckBody(BaseModel):
+    init_data: str
+    code: str
+
+
+@shop_router.post("/promo/check")
+async def shop_promo_check(body: PromoCheckBody, db: AsyncSession = Depends(get_db)):
+    tg_user = _get_telegram_user_or_403(body.init_data)
+    client = (await db.execute(
+        select(User).where(_ident_cond(tg_user), User.role == UserRole.CLIENT)
+    )).scalars().first()
+    if not client:
+        raise HTTPException(status_code=404, detail="Mijoz topilmadi")
+    promo, err = await validate_promo_for_client(db, body.code, client)
+    if not promo:
+        raise HTTPException(status_code=400, detail=err)
+    return {"code": promo.code, "percent": promo.discount_percent or 0, "amount": promo.discount_amount or 0}
+
+
 @shop_router.get("/promotions")
 async def shop_promotions(city_id: Optional[int] = None, db: AsyncSession = Depends(get_db)):
     """Mini App tepasidagi banner(lar) va referal/cashback ma'lumotlarini
@@ -5278,31 +5557,14 @@ async def shop_create_order(body: ShopOrderBody, db: AsyncSession = Depends(get_
     # ---- PROMO-KOD (bazadan HAQIQIY tekshiriladi, frontend'dan ishonib olinmaydi) ----
     discount_amount = 0.0
     promo_code_obj = None
-    if body.promo_code:
-        promo_result = await db.execute(
-            select(PromoCode).where(PromoCode.code == body.promo_code.strip().upper(), PromoCode.is_active == True)
-        )
-        promo_code_obj = promo_result.scalars().first()
-        if promo_code_obj:
-            expired = promo_code_obj.expires_at and promo_code_obj.expires_at < datetime.utcnow()
-            exhausted = promo_code_obj.max_uses and promo_code_obj.used_count >= promo_code_obj.max_uses
-            if expired or exhausted:
-                promo_code_obj = None
-            else:
-                already_used = await db.execute(
-                    select(PromoCodeUsage).where(
-                        PromoCodeUsage.promo_code_id == promo_code_obj.id,
-                        PromoCodeUsage.client_id == client.id,
-                    )
-                )
-                if already_used.scalars().first():
-                    promo_code_obj = None  # bitta mijoz bir kodni faqat bir marta ishlatadi
-
-        if promo_code_obj:
-            if promo_code_obj.discount_percent:
-                discount_amount = total_price * (promo_code_obj.discount_percent / 100)
-            elif promo_code_obj.discount_amount:
-                discount_amount = min(promo_code_obj.discount_amount, total_price)
+    if (body.promo_code or "").strip():
+        promo_code_obj, _perr = await validate_promo_for_client(db, body.promo_code, client, lock=True)
+        if not promo_code_obj:
+            raise HTTPException(status_code=400, detail=_perr)
+        if promo_code_obj.discount_percent:
+            discount_amount = total_price * (promo_code_obj.discount_percent / 100)
+        elif promo_code_obj.discount_amount:
+            discount_amount = min(promo_code_obj.discount_amount, total_price)
 
     # ---- KESHBEKNI ISHLATISH (mavjud balansdan ko'p ishlatib bo'lmaydi) ----
     cashback_used = 0.0
@@ -7592,6 +7854,7 @@ async def admin_sup_reply(user_id: int, section: str, body: SupTextBody, db: Asy
 class AnnounceBody(BaseModel):
     audience: str
     text: str
+    city_id: Optional[int] = None   # None = barcha shaharlar (faqat egasi tanlaydi)
 
 
 async def _ann_recipients(db: AsyncSession, audience: str, city_id: Optional[int] = None) -> list:
@@ -7611,14 +7874,16 @@ async def _ann_recipients(db: AsyncSession, audience: str, city_id: Optional[int
 
 
 @support_admin_router.post("/admin/support/announce")
-async def admin_sup_announce(body: AnnounceBody, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_section("xabarlar"))):
-    """Butun bo'limga (barcha hamkor / kuryer / mijoz) majburiy e'lon: Telegram + ilova ichida «Tushundim» bosilguncha chiqadi."""
+async def admin_sup_announce(body: AnnounceBody, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_owner)):
+    """Faqat EGASI: bo'limga (hamkor / kuryer / mijoz) — barcha shaharlarga yoki tanlangan shaharga — majburiy e'lon:
+    Telegram + ilova ichida «Tushundim» bosilguncha chiqadi. Operator e'lon bera olmaydi (faqat javob yozadi)."""
     audience = _sup_section(body.audience)
     text = (body.text or "").strip()[:SUP_MAX_LEN]
     if len(text) < 2:
         raise HTTPException(status_code=400, detail="E'lon matnini yozing")
-    # Operator — faqat o'z shahriga; egasi — barcha shaharlarga
-    scope_city = current_user.city_id if (current_user.role == UserRole.ADMIN and current_user.city_id is not None) else None
+    scope_city = body.city_id
+    if scope_city is not None and not (await db.execute(select(City.id).where(City.id == scope_city))).first():
+        raise HTTPException(status_code=404, detail="Shahar topilmadi")
     ann = Announcement(audience=audience, text=text, created_by_id=current_user.id, city_id=scope_city)
     db.add(ann)
     await db.commit()
@@ -7653,11 +7918,13 @@ async def admin_sup_announcements(audience: str, db: AsyncSession = Depends(get_
     audience = _sup_section(audience)
     aq = select(Announcement).where(Announcement.audience == audience)
     if current_user.role == UserRole.ADMIN and current_user.city_id is not None:
-        aq = aq.where(Announcement.city_id == current_user.city_id)
+        aq = aq.where(or_(Announcement.city_id == current_user.city_id, Announcement.city_id.is_(None)))
     rows = (await db.execute(aq.order_by(Announcement.id.desc()).limit(15))).scalars().all()
+    _cn = {c.id: c.name for c in (await db.execute(select(City))).scalars().all()}
     acks = dict((await db.execute(select(AnnouncementAck.announcement_id, func.count(AnnouncementAck.id)).where(
         AnnouncementAck.announcement_id.in_([a.id for a in rows] or [0])).group_by(AnnouncementAck.announcement_id))).all())
-    return {"items": [{"id": a.id, "text": a.text, "at": a.created_at.isoformat(), "sent": a.sent_count or 0, "seen": acks.get(a.id, 0)} for a in rows]}
+    return {"items": [{"id": a.id, "text": a.text, "at": a.created_at.isoformat(), "sent": a.sent_count or 0, "seen": acks.get(a.id, 0),
+                       "city": _cn.get(a.city_id) if a.city_id else "Barcha shaharlar"} for a in rows]}
 
 
 # ==================== BAHOLASH (platforma, kuryer, hamkor) ====================
@@ -7747,10 +8014,12 @@ async def courier_rating(db: AsyncSession = Depends(get_db), current_user: User 
 
 
 @support_admin_router.get("/admin/ratings/summary")
-async def admin_ratings_summary(db: AsyncSession = Depends(get_db), current_user: User = Depends(require_section("xabarlar"))):
+async def admin_ratings_summary(city_id: Optional[int] = None, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_section("xabarlar"))):
     scope = []
     if current_user.role == UserRole.ADMIN and current_user.city_id is not None:
-        scope.append(OrderRating.user_id.in_(select(User.id).where(User.city_id == current_user.city_id)))
+        city_id = current_user.city_id          # operator — faqat o'z shahri
+    if city_id is not None:
+        scope.append(OrderRating.user_id.in_(select(User.id).where(User.city_id == city_id)))
     pl = (await db.execute(select(func.avg(OrderRating.platform_stars), func.count(OrderRating.platform_stars))
                            .where(OrderRating.platform_stars.isnot(None), *scope))).first()
 

@@ -616,6 +616,27 @@ class PromoCode(Base):
     is_active = Column(Boolean, default=True)
     expires_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+    # Qaysi shahar mijozlariga amal qiladi (NULL = barcha shaharlar) va qachondan boshlab.
+    city_id = Column(Integer, ForeignKey("cities.id"), nullable=True)
+    starts_at = Column(DateTime, nullable=True)
+
+
+class BonusRule(Base):
+    """Cashback / referal / tug'ilgan kun bonusi uchun SHAHAR va MUDDATLI qoida.
+    Mijoz shahriga mos, hozir amal qilayotgan, faol qoida SystemSetting'dagi
+    umumiy qiymatdan USTUN turadi (shahar qoidasi > umumiy qoida > asosiy sozlama)."""
+    __tablename__ = "bonus_rules"
+
+    id = Column(Integer, primary_key=True, index=True)
+    kind = Column(String, nullable=False, index=True)   # cashback | referral | birthday
+    value = Column(Float, nullable=False, default=0.0)  # cashback: foiz; referral/birthday: so'm
+    note = Column(String, nullable=True)
+    city_id = Column(Integer, ForeignKey("cities.id"), nullable=True)  # NULL = hamma shahar
+    starts_at = Column(DateTime, nullable=True)
+    ends_at = Column(DateTime, nullable=True)
+    is_active = Column(Boolean, default=True)
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 
 class PromoCodeUsage(Base):
