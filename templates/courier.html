@@ -159,7 +159,7 @@
     </header>
 
     <!-- ONLINE/OFFLINE HOLATI VA JONLI JOYLASHUV -->
-    <div class="container zm-wide mx-auto px-4 pt-4 max-w-2xl relative z-10">
+    <div class="container zm-wide mx-auto px-4 pt-4 max-w-2xl relative z-10" data-cptab="dashboard">
         <div class="glass fade-up rounded-2xl p-4 flex items-center justify-between gap-3">
             <div class="min-w-0">
                 <p class="text-sm font-bold flex items-center gap-2 {% if courier_profile and courier_profile.is_online %}text-emerald-400{% else %}text-slate-500{% endif %}" id="online-status-label">
@@ -178,11 +178,11 @@
         </div>
     </div>
 
-    <div class="container zm-wide zm-cols mx-auto p-4 space-y-4 max-w-2xl relative z-10">
+    <div class="container zm-wide zm-cols mx-auto p-4 pb-28 space-y-4 max-w-2xl relative z-10" id="cp-main">
 
         <!-- BLOKLANGAN OGOHLANTIRISHI -->
         {% if courier_profile and courier_profile.is_blocked %}
-        <div class="fade-up rounded-2xl p-4" style="background:rgba(244,63,94,.12); border:1px solid rgba(244,63,94,.35);">
+        <div data-cptab="dashboard" class="fade-up rounded-2xl p-4" style="background:rgba(244,63,94,.12); border:1px solid rgba(244,63,94,.35);">
             <p class="text-sm font-bold text-rose-300 flex items-center gap-2">🚫 Siz vaqtincha bloklangansiz</p>
             <p class="text-xs text-rose-200/80 mt-1">
                 Administrator sizni vaqtincha bloklagan — yangi buyurtma qabul qila olmaysiz. Savollar bo'lsa administratorga murojaat qiling.
@@ -192,7 +192,7 @@
 
         <!-- BALANS (oldindan to'ldiriladigan hisob) -->
         {% set bal = (courier_profile.balance or 0) if courier_profile else 0 %}
-        <div class="glass fade-up stagger-1 rounded-2xl p-4" id="balance-card" data-live="c-balance">
+        <div class="glass fade-up stagger-1 rounded-2xl p-4" id="balance-card" data-live="c-balance" data-cptab="dashboard">
             <div class="flex justify-between items-center">
                 <span class="text-xs text-slate-400">💰 Sizning balansingiz</span>
                 <span class="text-xl font-extrabold {% if bal > 0 %}text-emerald-400{% elif bal < 0 %}text-rose-400{% else %}text-slate-300{% endif %}">
@@ -206,13 +206,17 @@
             {% if reserved_hold and reserved_hold > 0 %}
             <p class="text-[11px] text-amber-300 mt-1.5">Yo'ldagi buyurtmalar uchun band: {{ "%.0f"|format(reserved_hold) }} so'm · Yangi buyurtma uchun mavjud: {{ "%.0f"|format(free_balance if free_balance > 0 else 0) }} so'm</p>
             {% endif %}
+            <div class="grid grid-cols-2 gap-2 mt-3">
+                <button type="button" onclick="cpOpenCard('topup-card')" class="btn-press py-2.5 rounded-xl text-sm font-bold text-white" style="background:#10b981">➕ To'ldirish</button>
+                <button type="button" onclick="cpOpenCard('withdraw-card')" class="btn-press py-2.5 rounded-xl text-sm font-bold text-white" style="background:#6366f1">💸 Yechib olish</button>
+            </div>
             {% if bal < 0 %}
             <p class="text-[11px] text-rose-300 mt-1.5">Balansingiz manfiy — iltimos, quyidagi "Balansni to'ldirish" orqali to'ldiring.</p>
             {% endif %}
         </div>
 
         <!-- BALANSNI TO'LDIRISH: admin kartasi + chek yuklash -->
-        <div class="glass fade-up stagger-1 rounded-2xl p-4" id="topup-card">
+        <div class="glass fade-up stagger-1 rounded-2xl p-4 hidden" id="topup-card" data-cptab="dashboard">
             <div class="flex items-center justify-between mb-2">
                 <h2 class="text-sm font-extrabold flex items-center gap-1.5">➕ Balansni to'ldirish</h2>
                 <span class="text-[10px] text-slate-500">Admin tasdiqlaydi</span>
@@ -261,7 +265,7 @@
         {% set available = (bal - frozen) if courier_profile else 0 %}
         {% if available < 0 %}{% set available = 0 %}{% endif %}
         {% set can_request = available >= MIN_WITHDRAWAL_AMOUNT and cards %}
-        <div class="glass fade-up stagger-1 rounded-2xl p-4" id="withdraw-card">
+        <div class="glass fade-up stagger-1 rounded-2xl p-4 hidden" id="withdraw-card" data-cptab="dashboard">
             <div class="flex items-center justify-between mb-3">
                 <h2 class="text-sm font-extrabold flex items-center gap-1.5">💸 Pul yechish so'rovi</h2>
                 <span class="text-[10px] text-slate-500">Admin tasdiqlaydi</span>
@@ -323,8 +327,18 @@
             {% endif %}
         </div>
 
+        <!-- KURYER PROFIL -->
+        <div class="glass fade-up stagger-1 rounded-2xl p-4" data-cptab="profile">
+            <h2 class="text-sm font-extrabold mb-2">🛵 Kuryer profil</h2>
+            <div class="text-sm space-y-1">
+                <div class="flex justify-between"><span class="text-slate-400">Ism</span><b>{{ current_user.full_name }}</b></div>
+                <div class="flex justify-between"><span class="text-slate-400">Telefon</span><b>{{ current_user.phone_number }}</b></div>
+                <div class="flex justify-between"><span class="text-slate-400">Holat</span><b>{% if courier_profile and courier_profile.is_online %}🟢 Onlayn{% else %}⚪ Oflayn{% endif %}</b></div>
+            </div>
+        </div>
+
         <!-- KARTALARIM -->
-        <div class="glass fade-up stagger-1 rounded-2xl p-4">
+        <div class="glass fade-up stagger-1 rounded-2xl p-4" data-cptab="profile">
             <div class="flex items-center justify-between mb-3">
                 <h2 class="text-sm font-extrabold flex items-center gap-1.5">💳 Kartalarim <span class="text-slate-500 font-normal">({{ cards|length }}/{{ MAX_CARDS }})</span></h2>
                 {% if cards|length < MAX_CARDS %}
@@ -353,7 +367,7 @@
             </form>
         </div>
 
-        <div data-live="c-active">
+        <div data-live="c-active" data-cptab="dashboard">
         {% if my_active_orders %}
         <!-- HOZIR YETKAZAYOTGAN BUYURTMA -->
         <div class="active-order-card glass-strong fade-up stagger-2 p-5 rounded-2xl">
@@ -410,11 +424,11 @@
 
         {% if ai_on %}
         <!-- ZOOMO AI -->
-        <div class="glass fade-up stagger-3 p-5 rounded-2xl" id="zm-ai-courier" data-led="{{ '1' if ai_led_on else '0' }}"></div>
+        <div class="glass fade-up stagger-3 p-5 rounded-2xl" id="zm-ai-courier" data-led="0" data-cptab="dashboard"></div>
         {% endif %}
 
         <!-- BO'SH BUYURTMALAR -->
-        <div class="glass fade-up stagger-3 p-5 rounded-2xl" data-live="c-available">
+        <div class="glass fade-up stagger-3 p-5 rounded-2xl" data-live="c-available" data-cptab="dashboard">
             <h2 class="text-base font-extrabold mb-3 flex items-center gap-2">📦 Yangi Buyurtmalar</h2>
             <div class="space-y-2">
                 {% for order in available_orders %}
@@ -450,7 +464,7 @@
         </div>
 
         <!-- TARIX -->
-        <div class="glass fade-up stagger-4 p-5 rounded-2xl" data-live="c-history">
+        <div class="glass fade-up stagger-4 p-5 rounded-2xl" data-live="c-history" data-cptab="history">
             <h2 class="text-base font-extrabold mb-3">📜 Yetkazilgan Buyurtmalar</h2>
             <div class="space-y-1 max-h-64 overflow-y-auto">
                 {% for order in history_orders %}
@@ -465,7 +479,7 @@
         </div>
 
         <!-- O'Z-O'ZINI BAND QILGAN SHAXS REKVIZITLARI -->
-        <div class="glass fade-up stagger-5 p-5 rounded-2xl">
+        <div class="glass fade-up stagger-5 p-5 rounded-2xl" data-cptab="profile">
             <h2 class="text-base font-extrabold mb-1">🧾 O'z-o'zini band qilgan shaxs</h2>
             <p class="text-[11px] text-slate-500 mb-3">To'lovlar uchun rekvizitlar. Sahifada yashirin turadi — ko'rish uchun maxfiy javobingiz so'raladi.</p>
             {% set has_se = courier_profile and courier_profile.pinfl %}
@@ -485,17 +499,8 @@
         </div>
         <script>document.addEventListener("DOMContentLoaded",function(){if(window.ZMReveal){ZMReveal.cards({box:"cards-box",base:"/courier"});ZMReveal.legal({button:"legal-show",form:"legal-form",info:"legal-info",base:"/courier"});}});</script>
 
-        <!-- QO'SHIMCHA HIMOYA -->
-        <div class="glass fade-up stagger-5 p-5 rounded-2xl">
-            <h2 class="text-base font-extrabold mb-1">🔐 Qo'shimcha himoya</h2>
-            <p class="text-[11px] text-slate-500 mb-3">Pul yechish va sozlamalar uchun maxfiy javob. Faqat siz bilasiz.</p>
-            <button type="button" onclick="ZMSec.manage()" class="px-4 py-2 rounded-xl bg-amber-500 text-white text-xs font-bold">🔐 Maxfiy javoblarim</button>
-        </div>
-
-        <!-- BILDIRISHNOMA OVOZI -->
-        <div class="glass fade-up stagger-5 p-5 rounded-2xl">
-            <h2 class="text-base font-extrabold mb-1">🔔 Bildirishnoma ovozi</h2>
-            <p class="text-[11px] text-slate-500 mb-3">Yangi buyurtma kelganda qaysi ovoz chalinishini tanlang.</p>
+        <!-- SOZLAMALAR (yig'iladigan guruhlar) -->
+        <details class="glass rounded-2xl p-4 cp-grp" data-cptab="settings"><summary class="text-sm font-extrabold cursor-pointer flex items-center justify-between">🔔 Bildirishnomalar<span class="cp-chev text-slate-500">▾</span></summary><div class="mt-3"><p class="text-[11px] text-slate-500 mb-3">Yangi buyurtma kelganda qaysi ovoz chalinishini tanlang.</p>
             <div class="space-y-2" id="sound-options">
                 {% for key, label in COURIER_SOUND_OPTIONS.items() %}
                 <label class="sound-pill flex items-center justify-between rounded-xl p-3 cursor-pointer {% if courier_profile and courier_profile.notification_sound == key %}selected{% endif %}"
@@ -508,10 +513,56 @@
                 </label>
                 {% endfor %}
             </div>
-            <p id="sound-save-status" class="text-[11px] text-emerald-400 mt-2 h-4"></p>
-        </div>
-
+            <p id="sound-save-status" class="text-[11px] text-emerald-400 mt-2 h-4"></p></div></details>
+        <details class="glass rounded-2xl p-4 cp-grp" data-cptab="settings"><summary class="text-sm font-extrabold cursor-pointer flex items-center justify-between">🎨 Panel sozlamalari<span class="cp-chev text-slate-500">▾</span></summary><div class="mt-3"><p class="text-[11px] text-slate-500 mb-3">Mavzu (yorug'/qorong'i), fon va til.</p>
+            <button type="button" data-zm-settings="all" class="px-4 py-2 rounded-xl bg-indigo-500 text-white text-xs font-bold">🎨 Mavzu va tilni sozlash</button></div></details>
+        <details class="glass rounded-2xl p-4 cp-grp" data-cptab="settings"><summary class="text-sm font-extrabold cursor-pointer flex items-center justify-between">🔐 Xavfsizlik<span class="cp-chev text-slate-500">▾</span></summary><div class="mt-3"><p class="text-[11px] text-slate-500 mb-3">Pul yechish va sozlamalar uchun maxfiy javob. Faqat siz bilasiz.</p>
+            <button type="button" onclick="ZMSec.manage()" class="px-4 py-2 rounded-xl bg-amber-500 text-white text-xs font-bold">🔐 Maxfiy javoblarim</button></div></details>
+        <details class="glass rounded-2xl p-4 cp-grp" data-cptab="settings"><summary class="text-sm font-extrabold cursor-pointer flex items-center justify-between">💬 Aloqa<span class="cp-chev text-slate-500">▾</span></summary><div class="mt-3"><p class="text-[11px] text-slate-500 mb-3">Savol yoki muammo bo'lsa administratsiyaga yozing.</p>
+            <button type="button" onclick="window.ZMSupport&&ZMSupport.open()" class="px-4 py-2 rounded-xl bg-sky-500 text-white text-xs font-bold">💬 Administratsiya bilan chat</button></div></details>
+        {% if ai_led_on %}
+        <details class="glass rounded-2xl p-4 cp-grp" data-cptab="settings"><summary class="text-sm font-extrabold cursor-pointer flex items-center justify-between">📺 LED ekran<span class="cp-chev text-slate-500">▾</span></summary><div class="mt-3"><p class="text-[11px] text-slate-500 mb-3">Sumkangizdagi LED ekranda reklama ko'rsatiladi.</p>
+            <a href="/courier/led" class="block text-center text-sm font-bold py-2.5 rounded-xl text-white" style="background:var(--accent,#f59e0b)">📺 Sumka LED ekranini ochish</a></div></details>
+        {% endif %}
     </div>
+
+    <style>
+        body[data-cp="dashboard"] [data-cptab]:not([data-cptab="dashboard"]),
+        body[data-cp="history"] [data-cptab]:not([data-cptab="history"]),
+        body[data-cp="profile"] [data-cptab]:not([data-cptab="profile"]),
+        body[data-cp="settings"] [data-cptab]:not([data-cptab="settings"]){display:none!important}
+        :root{--zmsp-b:84px}
+        #cp-nav{position:fixed;left:0;right:0;bottom:0;z-index:50;display:grid;grid-template-columns:repeat(4,1fr);padding:6px 6px calc(6px + env(safe-area-inset-bottom));background:rgba(15,23,42,.92);backdrop-filter:blur(14px);border-top:1px solid rgba(255,255,255,.1)}
+        #cp-nav button{display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 0;border-radius:12px;color:#94a3b8;font-size:10px;font-weight:700;background:none;border:0}
+        #cp-nav button span.ic{font-size:20px;line-height:1}
+        #cp-nav button.on{color:#fff;background:rgba(99,102,241,.35)}
+        details.cp-grp[open] .cp-chev{transform:rotate(180deg)}
+        details.cp-grp summary{list-style:none}details.cp-grp summary::-webkit-details-marker{display:none}
+    </style>
+    <nav id="cp-nav" aria-label="Kuryer menyusi">
+        <button type="button" data-tab="dashboard"><span class="ic">🏠</span>Dashboard</button>
+        <button type="button" data-tab="history"><span class="ic">📜</span>Tarix</button>
+        <button type="button" data-tab="profile"><span class="ic">👤</span>Profil</button>
+        <button type="button" data-tab="settings"><span class="ic">⚙️</span>Sozlamalar</button>
+    </nav>
+    <script>
+        function cpTab(n){
+            if(['dashboard','history','profile','settings'].indexOf(n)<0)n='dashboard';
+            document.body.setAttribute('data-cp',n);
+            document.querySelectorAll('#cp-nav button').forEach(function(b){b.classList.toggle('on',b.getAttribute('data-tab')===n);});
+            try{localStorage.setItem('cp_tab',n);}catch(e){}
+            if(location.hash!=='#'+n)history.replaceState(null,'','#'+n);
+            window.scrollTo(0,0);
+        }
+        function cpOpenCard(id){
+            ['topup-card','withdraw-card'].forEach(function(x){var e=document.getElementById(x);if(e&&x!==id)e.classList.add('hidden');});
+            var el=document.getElementById(id);if(!el)return;
+            el.classList.toggle('hidden');
+            if(!el.classList.contains('hidden'))el.scrollIntoView({behavior:'smooth',block:'start'});
+        }
+        document.querySelectorAll('#cp-nav button').forEach(function(b){b.addEventListener('click',function(){cpTab(b.getAttribute('data-tab'));});});
+        (function(){var t=(location.hash||'').slice(1);if(!t){try{t=localStorage.getItem('cp_tab')||'';}catch(e){}}cpTab(t||'dashboard');})();
+    </script>
 
     <script>
         // ---- FON MAVZUSI (Obsidian / Aurora / Sunset / Midnight) ----
@@ -876,9 +927,9 @@
     <script src="/static/js/zm-secure.js?v=2"></script>
     <script src="/static/js/zm-reveal.js?v=2"></script>
     <script src="/static/js/zm-support.js?v=2"></script>
-    <script src="/static/js/zm-ai.js?v=3"></script>
-    <script>document.addEventListener("DOMContentLoaded",function(){if(window.ZMSupport)ZMSupport.mount({base:"/courier/support",ratingUrl:"/courier/rating"});});</script>
-    {% if ai_help_on %}<script>document.addEventListener("DOMContentLoaded",function(){if(window.ZMAI)ZMAI.mountHelp({url:"/courier/ai/help"});});</script>{% endif %}
+    <script src="/static/js/zm-ai.js?v=4"></script>
+    <script>document.addEventListener("DOMContentLoaded",function(){if(window.ZMSupport)ZMSupport.mount({base:"/courier/support",ratingUrl:"/courier/rating",bottom:84});});</script>
+    {% if ai_help_on %}<script>document.addEventListener("DOMContentLoaded",function(){if(window.ZMAI)ZMAI.mountHelp({url:"/courier/ai/help",bottom:84});});</script>{% endif %}
     <script>document.addEventListener("DOMContentLoaded",function(){var e=document.getElementById("zm-ai-courier");if(e&&window.ZMAI)ZMAI.mountCourier(e);});</script>
 </body>
 </html>

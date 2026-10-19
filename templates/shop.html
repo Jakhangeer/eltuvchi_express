@@ -297,10 +297,13 @@
                 <h2 class="text-lg font-black text-title">✨ ZooMo AI</h2>
                 <button type="button" onclick="closeAI()" class="w-9 h-9 rounded-2xl bg-slate-100 text-slate-700" aria-label="Yopish"><i class="fa-solid fa-xmark"></i></button>
             </div>
-            <p class="text-xs text-sub mb-3">Nima xohlayotganingizni yozing yoki ayting: «uchta lavash va bitta kola», «tomog'im og'riyapti», «charchadim, shirin nimadir».</p>
+            <p class="text-xs text-sub mb-3">Nima xohlayotganingizni yozing yoki ayting: «uchta lavash va bitta kola», «tomog'im og'riyapti», «qurilish mollari kerak», «yuzimga surtadigan malham».</p>
             <div class="flex gap-2 mb-3">
                 <input id="ai-input" type="text" maxlength="300" placeholder="Nima yegingiz keldi?" class="flex-1 min-w-0 p-3 border rounded-2xl text-sm" onkeydown="if(event.key==='Enter')aiAsk()">
                 <button type="button" onclick="aiVoice()" class="px-3 rounded-2xl bg-slate-100 text-slate-700" aria-label="Mikrofon">🎤</button>
+                <select id="ai-vlang" class="px-1 rounded-2xl bg-slate-100 text-slate-700 text-[11px] font-bold" aria-label="Ovoz tili" onchange="try{localStorage.setItem('zm_voice_lang',this.value)}catch(e){}">
+                    <option value="">🎤 Avto</option><option value="uz-UZ">O'zbek</option><option value="ru-RU">Русский</option><option value="en-US">English</option>
+                </select>
                 <button type="button" onclick="aiAsk()" class="px-4 rounded-2xl bg-amber-500 text-white font-black text-sm">Topish</button>
             </div>
             <p id="ai-voice-hint" class="hidden text-xs font-bold text-amber-700 mb-2"></p>
@@ -329,7 +332,7 @@
 
     <script src="/static/js/zm-support.js?v=2"></script>
     <script src="/static/js/zm-rating.js?v=1"></script>
-    <script src="/static/js/zm-ai.js?v=3"></script>
+    <script src="/static/js/zm-ai.js?v=4"></script>
     <script>
         const tg = window.Telegram?.WebApp;
         if (tg) { tg.ready(); tg.expand(); }
@@ -643,6 +646,7 @@
         }
         function openAI() {
             document.getElementById('ai-overlay').classList.remove('hidden'); document.body.style.overflow = 'hidden';
+            try { const v = localStorage.getItem('zm_voice_lang'); if (v) document.getElementById('ai-vlang').value = v; } catch (e) {}
             setTimeout(() => document.getElementById('ai-input').focus(), 50);
             // Yaqin do'kon topish uchun joylashuv (ruxsat bo'lsa, jimgina)
             if (!userLocation && navigator.geolocation) {
@@ -656,7 +660,7 @@
             const hint = document.getElementById('ai-voice-hint');
             const show = (m) => { if (hint) { hint.textContent = m; hint.classList.remove('hidden'); } };
             if (!window.ZMAI) { show("Ovoz moduli yuklanmadi. Matn yozing."); return; }
-            ZMAI.listen((t) => { inp.value = t; show('🎙 ' + t); aiAsk(); }, { onState: show });
+            ZMAI.listen((t, alts) => { inp.value = t; window._aiAlts = alts || []; inp.dataset.voice = t.trim(); show('🎙 «' + t + '» — noto\'g\'ri eshitilgan bo\'lsa, matnni tahrirlab «Topish» ni bosing'); aiAsk(); }, { onState: show });
         }
         async function aiAsk() {
             const q = document.getElementById('ai-input').value.trim();
@@ -664,7 +668,8 @@
             const box = document.getElementById('ai-results');
             box.innerHTML = '<p class="text-xs text-sub text-center py-6">Qidirilmoqda...</p>';
             try {
-                const d = await api('/ai/assist', { query: q, lat: userLocation ? userLocation.lat : null, lng: userLocation ? userLocation.lon : null });
+                const alts = (window._aiAlts && document.getElementById('ai-input').dataset.voice === q) ? window._aiAlts : [];
+                const d = await api('/ai/assist', { query: q, alts: alts, lat: userLocation ? userLocation.lat : null, lng: userLocation ? userLocation.lon : null });
                 aiItems = d.items || [];
                 if (!aiItems.length) { box.innerHTML = `<p class="text-xs text-sub text-center py-6">${escTrack(d.summary)}</p>`; return; }
                 const byP = {};
@@ -763,6 +768,11 @@
                 console.error("Profilni yangilashda xatolik:", e);
             }
 
+            let pr = { cashback: { visible: false }, referral: { visible: false }, birthday: { active: false } };
+            try { pr = await fetch(`/api/shop/promotions` + (currentCityId ? `?city_id=${currentCityId}` : '')).then(r => r.json()); } catch (e) { pr = window._promotions || pr; }
+            const showCashback = !!(pr.cashback && pr.cashback.visible) || (currentUser.cashback_balance || 0) > 0;
+            const showReferral = !!(pr.referral && pr.referral.visible);
+            const showBirthday = !!(pr.birthday && pr.birthday.active);
             const cashback = (currentUser.cashback_balance || 0).toLocaleString();
             const refCode = currentUser.referral_code || "";
             const refLink = `https://t.me/EltuvchiExpressBot?start=${refCode}`;
@@ -829,6 +839,9 @@
                             ${order.courier_name ? `<div class="text-[10px] text-amber-600 mt-1 font-medium"><i class="fa-solid fa-motorcycle mr-1"></i> Kuryer: ${order.courier_name}</div>` : ''}
                             ${order.needs_receipt ? `<div class="mt-2 rounded-lg border p-2 zm-note-amber"><p class="text-[10px] font-bold text-amber-900 mb-1">🧾 To'lov chekini yuboring</p><input type="file" id="receipt-file-${order.id}" accept="image/png,image/jpeg,image/webp" class="w-full text-[10px] mb-1"><button onclick="uploadReceipt(${order.id}, this)" class="w-full bg-amber-500 text-white text-[11px] font-bold py-1.5 rounded-lg">📤 Chekni yuborish</button></div>` : ''}
                             ${order.receipt_pending ? `<div class="text-[10px] text-amber-600 mt-1 font-bold">⏳ Chek ko'rib chiqilmoqda</div>` : ''}
+                            ${order.refund_status === 'pending' ? `<div class="text-[10px] text-amber-600 mt-1 font-bold">💸 ${Number(order.refund_amount).toLocaleString()} so'm tez orada kartangizga qaytariladi</div>` : ''}
+                            ${order.refund_status === 'paid' ? `<div class="text-[10px] text-emerald-600 mt-1 font-bold">✅ ${Number(order.refund_amount).toLocaleString()} so'm qaytarildi</div>` : ''}
+                            ${order.can_cancel ? `<button onclick="cancelOrderFlow(${order.id})" class="w-full mt-2 bg-rose-500/10 text-rose-600 border border-rose-500/30 text-[11px] font-bold py-2 rounded-lg active:scale-95 transition-all">❌ Buyurtmani rad etish</button>` : ''}
                             ${['created','accepted_by_partner','preparing','looking_for_courier','on_the_way'].includes(order.status) ? `<button onclick="openOrderTracking(${order.id})" class="w-full mt-2 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white text-[11px] font-bold py-2 rounded-lg transition-all flex items-center justify-center gap-1.5"><i class="fa-solid fa-location-crosshairs"></i> Buyurtmani jonli kuzatish</button>` : ''}
                         </div>`;
                 }).join('');
@@ -842,14 +855,14 @@
                     <span class="text-xs font-black text-sub uppercase tracking-widest">Shaxsiy Kabinet</span>
                 </div>
 
-                <div class="bg-gradient-to-tr from-slate-900 via-slate-800 to-slate-900 text-white p-5 rounded-3xl shadow-xl mb-4 relative overflow-hidden border border-slate-700">
+                ${showCashback ? `<div class="bg-gradient-to-tr from-slate-900 via-slate-800 to-slate-900 text-white p-5 rounded-3xl shadow-xl mb-4 relative overflow-hidden border border-slate-700">
                     <div class="text-[11px] font-extrabold uppercase tracking-wider text-amber-400 mb-1">Keshbek Balans</div>
                     <div class="text-3xl font-black tracking-tight mb-4">${cashback} <span class="text-sm font-bold text-slate-300">so'm</span></div>
                     <div class="flex items-center justify-between bg-white/10 backdrop-blur-md p-3 rounded-2xl text-xs font-medium border border-white/5">
                         <span class="text-slate-300">Har bir xaridingizdan keshbek to'planadi</span>
                         <i class="fa-solid fa-gift text-amber-400 text-sm"></i>
                     </div>
-                </div>
+                </div>` : ''}
 
                 <div class="card-bg p-4 rounded-2xl shadow-sm border mb-4">
                     <h3 class="text-xs font-black text-title uppercase tracking-wider mb-3">Buyurtmalar Tarixi</h3>
@@ -868,17 +881,18 @@
                         <label class="block text-[11px] font-semibold text-sub mb-1">Ismingiz</label>
                         <input id="profile-first-name" type="text" value="${userFirstName}" placeholder="Ismingizni kiriting" class="w-full p-2.5 bg-slate-500/10 border rounded-xl text-xs font-bold text-title focus:outline-none focus:border-amber-500">
                     </div>
-                    <div>
+                    ${showBirthday ? `<div>
                         <label class="block text-[11px] font-semibold text-sub mb-1">Tug'ilgan kun</label>
+                        <p class="text-[10px] text-amber-600 font-bold mb-1">🎂 ${escTrack(pr.birthday.text || '')}</p>
                         <input id="profile-birth-date" type="date" value="${userBirthDate}" class="w-full p-2.5 bg-slate-500/10 border rounded-xl text-xs font-bold text-title focus:outline-none focus:border-amber-500">
-                    </div>
+                    </div>` : ''}
                     <button onclick="updateProfile()" class="w-full bg-amber-500 hover:bg-amber-600 active:scale-95 text-white py-2.5 rounded-xl text-xs font-bold transition-all shadow-md shadow-amber-200 flex justify-center items-center space-x-1.5 mt-2">
                         <i class="fa-solid fa-floppy-disk"></i>
                         <span>Saqlash</span>
                     </button>
                 </div>
 
-                <div class="card-bg p-4 rounded-2xl shadow-sm border mb-4">
+                ${showReferral ? `<div class="card-bg p-4 rounded-2xl shadow-sm border mb-4">
                     <label class="block text-xs font-bold text-title mb-1.5">🎁 Do'stlarni taklif qiling</label>
                     <p class="text-[11px] text-sub mb-3">Sizning referal havolangiz orqali kirgan do'stlaringiz uchun bonus olasiz.</p>
                     <div class="flex items-center space-x-2">
@@ -887,13 +901,28 @@
                             Nusxalash
                         </button>
                     </div>
-                </div>`;
+                </div>` : ''}`;
             updateCartBar();
+        }
+
+        async function cancelOrderFlow(orderId) {
+            try {
+                const q = await api(`/orders/${orderId}/cancel-info`, {});
+                if (!q.can_cancel) { alert(q.reason || "Bu buyurtmani rad etib bo'lmaydi."); return; }
+                const text = (q.lines || []).join("\n") + "\n\nRostdan ham buyurtmani rad etasizmi?";
+                if (!confirm(text)) return;
+                const r = await api(`/orders/${orderId}/cancel`, { confirm: true });
+                alert(r.message || "Buyurtma bekor qilindi.");
+                openProfile();
+            } catch (e) {
+                alert(e.message);
+            }
         }
 
         async function updateProfile() {
             const firstName = document.getElementById("profile-first-name").value.trim();
-            const birthDate = document.getElementById("profile-birth-date").value;
+            const _bd = document.getElementById("profile-birth-date");
+            const birthDate = _bd ? _bd.value : (currentUser.birth_date || '');
 
             try {
                 const res = await api("/profile/update", {
@@ -980,6 +1009,23 @@
                     </div>`;
             });
 
+            window._promotions = promotions;
+            (promotions.promos || []).forEach((pc, i) => {
+                const pal = ['#e11d48', '#7c3aed', '#0284c7', '#059669', '#d97706'];
+                const c = pal[i % pal.length];
+                slidesHtml += `
+                    <div class="swiper-slide p-5 text-white relative overflow-hidden cursor-pointer" style="background:${c};background-image:linear-gradient(135deg,${c},color-mix(in srgb,${c} 62%,#000))" onclick="useBannerPromo('${escTrack(pc.code)}')">
+                        <span class="bg-white/20 text-[10px] font-bold px-2 py-0.5 rounded-md uppercase tracking-wider">🎟 Promo-kod</span>
+                        <div class="flex items-center justify-between mt-1.5">
+                            <div>
+                                <div class="text-xl font-black tracking-widest">${escTrack(pc.code)}</div>
+                                <p class="text-xs text-white/90 mt-0.5">${escTrack(pc.text)}${pc.until ? ' · ' + pc.until + ' gacha' : ''}${pc.left != null ? ' · ' + pc.left + ' marta qoldi' : ''}</p>
+                            </div>
+                            <span class="bg-white text-slate-900 text-[11px] font-black px-3 py-1.5 rounded-xl">Qo'llash</span>
+                        </div>
+                    </div>`;
+            });
+
             if (promotions.referral && promotions.referral.visible && promotions.referral.text) {
                 slidesHtml += `
                     <div class="swiper-slide bg-gradient-to-r from-slate-900 to-slate-800 p-5 text-white cursor-pointer" onclick="openProfile()">
@@ -1043,33 +1089,64 @@
                 updateCartBar();
                 return;
             }
-            partners.forEach(p => {
-                const isOpen = p.is_open !== false;
-                const card = document.createElement("button");
-                card.className = `w-full text-left p-4 card-bg rounded-2xl shadow-sm border transition-all duration-200 ${isOpen ? 'active:scale-[0.99]' : 'opacity-60 cursor-not-allowed'}`;
-                card.innerHTML = `
-                    <div class="flex justify-between items-start mb-1">
-                        <div class="font-black text-sm text-title flex items-center space-x-1.5">
-                            <span>${p.name}</span>
-                            <span class="w-2 h-2 rounded-full ${isOpen ? 'bg-emerald-500' : 'bg-rose-500'}"></span>
-                            ${p.rating ? `<span class="text-[11px] font-extrabold text-amber-500">⭐ ${p.rating} <span class="text-sub font-semibold">(${p.rating_count})</span></span>` : ''}
-                        </div>
-                        <span class="text-[9px] uppercase font-bold tracking-wider ${isOpen ? 'bg-emerald-500/10 text-emerald-600' : 'bg-rose-500/10 text-rose-600'} px-2 py-0.5 rounded-md">
-                            ${isOpen ? 'Ochiq' : 'Hozir Yopiq'}
-                        </span>
-                    </div>
-                    ${p.category ? `<div class="text-[11px] font-bold text-amber-600 mb-0.5">🏷️ ${escTrack(p.category)}</div>` : ''}
-                    <div class="text-xs text-sub flex items-center space-x-1">
-                        <i class="fa-solid fa-map-pin text-[10px]"></i>
-                        <span class="truncate">${p.address || "Manzil ko'rsatilmagan"}</span>
-                    </div>`;
-                
-                if (isOpen) {
-                    card.onclick = () => loadProducts(p.id, p.name);
-                }
-                list.appendChild(card);
-            });
+            window._partnersAll = partners;
+            renderPartnerList();
             updateCartBar();
+        }
+
+        // ---- Kategoriyalar: hamkorlardagi kategoriyalardan avtomatik hosil bo'ladi ----
+        let selectedPartnerCat = "Barchasi";
+        function catIcon(name) {
+            const n = (name || "").toLowerCase();
+            const map = [["supermarket","🛒"],["market","🛒"],["oziq","🥬"],["produkt","🥬"],["kafe","🍽️"],["restoran","🍽️"],["yemakxona","🍽️"],["fast","🍔"],["pitsa","🍕"],["osh","🍛"],["dori","💊"],["apteka","💊"],["kosmetik","💄"],["go'zallik","💄"],["qurilish","🧱"],["stroy","🧱"],["gul","💐"],["elektr","📱"],["texnika","📱"],["kiyim","👕"],["non","🥖"],["pishiriq","🥐"],["qandolat","🍰"],["ichimlik","🥤"],["hayvon","🐾"],["boshqa","🏷️"]];
+            for (const [k, ic] of map) if (n.includes(k)) return ic;
+            return "🏷️";
+        }
+        function partnerCardHtml(p, idx) {
+            const isOpen = p.is_open !== false;
+            return `<button data-pidx="${idx}" class="partner-card w-full text-left p-4 card-bg rounded-2xl shadow-sm border transition-all duration-200 ${isOpen ? 'active:scale-[0.99]' : 'opacity-60 cursor-not-allowed'}">
+                <div class="flex justify-between items-start mb-1">
+                    <div class="font-black text-sm text-title flex items-center space-x-1.5">
+                        <span>${escTrack(p.name)}</span>
+                        <span class="w-2 h-2 rounded-full ${isOpen ? 'bg-emerald-500' : 'bg-rose-500'}"></span>
+                        ${p.rating ? `<span class="text-[11px] font-extrabold text-amber-500">⭐ ${p.rating} <span class="text-sub font-semibold">(${p.rating_count})</span></span>` : ''}
+                    </div>
+                    <span class="text-[9px] uppercase font-bold tracking-wider ${isOpen ? 'bg-emerald-500/10 text-emerald-600' : 'bg-rose-500/10 text-rose-600'} px-2 py-0.5 rounded-md">${isOpen ? 'Ochiq' : 'Hozir Yopiq'}</span>
+                </div>
+                <div class="text-xs text-sub flex items-center space-x-1">
+                    <i class="fa-solid fa-map-pin text-[10px]"></i>
+                    <span class="truncate">${escTrack(p.address || "Manzil ko'rsatilmagan")}</span>
+                </div>
+            </button>`;
+        }
+        function renderPartnerList() {
+            const all = window._partnersAll || [];
+            const cats = [];
+            all.forEach(p => { const c = p.category || "Boshqa"; if (!cats.includes(c)) cats.push(c); });
+            cats.sort((a, b) => (a === "Boshqa") - (b === "Boshqa") || a.localeCompare(b, "uz"));
+            if (selectedPartnerCat !== "Barchasi" && !cats.includes(selectedPartnerCat)) selectedPartnerCat = "Barchasi";
+            const count = c => all.filter(p => (p.category || "Boshqa") === c).length;
+            const tiles = ["Barchasi", ...cats].map(c => {
+                const on = c === selectedPartnerCat;
+                return `<button data-cat="${escTrack(c)}" class="cat-tile shrink-0 flex flex-col items-center justify-center w-[84px] py-2.5 rounded-2xl border text-center transition-all ${on ? 'bg-amber-500 text-white border-amber-500 category-chip-active' : 'card-bg text-title'}">
+                    <span class="text-2xl leading-none">${c === "Barchasi" ? "🏪" : catIcon(c)}</span>
+                    <span class="text-[10px] font-extrabold mt-1 leading-tight px-1 line-clamp-2">${escTrack(c)}</span>
+                    <span class="text-[9px] opacity-70">${c === "Barchasi" ? all.length : count(c)} ta</span>
+                </button>`;
+            }).join("");
+            const shown = selectedPartnerCat === "Barchasi" ? cats : [selectedPartnerCat];
+            let html = `<div class="flex gap-2 overflow-x-auto no-scrollbar pb-1 -mx-1 px-1" id="partner-cat-bar">${tiles}</div>`;
+            shown.forEach(c => {
+                const items = all.map((p, i) => [p, i]).filter(([p]) => (p.category || "Boshqa") === c);
+                html += `<div class="pt-2"><h2 class="text-sm font-black text-title mb-2 flex items-center gap-1.5">${catIcon(c)} ${escTrack(c)} <span class="text-[11px] text-sub font-semibold">(${items.length})</span></h2><div class="space-y-2.5">${items.map(([p, i]) => partnerCardHtml(p, i)).join("")}</div></div>`;
+            });
+            const list = document.getElementById("partner-list");
+            list.innerHTML = html;
+            list.querySelectorAll(".cat-tile").forEach(b => b.onclick = () => { selectedPartnerCat = b.dataset.cat; renderPartnerList(); });
+            list.querySelectorAll(".partner-card").forEach(b => {
+                const p = all[+b.dataset.pidx];
+                if (p.is_open !== false) b.onclick = () => loadProducts(p.id, p.name);
+            });
         }
 
         async function changeCityPrompt() {
@@ -1506,6 +1583,20 @@
                 if (el) { el.textContent = '✓ Nusxalandi'; setTimeout(() => { el.textContent = ''; }, 1800); }
                 if (navigator.vibrate) navigator.vibrate(12);
             });
+        }
+
+        async function useBannerPromo(code) {
+            try { navigator.clipboard && navigator.clipboard.writeText(code); } catch (e) {}
+            try {
+                const r = await api("/promo/check", { code });
+                promoCode = r.code;
+                promoDiscountPercent = r.percent || 0;
+                promoFixedAmount = r.percent ? 0 : (r.amount || 0);
+                alert("Promo-kod " + r.code + " qabul qilindi! Savatda chegirma qo'llanadi.");
+                updateCartBar();
+            } catch (e) {
+                alert(e.message);
+            }
         }
 
         async function applyPromoCode() {

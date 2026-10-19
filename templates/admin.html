@@ -462,7 +462,7 @@
                             <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" name="ai_dispatcher_enabled" value="1" {% if not _ai or _ai.ai_dispatcher_enabled is none or _ai.ai_dispatcher_enabled %}checked{% endif %} class="w-4 h-4"> 🧭 AI-dispetcher (kechikishda avto xabar)</label>
                             <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" name="ai_help_enabled" value="1" {% if not _ai or _ai.ai_help_enabled is none or _ai.ai_help_enabled %}checked{% endif %} class="w-4 h-4"> 💬 AI yordamchi (har bir panelda qo'llanma va savol-javob)</label>
                             <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" name="ai_campaigns_enabled" value="1" {% if not _ai or _ai.ai_campaigns_enabled is none or _ai.ai_campaigns_enabled %}checked{% endif %} class="w-4 h-4"> 📣 AI xabarlari (bildirishnoma kampaniyalari)</label>
-                            <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" name="ai_led_enabled" value="1" {% if not _ai or _ai.ai_led_enabled is none or _ai.ai_led_enabled %}checked{% endif %} class="w-4 h-4"> 📺 LED reklama (sumka ekrani)</label>
+                            <label class="flex items-center gap-2 cursor-pointer"><input type="checkbox" name="ai_led_enabled" value="1" {% if not _ai or _ai.ai_led_enabled is none or _ai.ai_led_enabled %}checked{% endif %} class="w-4 h-4"> 📺 LED ekran bo'limi (kuryerlarga ko'rinadi / o'chirsangiz yashirin)</label>
                         </div>
                         <label class="flex items-center gap-2 text-sm font-bold cursor-pointer"><input type="checkbox" name="ai_delay_promo_enabled" value="1" {% if _ai and _ai.ai_delay_promo_enabled %}checked{% endif %} class="w-4 h-4"> 🎁 Kechikkanda mijozga promo-kod (bonus) berilsin</label>
                         <div>
@@ -635,6 +635,37 @@
 
         {% if is_owner or operator_perms.get('buyurtmalar') %}
         <section class="app-page" data-page="buyurtmalar" style="display:none;">
+        <!-- MIJOZGA QAYTARILADIGAN PULLAR (rad etilgan onlayn buyurtmalar) -->
+        <div class="card-bg bg-white p-6 rounded-xl shadow-md mb-6" id="refund-box">
+            <h2 class="theme-title text-lg font-bold mb-1 text-rose-600">💸 Mijozga qaytariladigan pullar</h2>
+            <p class="text-xs text-gray-500 mb-3">Mijoz onlayn to'langan buyurtmani rad etganda, qaytariladigan naqd summa shu yerga tushadi. Kartasiga o'tkazib bergach «To'landi» ni bosing — mijozga xabar boradi.</p>
+            {% if is_owner %}
+            <form action="/admin/settings/cancel-policy" method="POST" class="flex items-end gap-2 mb-3 p-3 rounded-lg bg-gray-50 dark:bg-gray-800">
+                <div class="flex-1">
+                    <label class="block text-xs font-medium">Do'kon tayyorlashni boshlagan bo'lsa — ushlab qolinadigan foiz (mahsulot narxidan)</label>
+                    <input type="number" step="1" min="0" max="100" name="cancel_prep_percent" value="{{ system_setting.cancel_prep_percent if system_setting and system_setting.cancel_prep_percent is not none else 60 }}" class="w-full mt-1 p-2 border rounded-lg text-sm dark:bg-gray-800">
+                </div>
+                <button type="submit" class="bg-indigo-600 text-white py-2 px-4 rounded-lg font-bold text-sm">Saqlash</button>
+            </form>
+            {% endif %}
+            <div id="refund-list" class="space-y-2 text-sm"><p class="text-xs text-gray-400">Yuklanmoqda…</p></div>
+        </div>
+        <script>
+        (function(){
+            function e(v){return String(v==null?'':v).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+            var ST={created:'qabul qilinmagan',preparing:'tayyorlanayotgan',ready:'tayyor',on_the_way:'kuryer yo\'lda',unpaid:'to\'lovsiz'};
+            function load(){fetch('/admin/refunds',{credentials:'same-origin'}).then(function(r){return r.json().then(function(d){if(!r.ok)throw new Error(d.detail||'Xatolik');return d;});}).then(function(d){
+                var el=document.getElementById('refund-list');if(!el)return;
+                el.innerHTML=(d.items||[]).map(function(r){
+                    var pending=r.status==='pending';
+                    return '<div class="p-3 rounded-lg border flex items-center justify-between gap-2"><div><b>#'+r.order_id+'</b> · '+e(r.client)+' · <a class="text-indigo-600" href="tel:'+e(r.phone)+'">'+e(r.phone)+'</a><div class="text-[11px] text-gray-500">'+e(r.partner)+' · '+e(ST[r.stage]||r.stage)+'</div></div><div class="text-right"><div class="font-extrabold '+(pending?'text-rose-600':'text-emerald-600')+'">'+Number(r.amount).toLocaleString()+' so\'m</div>'+(pending?'<button data-rf="'+r.order_id+'" class="mt-1 px-3 py-1 rounded-lg bg-emerald-600 text-white text-xs font-bold">To\'landi</button>':'<span class="text-[11px] text-emerald-600">✅ to\'langan</span>')+'</div></div>';
+                }).join('')||'<p class="text-xs text-gray-400">Hozircha qaytariladigan pul yo\'q.</p>';
+                el.querySelectorAll('[data-rf]').forEach(function(b){b.onclick=function(){if(!confirm('Pul mijoz kartasiga o\'tkazildimi?'))return;fetch('/admin/refunds/'+b.dataset.rf+'/paid',{method:'POST',credentials:'same-origin'}).then(function(r){return r.json().then(function(d){if(!r.ok)throw new Error(d.detail||'Xatolik');load();});}).catch(function(x){alert(x.message);});};});
+            }).catch(function(x){var el=document.getElementById('refund-list');if(el)el.innerHTML='<p class="text-xs text-red-500">'+e(x.message)+'</p>';});}
+            document.addEventListener('DOMContentLoaded',load);
+        })();
+        </script>
+
         <!-- YANGI BUYURTMA YARATISH -->
         <div class="card-bg bg-white p-6 rounded-xl shadow-md">
             <h2 class="theme-title text-lg font-bold mb-4 text-indigo-700">📞 Yangi Buyurtma Yaratish (qo'lda)</h2>
@@ -1470,7 +1501,7 @@
                     </div>
                     <div>
                         <label class="block text-xs font-medium">Kategoriya</label>
-                        <input type="text" name="category" placeholder="Fast Food" class="w-full mt-1 p-2 border rounded-lg text-sm dark:bg-gray-800" required>
+                        <input type="text" name="category" list="partner-cats" placeholder="Masalan: Supermarket (yangi nom yozsangiz, mijozda yangi bo'lim ochiladi)" class="w-full mt-1 p-2 border rounded-lg text-sm dark:bg-gray-800" required><datalist id="partner-cats"><option value="Supermarket"><option value="Oziq-ovqat do'konlari"><option value="Kafe va restoranlar"><option value="Dorixona"><option value="Kosmetika"><option value="Qurilish mollari"><option value="Boshqa"></datalist>
                     </div>
                     <div>
                         <label class="block text-xs font-medium">Shahar</label>
@@ -2148,7 +2179,7 @@
             <h3 class="font-bold text-lg mb-4 dark:text-white">Do'konni Tahrirlash</h3>
             <form id="edit-partner-form" method="POST" class="space-y-3">
                 <input type="text" id="edit-partner-name" name="brand_name" class="w-full p-2 border rounded dark:bg-gray-700 dark:text-white" required>
-                <input type="text" id="edit-partner-category" name="category" class="w-full p-2 border rounded dark:bg-gray-700 dark:text-white" required>
+                <input type="text" id="edit-partner-category" name="category" list="partner-cats" class="w-full p-2 border rounded dark:bg-gray-700 dark:text-white" required>
                 <select id="edit-partner-city" name="city_id" class="w-full p-2 border rounded dark:bg-gray-700 dark:text-white" required>
                     {% for city in all_cities %}
                     <option value="{{ city.id }}">{{ city.name }}</option>
@@ -3294,7 +3325,7 @@
     })();
     </script>
     <script src="/static/js/zm-secure.js?v=2"></script>
-    <script src="/static/js/zm-ai.js?v=3"></script>
+    <script src="/static/js/zm-ai.js?v=4"></script>
     {% if ai_help_on %}<script>document.addEventListener("DOMContentLoaded",function(){if(window.ZMAI)ZMAI.mountHelp({url:"/admin/ai/help"});});</script>{% endif %}
     <script>
     (function(){

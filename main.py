@@ -1683,6 +1683,9 @@ def _guard_status_change(order: Order, old_status) -> None:
     if old_status == OrderStatus.DELIVERED and order.status != OrderStatus.DELIVERED:
         order.status = old_status
         raise HTTPException(status_code=400, detail="Yetkazilgan buyurtma holatini o'zgartirib bo'lmaydi (pul allaqachon hisoblangan)")
+    if old_status == OrderStatus.CANCELLED and getattr(order, "cancel_stage", None) and order.status != OrderStatus.CANCELLED:
+        order.status = old_status
+        raise HTTPException(status_code=400, detail="Mijoz rad etgan buyurtma bo'yicha pul allaqachon taqsimlangan — holatini o'zgartirib bo'lmaydi")
     if old_status == OrderStatus.CANCELLED and order.status == OrderStatus.DELIVERED:
         order.status = old_status
         raise HTTPException(status_code=400, detail="Bekor qilingan buyurtmani yetkazildi qilib bo'lmaydi")
@@ -2654,6 +2657,9 @@ async def update_order_status_and_courier(
     except ValueError:
         raise HTTPException(status_code=400, detail="Noto'g'ri buyurtma holati")
     _guard_status_change(order, old_status)
+    _staff_cancelled = False
+    if order.status == OrderStatus.CANCELLED and old_status != OrderStatus.CANCELLED:
+        _staff_cancelled = await _apply_staff_cancel(db, order, "by_admin")
 
     if courier_id:
         await _validate_assignable_courier(db, courier_id)
@@ -2669,6 +2675,8 @@ async def update_order_status_and_courier(
         await apply_cod_delivery_financials(db, order)
 
     await db.commit()
+    if _staff_cancelled:
+        await _notify_staff_cancel(db, order)
 
     # ---- TELEGRAM BILDIRISHNOMALARI ----
     # DIQQAT: bu yerdagi xatoliklar (masalan Telegram serveriga ulanib
@@ -2740,6 +2748,9 @@ async def update_order_status_json(
     except ValueError:
         raise HTTPException(status_code=400, detail="Noto'g'ri buyurtma holati")
     _guard_status_change(order, old_status)
+    _staff_cancelled = False
+    if order.status == OrderStatus.CANCELLED and old_status != OrderStatus.CANCELLED:
+        _staff_cancelled = await _apply_staff_cancel(db, order, "by_admin")
 
     if courier_id:
         await _validate_assignable_courier(db, courier_id)
@@ -2752,6 +2763,8 @@ async def update_order_status_json(
         await apply_cod_delivery_financials(db, order)
 
     await db.commit()
+    if _staff_cancelled:
+        await _notify_staff_cancel(db, order)
 
     try:
         if order.status != old_status:
@@ -2784,6 +2797,22 @@ async def update_order_status_json(
 # ==================== 4. DO'KONLAR BOSHQARUVI ====================
 # DIQQAT: create/update/delete — faqat OWNER (require_owner qo'shimcha tekshiruvi bilan).
 # toggle — operator ham qila oladi (router darajasidagi get_current_admin_user yetarli).
+PARTNER_CATEGORIES = ["Supermarket", "Oziq-ovqat do'konlari", "Kafe va restoranlar", "Dorixona", "Kosmetika", "Qurilish mollari", "Boshqa"]
+
+
+def _norm_partner_category(raw: Optional[str]) -> str:
+    """Kategoriya nomini bir xil ko'rinishga keltiradi: ortiqcha bo'sh joylar olinadi, standart nomlar
+    registrdan qat'i nazar moslashtiriladi ("supermarket" == "Supermarket"), yangisi bosh harf bilan saqlanadi."""
+    t = " ".join((raw or "").split())[:60]
+    if not t:
+        return "Boshqa"
+    low = t.casefold()
+    for c in PARTNER_CATEGORIES:
+        if c.casefold() == low:
+            return c
+    return t[0].upper() + t[1:]
+
+
 @partners_router.post("/create")
 async def create_partner(
     request: Request,
@@ -2814,7 +2843,7 @@ async def create_partner(
             raise HTTPException(status_code=400, detail="Hamkorning telefon raqamini kiriting")
     new_partner = PartnerProfile(
         brand_name=brand_name,
-        category=category,
+        category=_norm_partner_category(category),
         address=address,
         city_id=city_id,
         commission_rate=commission_rate,
@@ -2894,7 +2923,7 @@ async def update_partner(
         raise HTTPException(status_code=404, detail="Do'kon topilmadi")
 
     partner.brand_name = brand_name
-    partner.category = category
+    partner.category = _norm_partner_category(category)
     partner.address = address
     partner.city_id = city_id
     partner.commission_rate = commission_rate
@@ -3810,6 +3839,7 @@ async def _verify_p2p_order(db: AsyncSession, order: Order, approved: bool, veri
         order.status = OrderStatus.CANCELLED
         order.payment_verified_by_id = verified_by_id
         order.payment_verified_at = datetime.utcnow()
+        await _apply_staff_cancel(db, order, "payment_rejected")
     await db.commit()
     await _mark_order_receipts(db, order.id, approved, verified_by_id, reason)
 
@@ -4824,7 +4854,7 @@ async def app_register(body: AppRegisterBody, request: Request, db: AsyncSession
     else:
         db.add(PartnerProfile(
             user_id=user.id, city_id=body.city_id, brand_name=body.brand_name.strip()[:150],
-            category=body.category.strip()[:80], address=body.address.strip()[:300],
+            category=_norm_partner_category(body.category), address=body.address.strip()[:300],
             is_open=False, application_status="pending", terms_accepted_at=now, **legal,
         ))
         reply["message"] = "Arizangiz qabul qilindi! Administratsiya tez orada siz bilan bog'lanadi."
@@ -5037,7 +5067,43 @@ async def shop_promotions(city_id: Optional[int] = None, db: AsyncSession = Depe
     _bq = _bq.where(or_(Banner.city_id.is_(None), Banner.city_id == city_id)) if city_id is not None else _bq.where(Banner.city_id.is_(None))
     banners = (await db.execute(_bq.order_by(Banner.display_order, Banner.id))).scalars().all()
 
+    # Dasturlar HOZIR ishlayaptimi? (owner yoqgan + shahar/muddat qoidasi yoki asosiy sozlama bo'yicha qiymat > 0)
+    cb_val = await effective_bonus_value(db, "cashback", city_id, setting.cashback_earn_percent or 0.0)
+    rf_val = await effective_bonus_value(db, "referral", city_id, setting.referral_bonus_amount or 0.0)
+    bd_val = await effective_bonus_value(db, "birthday", city_id, setting.birthday_bonus_amount or 0.0)
+
+    def _n(v):
+        return f"{v:,.0f}".replace(",", " ") if float(v) == int(v) else f"{v:g}"
+    cb_on = bool(setting.cashback_visible) and cb_val > 0
+    rf_on = bool(setting.referral_visible) and rf_val > 0
+    bd_on = bd_val > 0
+
+    # Faol promo-kodlar: mijoz shahriga mos, muddati o'tmagan, limiti tugamagan — bannerda ko'rinadi
+    _pq = select(PromoCode).where(
+        PromoCode.is_active == True,
+        or_(PromoCode.starts_at.is_(None), PromoCode.starts_at <= _now),
+        or_(PromoCode.expires_at.is_(None), PromoCode.expires_at >= _now),
+        or_(PromoCode.city_id.is_(None), PromoCode.city_id == city_id) if city_id is not None else PromoCode.city_id.is_(None),
+    ).order_by(PromoCode.id.desc()).limit(10)
+    promos = []
+    for pc in (await db.execute(_pq)).scalars().all():
+        if pc.max_uses and (pc.used_count or 0) >= pc.max_uses:
+            continue
+        if pc.discount_percent:
+            disc = f"{_n(pc.discount_percent)}% chegirma"
+        elif pc.discount_amount:
+            disc = f"{_n(pc.discount_amount)} so'm chegirma"
+        else:
+            continue
+        left = (pc.max_uses - (pc.used_count or 0)) if pc.max_uses else None
+        promos.append({"id": pc.id, "code": pc.code, "text": disc, "percent": pc.discount_percent or 0,
+                       "amount": pc.discount_amount or 0, "left": left,
+                       "until": (pc.expires_at + timedelta(hours=5)).strftime("%d.%m.%Y") if pc.expires_at else None})
+
     return {
+        "promos": promos,
+        "birthday": {"active": bd_on, "amount": bd_val,
+                     "text": f"Tug'ilgan kuningizda {_n(bd_val)} so'm bonus sovg'a qilamiz!" if bd_on else ""},
         "banners": [
             {
                 "id": b.id,
@@ -5051,12 +5117,12 @@ async def shop_promotions(city_id: Optional[int] = None, db: AsyncSession = Depe
             for b in banners
         ],
         "referral": {
-            "visible": setting.referral_visible,
-            "text": setting.referral_program_text or "",
+            "visible": rf_on,
+            "text": (setting.referral_program_text or "").strip() or (f"Do'stingizni taklif qiling — ikkalangiz {_n(rf_val)} so'm keshbek olasiz!" if rf_on else ""),
         },
         "cashback": {
-            "visible": setting.cashback_visible,
-            "text": setting.bonus_cashback_text or "",
+            "visible": cb_on,
+            "text": (setting.bonus_cashback_text or "").strip() or (f"Har bir buyurtmadan {_n(cb_val)}% keshbek qaytadi" if cb_on else ""),
         },
     }
 
@@ -5348,6 +5414,13 @@ async def shop_order_history(init_data: str, db: AsyncSession = Depends(get_db))
                 and o.status != OrderStatus.CANCELLED and o.id not in receipt_pending_ids
             ),
             "receipt_pending": o.id in receipt_pending_ids,
+            "can_cancel": bool(
+                o.payment_method == "p2p" and o.status in _CANCEL_OPEN
+                and (o.payment_verified or (o.id not in receipt_pending_ids and not o.payment_receipt_file_id))
+            ),
+            "refund_amount": o.refund_amount or 0,
+            "refund_status": o.refund_status,
+            "cancel_stage": o.cancel_stage,
         }
         for o in orders
     ]
@@ -5462,7 +5535,7 @@ async def shop_partners(city_id: int, db: AsyncSession = Depends(get_db)):
                              .group_by(OrderRating.partner_id))).all()
     rt = {pid: (float(a), n) for pid, a, n in rows}
     setting = await _get_or_create_setting(db)
-    out = [{"id": p.id, "name": p.brand_name, "category": p.category, "address": p.address,
+    out = [{"id": p.id, "name": p.brand_name, "category": _norm_partner_category(p.category), "address": p.address,
             "rating": round(rt[p.id][0], 1) if p.id in rt else None, "rating_count": rt[p.id][1] if p.id in rt else 0}
            for p in partners]
     if bool(getattr(setting, "rating_priority_enabled", True)):
@@ -5801,7 +5874,7 @@ async def partner_dashboard(
             "ai_help_on": _ai_flags(await _get_or_create_setting(db))["help"],
             "ai_led_on": bool(_ai_flags(await _get_or_create_setting(db))["led"] and partner.led_allowed),
             "banner_ads_on": bool(partner.banner_allowed),
-            "category_suggestions": [c for c in (await db.execute(select(PartnerProfile.category).where(PartnerProfile.category.isnot(None)).distinct().limit(60))).scalars().all() if c],
+            "category_suggestions": list(dict.fromkeys(PARTNER_CATEGORIES + [c for c in (await db.execute(select(PartnerProfile.category).where(PartnerProfile.category.isnot(None)).distinct().limit(60))).scalars().all() if c])),
             "MIN_WITHDRAWAL_AMOUNT": MIN_WITHDRAWAL_AMOUNT,
             "MAX_WITHDRAWAL_AMOUNT": MAX_WITHDRAWAL_AMOUNT,
         },
@@ -6071,7 +6144,7 @@ async def partner_update_settings(
     partner.brand_name = brand_name
     partner.address = address
     if category is not None and category.strip():
-        partner.category = category.strip()[:60]
+        partner.category = _norm_partner_category(category)
     if latitude is not None and longitude is not None:
         if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
             raise HTTPException(status_code=400, detail="Joylashuv koordinatasi noto'g'ri")
@@ -6215,11 +6288,18 @@ async def partner_update_order_status(
         raise HTTPException(status_code=403, detail="Bu holatga o'zgartirishga ruxsatingiz yo'q")
 
     old_status = order.status
+    if old_status in (OrderStatus.CANCELLED, OrderStatus.DELIVERED):
+        raise HTTPException(status_code=400, detail="Bu buyurtma yakunlangan (bekor qilingan yoki yetkazilgan) — holatini o'zgartirib bo'lmaydi")
     try:
         order.status = OrderStatus(new_status)
     except ValueError:
         raise HTTPException(status_code=400, detail="Noto'g'ri holat")
+    _staff_cancelled = False
+    if order.status == OrderStatus.CANCELLED:
+        _staff_cancelled = await _apply_staff_cancel(db, order, "by_partner")
     await db.commit()
+    if _staff_cancelled:
+        await _notify_staff_cancel(db, order)
 
     # Hamkor buyurtmani "Kuryer izlash" holatiga o'tkazsa — avval ENG
     # YAQIN online kuryerga AVTOMATIK biriktirishga harakat qilamiz.
@@ -6759,7 +6839,7 @@ _AI_ALIASES = {"kola": ["kola", "cola", "кола"], "pitsa": ["pitsa", "pizza",
                "sho'rva": ["sho'rva", "shorva", "sup", "суп"], "non": ["non", "хлеб"]}
 _AI_DRINK = ["kola", "cola", "sok", "limonad", "suv", "fanta", "pepsi", "choy", "ichimlik", "напит", "сок", "вода", "drink"]
 _AI_INTENTS = [
-    ("health", "Shamollash/og'riq uchun iliq va foydali taomlar",
+    ("health", "Shamollash va og'riq uchun",
      ["tomog", "shamoll", "yo'tal", "yotal", "isitma", "kasal", "bosh og'ri", "bosh o'g'ri", "gripp", "горл", "простуд", "sore throat", "cold"],
      ["sho'rva", "shorva", "limon", "choy", "asal", "mastava", "sup", "bulyon", "imbir", "суп", "чай", "tea", "soup"]),
     ("mood", "Kayfiyatni ko'taradigan shirinliklar",
@@ -6780,8 +6860,69 @@ _AI_INTENTS = [
 class AIAssistBody(BaseModel):
     init_data: str
     query: str
+    alts: Optional[List[str]] = None      # ovozdan aniqlangan muqobil variantlar
     lat: Optional[float] = None
     lng: Optional[float] = None
+
+
+# ---- AI qidiruv: ovoz xatolariga chidamli "kalit" shakli ----
+_AI_TR = {"а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ё": "yo", "ж": "j", "з": "z", "и": "i", "й": "y",
+          "к": "k", "л": "l", "м": "m", "н": "n", "о": "o", "п": "p", "р": "r", "с": "s", "т": "t", "у": "u", "ф": "f",
+          "х": "h", "ц": "s", "ч": "ch", "ш": "sh", "щ": "sh", "ъ": "", "ы": "i", "ь": "", "э": "e", "ю": "yu", "я": "ya",
+          "ў": "o", "қ": "k", "ғ": "g", "ҳ": "h"}
+
+
+def _ai_key(s: Optional[str]) -> str:
+    """Matnni solishtirish uchun bir xil shaklga keltiradi: kirill→lotin, apostroflar olib tashlanadi
+    (sho'rva=shorva, o'g'ri=ogri), q=k, x=h, w=v. Shunda ovozdan kirillcha chiqsa ham, imlo biroz boshqacha bo'lsa ham mos keladi."""
+    s = (s or "").lower()
+    for ch in ("’", "‘", "ʻ", "ʼ", "`", "´", "'"):
+        s = s.replace(ch, "")
+    s = "".join(_AI_TR.get(c, c) for c in s)
+    return s.translate({ord("q"): "k", ord("x"): "h", ord("w"): "v"})
+
+
+def _ai_words(s: str) -> list:
+    return re.findall(r"[a-z0-9]+", _ai_key(s))
+
+
+def _ai_stem(w: str) -> str:
+    return w[:max(4, len(w) - 2)] if len(w) > 5 else w
+
+
+_AI_STOP_K = {_ai_key(x) for x in _AI_STOP} | {"kerak", "kerakli", "mollari", "molla", "narsa", "narsalar", "istardim", "ayting",
+                                              "topib", "bering", "ber", "menga", "bor", "mi", "emas"}
+_AI_QTY_K = {_ai_key(k): v for k, v in _AI_QTY_WORDS.items()}
+_AI_ALIASES_K = {_ai_key(k): [_ai_key(x) for x in v] for k, v in _AI_ALIASES.items()}
+# Yaqin ma'noli so'zlar guruhlari: mijoz bittasini aytsa, hammasi qidiriladi (yuz/malham → krem, losyon...)
+_AI_SYN = [
+    ["yuz", "teri", "malham", "krem", "losyon", "maska", "serum", "kosmetika", "parvarish", "surt", "surish", "nam", "gel", "balzam", "maz"],
+    ["soch", "shampun", "konditsioner", "balzam", "maska", "boyok"],
+    ["dori", "dorixona", "apteka", "tabletka", "kapsula", "vitamin", "sirop", "tomchi", "malham", "plastir", "bint", "termometr", "ogrik", "ogri", "kasal"],
+    ["kurilish", "tamir", "remont", "sement", "kraska", "boyok", "mih", "plitka", "laminat", "parket", "santehnika", "asbob", "instrument", "kabel", "rozetka", "lampa", "truba", "kley", "shpatlevka", "elektr"],
+    ["tozala", "yuvish", "kir", "poroshok", "sovun", "shvabra", "detergent", "salfetka", "gel"],
+    ["bola", "bolalar", "chakalok", "pampers", "taglik", "smes", "pyure"],
+    ["ozik", "ovkat", "produkt", "bakkal", "supermarket", "market", "ichimlik", "meva", "sabzavot", "go'sht", "gosht", "sut", "non"],
+    ["kafe", "restoran", "yemakhona", "taom", "ovkat", "fast", "osh", "lavash", "pitsa", "burger"],
+]
+_AI_SYN = [[_ai_key(w) for w in g] for g in _AI_SYN]
+_AI_INTENTS_EXTRA = [
+    ("skin", "Yuz va teri parvarishi uchun",
+     ["yuz", "teri", "malham", "krem", "kosmetik", "losyon", "maska", "serum", "soch", "shampun", "parfyum", "atir", "surt"],
+     ["krem", "malham", "losyon", "maska", "serum", "gel", "kosmetik", "teri", "yuz", "shampun", "balzam", "parfyum", "soch"]),
+    ("pharma", "Dorixonadan kerakli vositalar",
+     ["dori", "dorixona", "apteka", "tabletka", "vitamin", "bint", "plastir", "termometr", "antibiotik", "sirop", "burun", "allergiya", "bosim", "kasal", "ogri", "ogrik"],
+     ["dori", "tabletka", "vitamin", "sirop", "dorixona", "apteka", "plastir", "bint", "termometr", "tomchi", "kapsula"]),
+    ("build", "Qurilish va ta'mirlash uchun",
+     ["kurilish", "tamir", "remont", "sement", "kraska", "boyok", "mih", "plitka", "laminat", "santehnika", "asbob", "instrument", "kabel", "rozetka", "lampa", "truba", "kley"],
+     ["kurilish", "sement", "kraska", "boyok", "mih", "plitka", "laminat", "santehnika", "asbob", "kabel", "rozetka", "lampa", "truba", "kley", "shpatlevka", "parket", "elektr", "instrument"]),
+    ("clean", "Uy tozaligi uchun",
+     ["tozala", "yuvish", "kir", "poroshok", "sovun", "chang", "supur"],
+     ["poroshok", "sovun", "gel", "shvabra", "tozala", "detergent", "salfetka"]),
+    ("baby", "Bolalar uchun",
+     ["bola", "bolalar", "chakalok", "pampers", "taglik"],
+     ["pampers", "taglik", "bolalar", "smes", "chakalok", "pyure"]),
+]
 
 
 @shop_router.get("/ai/status")
@@ -6792,25 +6933,34 @@ async def shop_ai_status(db: AsyncSession = Depends(get_db)):
     return {"enabled": fl["client"], "help": fl["help"]}
 
 
-@shop_router.post("/ai/assist")
-async def shop_ai_assist(body: AIAssistBody, db: AsyncSession = Depends(get_db)):
-    """Mijoz matnini (yoki ovozdan matnga aylangan so'zini) tushunib, MIJOZGA ENG YAQIN do'kondan mos mahsulotlarni yig'adi.
-    Mijoz do'kon nomini aytsa — faqat o'sha do'kondan. Buyurtma faqat mijoz tasdig'i va to'lovdan keyin yuboriladi."""
-    tg_user = _get_telegram_user_or_403(body.init_data)
-    await _ai_require(db, "client")
-    q = _ai_norm(body.query).strip()[:300]
-    if len(q) < 2:
-        raise HTTPException(status_code=400, detail="Nima xohlayotganingizni yozing")
+def _ai_match_vocab(qw: str, vocab: list, vset: set) -> dict:
+    """So'zga mos lug'at so'zlari: aniq/prefiks (1.0), keyin o'xshash imlo (0.8)."""
+    import difflib
+    out = {}
+    st = _ai_stem(qw)
+    for v in vocab:
+        if v == qw:
+            out[v] = 1.0
+        elif len(st) >= 4 and (v.startswith(st) or (len(v) >= 4 and st.startswith(_ai_stem(v)))):
+            out[v] = 0.95
+    if not out and len(qw) >= 5:
+        for v in difflib.get_close_matches(qw, vocab, n=4, cutoff=0.78):
+            out[v] = 0.8
+    return out
 
+
+async def _ai_assist_core(db: AsyncSession, tg_user, body: "AIAssistBody", query: str) -> dict:
+    q = _ai_key(query).strip()[:300]
     client = (await db.execute(select(User).where(_ident_cond(tg_user)))).scalars().first()
     stmt = (
         select(Product, PartnerProfile)
         .join(PartnerProfile, Product.partner_id == PartnerProfile.id)
         .where(Product.is_available == True, PartnerProfile.is_open == True)
+        .order_by(Product.id.desc())   # yangi qo'shilgan mahsulotlar birinchi o'qiladi
     )
     if client and client.city_id:
         stmt = stmt.where(PartnerProfile.city_id == client.city_id)
-    rows = (await db.execute(stmt.limit(1200))).all()
+    rows = (await db.execute(stmt.limit(6000))).all()
 
     # Mijoz joylashuvi: avval hozirgi GPS, bo'lmasa saqlangan uy manzili
     lat, lng = body.lat, body.lng
@@ -6835,14 +6985,14 @@ async def shop_ai_assist(body: AIAssistBody, db: AsyncSession = Depends(get_db))
     # Mijoz do'kon nomini aytdimi? («Evos dan 3 ta lavash»)
     named = {}
     for _, pr in rows:
-        bn = _ai_norm(pr.brand_name or "").strip()
+        bn = _ai_key(pr.brand_name or "").strip()
         if len(bn) >= 3 and bn in q:
             named[pr.id] = pr.brand_name
     if named:
         rows = [(p, pr) for p, pr in rows if pr.id in named]
 
-    def hay(p):
-        return _ai_norm(f"{p.name} {p.description or ''} {p.category or ''}")
+    def hay(p, pr):
+        return _ai_key(f"{p.name} {p.description or ''} {p.category or ''} {pr.category or ''}")
 
     def mk(p, pr, qty, kind, reason):
         d = dist_cache.get(pr.id)
@@ -6850,32 +7000,33 @@ async def shop_ai_assist(body: AIAssistBody, db: AsyncSession = Depends(get_db))
                 "partner_name": pr.brand_name, "qty": qty, "kind": kind, "reason": reason,
                 "image_url": p.image_url, "distance_km": round(d, 1) if d is not None else None}
 
-    tokens = [t for t in re.findall(r"[\w'‘’-]+", q) if t]
+    tokens = [t for t in re.findall(r"[a-z0-9]+", q) if t]
     # 1) Aniq nom bo'yicha (miqdor bilan): "uchta lavash va bitta kola"
     wanted = []   # [(stems, qty)]
     for i, tok in enumerate(tokens):
-        if len(tok) < 3 or tok in _AI_STOP or tok in _AI_QTY_WORDS or tok.isdigit():
+        if len(tok) < 3 or tok in _AI_STOP_K or tok in _AI_QTY_K or tok.isdigit():
             continue
-        if any(tok in _ai_norm(n) for n in named.values()):
+        if any(tok in _ai_key(n) for n in named.values()):
             continue  # do'kon nomining o'zi mahsulot emas
-        stems = _AI_ALIASES.get(tok, [tok])
-        stems = [s[:max(4, len(s) - 2)] if len(s) > 5 else s for s in stems]
+        stems = _AI_ALIASES_K.get(tok, [tok])
+        stems = [_ai_stem(x) for x in stems]
         qty = 1
         for j in (i - 1, i - 2, i + 1):
             if 0 <= j < len(tokens):
                 t = tokens[j]
-                if t in _AI_QTY_WORDS:
-                    qty = _AI_QTY_WORDS[t]
+                if t in _AI_QTY_K:
+                    qty = _AI_QTY_K[t]
                     break
                 if t.isdigit() and 0 < int(t) <= 30:
                     qty = int(t)
                     break
         wanted.append((stems, min(qty, 20)))
-    # Faqat menyuda bor so'zlarni "buyurtma so'zi" deb olamiz
     cand = {}  # partner_id -> {wanted_index: (product, partner, qty)}
+    matched_any = set()   # menyuda umuman topilgan so'zlar (tushunilmagan so'zlar "yo'q narsa" hisoblanmaydi)
     for wi, (stems, qty) in enumerate(wanted):
         for p, pr in rows:
-            if any(s in _ai_norm(p.name) for s in stems):
+            if any(sm in _ai_key(p.name) for sm in stems):
+                matched_any.add(wi)
                 cur = cand.setdefault(pr.id, {})
                 if wi not in cur or p.price < cur[wi][0].price:
                     cur[wi] = (p, pr, qty)
@@ -6889,56 +7040,131 @@ async def shop_ai_assist(body: AIAssistBody, db: AsyncSession = Depends(get_db))
             items.append(mk(p, pr, qty, "match", "So'rovingizga mos"))
         pr0 = cand[best_pid][sorted(cand[best_pid])[0]][1]
         # Aqlli qo'shimcha: ichimlik
-        if not any(any(d in _ai_norm(i["name"]) for d in _AI_DRINK) for i in items):
-            drinks = sorted([(p, pr) for p, pr in rows if pr.id == best_pid and any(d in hay(p) for d in _AI_DRINK)],
+        _drink_k = [_ai_key(d) for d in _AI_DRINK]
+        if not any(any(d in _ai_key(i["name"]) for d in _drink_k) for i in items):
+            drinks = sorted([(p, pr) for p, pr in rows if pr.id == best_pid and any(d in hay(p, pr) for d in _drink_k)],
                             key=lambda x: x[0].price)
             if drinks:
                 items.append(mk(drinks[0][0], drinks[0][1], 1, "addon", "Ichimlik ham qo'shilsinmi?"))
         d0 = dist_cache.get(best_pid)
         where = f"«{pr0.brand_name}»" + (f" ({d0:.1f} km)" if d0 is not None else "")
-        missing = len(wanted) - len(cand[best_pid])
+        missing = len(matched_any) - len(cand[best_pid])
         summary = (f"{where} do'konidan topdim" if named else f"Sizga eng yaqin: {where}") + \
                   (f". {missing} ta narsa bu do'konda yo'q." if missing > 0 else ".") + " Tasdiqlang."
     else:
-        # 2) Niyat bo'yicha (kayfiyat, salomatlik...) — yaqin do'konlar birinchi
-        padded = q + " "
-        for key, label, triggers, w in _AI_INTENTS:
-            if any(t in padded for t in triggers):
-                scored = []
-                for p, pr in rows:
-                    h = hay(p)
-                    sc = sum(1 for x in w if x in h)
-                    if sc:
-                        scored.append((p, pr, sc))
-                scored.sort(key=lambda x: (dkey(x[1].id), -x[2], x[0].price))
-                seen = {}
-                for p, pr, sc in scored:
-                    if seen.get(pr.id, 0) >= 2:
-                        continue
-                    seen[pr.id] = seen.get(pr.id, 0) + 1
-                    items.append(mk(p, pr, 1, "idea", label))
-                    if len(items) >= 8:
-                        break
-                summary = label + (" — eng yaqin joylardan" if have_loc else "")
-                break
-        if not items:
-            words = [t for t in tokens if len(t) >= 4 and t not in _AI_STOP]
+        # 2) Niyat bo'yicha (kayfiyat, salomatlik, teri, qurilish...) — yaqin do'konlar birinchi
+        def trig_hit(trig: str) -> bool:
+            tw = _ai_key(trig).split()
+            for w in tw:
+                if len(w) <= 3:
+                    if w not in tokens:
+                        return False
+                else:
+                    stw = _ai_stem(w)
+                    if not any(t.startswith(stw) for t in tokens):
+                        return False
+            return bool(tw)
+        hit_words, hit_label = [], None
+        for key, label, triggers, w in list(_AI_INTENTS) + _AI_INTENTS_EXTRA:
+            if any(trig_hit(t) for t in triggers):
+                hit_label = hit_label or label
+                hit_words += [_ai_key(x) for x in w]
+        if hit_label:
+            hw = list(dict.fromkeys(hit_words))
             scored = []
             for p, pr in rows:
-                h = hay(p)
-                sc = sum(1 for x in words if x[:max(4, len(x) - 2)] in h)
+                hws = set(_ai_words(hay(p, pr)))
+                sc = sum(1 for x in hw if x in hws or (len(x) >= 5 and any(w.startswith(x) for w in hws)))
                 if sc:
                     scored.append((p, pr, sc))
-            scored.sort(key=lambda x: (-x[2], dkey(x[1].id), x[0].price))
-            for p, pr, sc in scored[:8]:
+            scored.sort(key=lambda x: (dkey(x[1].id), -x[2], x[0].price))
+            seen = {}
+            for p, pr, sc in scored:
+                if seen.get(pr.id, 0) >= 2:
+                    continue
+                seen[pr.id] = seen.get(pr.id, 0) + 1
+                items.append(mk(p, pr, 1, "idea", hit_label))
+                if len(items) >= 8:
+                    break
+            if items:
+                summary = hit_label + (" — eng yaqin joylardan" if have_loc else "")
+        if not items:
+            # 3) Umumiy qidiruv: nom, tavsif, mahsulot va do'kon kategoriyasi, do'kon nomi bo'yicha;
+            #    yaqin ma'noli so'zlar va imlo xatolari hisobga olinadi.
+            words = [t for t in tokens if len(t) >= 3 and t not in _AI_STOP_K and t not in _AI_QTY_K and not t.isdigit()]
+            fields = []
+            vocab_set = set()
+            for p, pr in rows:
+                f = (set(_ai_words(p.name)), set(_ai_words(f"{p.description or ''} {p.category or ''}")),
+                     set(_ai_words(pr.category or "")), set(_ai_words(pr.brand_name or "")))
+                fields.append(f)
+                for part in f:
+                    vocab_set |= part
+            vocab = sorted(vocab_set)
+            fw = (3.0, 2.0, 2.5, 1.5)
+            wmap = []   # har bir so'z uchun {lug'at so'zi: og'irlik}
+            for w in words:
+                m = _ai_match_vocab(w, vocab, vocab_set)
+                for g in _AI_SYN:
+                    if any(w == x or (len(w) >= 3 and (w.startswith(_ai_stem(x)) or _ai_stem(w) == x)) for x in g):
+                        for x in g:
+                            for v, wt in _ai_match_vocab(x, vocab, vocab_set).items():
+                                m[v] = max(m.get(v, 0), 0.6 * wt)
+                wmap.append(m)
+            scored = []
+            for (p, pr), f in zip(rows, fields):
+                sc = 0.0
+                for m in wmap:
+                    best = 0.0
+                    for part, wt in zip(f, fw):
+                        for v in part:
+                            if v in m:
+                                best = max(best, wt * m[v])
+                    sc += best
+                if sc > 0:
+                    scored.append((p, pr, sc))
+            scored.sort(key=lambda x: (-round(x[2], 1), dkey(x[1].id), x[0].price))
+            seen = {}
+            for p, pr, sc in scored:
+                if seen.get(pr.id, 0) >= 3:
+                    continue
+                seen[pr.id] = seen.get(pr.id, 0) + 1
                 items.append(mk(p, pr, 1, "idea", "Qidiruv bo'yicha"))
+                if len(items) >= 8:
+                    break
             if not items and named:
                 summary = "«" + ", ".join(named.values()) + "» do'konida bunday mahsulot topilmadi. Do'kon nomisiz yozib ko'ring — yaqin joylardan qidiraman."
             else:
-              summary = "Qidiruv natijalari" if items else \
-                "Mos mahsulot topilmadi. Boshqacha yozib ko'ring (masalan: «uchta lavash va bitta kola» yoki «tomog'im og'riyapti»)."
+                if items:
+                    _pids = {i["partner_id"] for i in items}
+                    cats = list(dict.fromkeys(_norm_partner_category(r[1].category) for r in rows if r[1].id in _pids))
+                    summary = "Topilgan natijalar" + (f" ({', '.join(cats[:3])})" if cats else "")
+                else:
+                    summary = "Mos mahsulot topilmadi. Boshqacha yozib ko'ring (masalan: «uchta lavash va bitta kola», «tomog'im og'riyapti» yoki «qurilish mollari»)."
     return {"enabled": True, "summary": summary, "items": items, "have_location": have_loc,
             "named_partner": bool(named), "needs_payment": True}
+
+
+@shop_router.post("/ai/assist")
+async def shop_ai_assist(body: AIAssistBody, db: AsyncSession = Depends(get_db)):
+    """Mijoz matnini (yoki ovozdan matnga aylangan so'zini) tushunib, MIJOZGA ENG YAQIN do'kondan mos mahsulotlarni yig'adi.
+    Ma'lumot har so'rovda bazadan o'qiladi — yangi hamkor va yangi mahsulotlar darhol hisobga olinadi.
+    Ovozdan bir nechta variant kelsa, birinchisi topmasa keyingilari sinab ko'riladi.
+    Buyurtma faqat mijoz tasdig'i va to'lovdan keyin yuboriladi."""
+    tg_user = _get_telegram_user_or_403(body.init_data)
+    await _ai_require(db, "client")
+    first = (body.query or "").strip()[:300]
+    if len(first) < 2:
+        raise HTTPException(status_code=400, detail="Nima xohlayotganingizni yozing")
+    cands = [first] + [a.strip()[:300] for a in (body.alts or [])[:3] if a and a.strip() and a.strip().lower() != first.lower()]
+    res = None
+    for c in cands:
+        res = await _ai_assist_core(db, tg_user, body, c)
+        if res["items"]:
+            break
+    if res is not None and not res["items"] and len(cands) > 1:
+        res["summary"] = "Mos mahsulot topilmadi. Aniqroq ayting yoki yozib ko'ring."
+    return res
 
 
 # ---------- Kuryer: aqlli maslahatchi ----------
@@ -7277,6 +7503,9 @@ async def partner_led_delete(ad_id: int, db: AsyncSession = Depends(get_db), cur
 async def courier_led_page(request: Request, db: AsyncSession = Depends(get_db),
                            current_user: User = Depends(get_current_courier_user)):
     await _ai_require(db, "led")
+    _cp = (await db.execute(select(CourierProfile).where(CourierProfile.user_id == current_user.id))).scalars().first()
+    if _cp is not None and _cp.led_enabled is False:
+        raise HTTPException(status_code=403, detail="LED ekran sizga o'chirilgan")
     return templates.TemplateResponse(request=request, name="led.html", context={"current_user": current_user})
 
 
@@ -8317,8 +8546,297 @@ async def admin_rating_bonus_save(city_id: int, body: RatingBonusBody, db: Async
 # Routerlarni ulash
 app.include_router(sec_router)
 app.include_router(courier_router_app)
+
+# ==================== MIJOZ BUYURTMANI RAD ETISHI (faqat onlayn/P2P to'lovda) ====================
+# Naqd to'lovli buyurtmani rad etib bo'lmaydi. Onlayn (P2P, tasdiqlangan) buyurtmada pul holatga qarab taqsimlanadi:
+#   created      — do'kon hali qabul qilmagan: pul to'liq qaytadi
+#   preparing    — do'kon qabul qilib tayyorlashni boshlagan: mahsulot narxining X% (standart 60%) ushlab qolinadi,
+#                  qolgani va yetkazish haqi qaytadi; ushlangan summa hamkorga (komissiya ayirilib) o'tadi
+#   ready        — tayyor, kuryer izlanmoqda: mahsulotning to'liq puli ushlanadi (hamkorga), yetkazish haqi qaytadi
+#   on_the_way   — kuryer yo'lda: pul QAYTARILMAYDI. Mahsulot kuryerda qoladi; kuryer balansidan mahsulot puli
+#                  (hamkor ulushi + komissiya) yechiladi, hamkorga komissiya ayirilib o'tkaziladi, mijozning to'lovi
+#                  kuryerga o'tadi; yetkazish haqi to'liq (komissiyasiz) kuryerda qoladi.
+cancel_router = APIRouter(tags=["Buyurtmani rad etish"])
+
+async def _apply_staff_cancel(db: AsyncSession, order: Order, by: str) -> bool:
+    """Buyurtmani hamkor/admin/operator (yoki to'lov rad etilgani uchun) bekor qilganda MIJOZGA pulini qaytarish:
+    ishlatilgan keshbek balansga qaytadi; onlayn (tasdiqlangan P2P) to'langan bo'lsa — naqd qismi to'liq
+    "qaytariladigan pullar" ro'yxatiga tushadi. Bir buyurtma uchun faqat BIR MARTA ishlaydi.
+    by: by_partner | by_admin | payment_rejected. True — shu safar hisoblangan bo'lsa."""
+    if order.cancel_stage or order.financials_applied:
+        return False
+    S = float(order.total_price or 0)
+    D = float(order.delivery_fee or 0)
+    cb = float(order.cashback_used or 0)
+    pd = max(0.0, float(order.discount_amount or 0) - cb)
+    paid_online = order.payment_method == "p2p" and bool(order.payment_verified)
+    cb_back, r_cash = cb, 0.0
+    if paid_online:
+        V = max(0.0, S + D - pd)
+        cb_back = min(cb, V)
+        r_cash = V - cb_back
+    if cb_back > 0:
+        client = (await db.execute(select(User).where(User.id == order.client_id).with_for_update())).scalars().first()
+        if client:
+            client.cashback_balance = (client.cashback_balance or 0) + cb_back
+    order.cancel_stage = by
+    order.cancelled_at = datetime.utcnow()
+    order.cancel_forfeit = 0.0
+    order.financials_applied = True
+    if r_cash > 0.5:
+        order.refund_amount = r_cash
+        order.refund_status = "pending"
+    order._staff_cancel_info = (cb_back, r_cash)
+    return True
+
+
+async def _notify_staff_cancel(db: AsyncSession, order: Order) -> None:
+    info = getattr(order, "_staff_cancel_info", None)
+    if not info:
+        return
+    cb_back, r_cash = info
+    if cb_back <= 0 and r_cash <= 0.5:
+        return
+    try:
+        cl = (await db.execute(select(User).where(User.id == order.client_id))).scalars().first()
+        if cl and cl.telegram_id:
+            parts = []
+            if r_cash > 0.5:
+                parts.append(f"{_fm(r_cash)} so'm tez orada kartangizga qaytariladi")
+            if cb_back > 0:
+                parts.append(f"{_fm(cb_back)} so'm keshbek balansingizga qaytarildi")
+            await send_telegram_message(cl.telegram_id, f"❌ Buyurtma #{order.id} bekor qilindi. " + "; ".join(parts) + ".")
+    except Exception as e:
+        print(f"Qaytim xabari yuborilmadi: {e}")
+
+_CANCEL_OPEN = (OrderStatus.CREATED, OrderStatus.ACCEPTED_BY_PARTNER, OrderStatus.PREPARING,
+                OrderStatus.LOOKING_FOR_COURIER, OrderStatus.ON_THE_WAY)
+
+
+def _fm(v: float) -> str:
+    return f"{float(v):,.0f}".replace(",", " ")
+
+
+class CancelBody(BaseModel):
+    init_data: str
+    confirm: bool = False
+
+
+async def _cancel_quote(db: AsyncSession, order: Order, setting, partner) -> dict:
+    S = float(order.total_price or 0)
+    D = float(order.delivery_fee or 0)
+    cb = float(order.cashback_used or 0)
+    pd = max(0.0, float(order.discount_amount or 0) - cb)      # promo chegirma (platforma hisobidan)
+    out = {"can_cancel": False, "reason": "", "stage": None, "title": "", "lines": [], "forfeit": 0.0,
+           "cashback_back": 0.0, "refund_cash": 0.0, "partner_credit": 0.0}
+    if order.payment_method != "p2p":
+        out["reason"] = "Naqd to'lovli buyurtmani rad etib bo'lmaydi."
+        return out
+    if order.status not in _CANCEL_OPEN:
+        out["reason"] = "Bu buyurtmani endi rad etib bo'lmaydi."
+        return out
+    pct = (60.0 if setting.cancel_prep_percent is None else float(setting.cancel_prep_percent)) / 100.0
+    c = ((partner.commission_rate if partner else 0) or 0) / 100.0
+
+    if not order.payment_verified:
+        pending = (await db.execute(select(func.count(PaymentReceipt.id)).where(
+            PaymentReceipt.kind == "client_order", PaymentReceipt.order_id == order.id, PaymentReceipt.status == "pending"))).scalar() or 0
+        if pending or order.payment_receipt_file_id:
+            out["reason"] = "To'lov chekingiz tekshirilmoqda. Bekor qilish uchun administratsiyaga yozing."
+            return out
+        out.update(can_cancel=True, stage="unpaid", title="Buyurtmani rad etish",
+                   cashback_back=cb, lines=["To'lov hali qilinmagan — buyurtma bekor qilinadi, hech narsa yechilmaydi."])
+        return out
+
+    st = order.status
+    if st == OrderStatus.CREATED:
+        stage, forfeit = "created", 0.0
+        lines = ["Do'kon hali buyurtmani qabul qilmagan — to'langan pulingiz TO'LIQ qaytariladi."]
+    elif st in (OrderStatus.ACCEPTED_BY_PARTNER, OrderStatus.PREPARING):
+        stage, forfeit = "preparing", S * pct
+        lines = [f"⚠️ Do'kon buyurtmani qabul qilib tayyorlashni boshlagan.",
+                 f"Mahsulot narxining {pct * 100:g}% ({_fm(forfeit)} so'm) ushlab qolinadi.",
+                 "Qolgan summa va yetkazish haqi qaytariladi."]
+    elif st == OrderStatus.LOOKING_FOR_COURIER:
+        stage, forfeit = "ready", S
+        lines = ["⚠️ Buyurtma tayyor bo'lgan va kuryer izlanmoqda.",
+                 f"Mahsulotning to'liq puli ({_fm(S)} so'm) ushlab qolinadi.",
+                 f"Yetkazish haqi ({_fm(D)} so'm) qaytariladi."]
+    else:
+        stage, forfeit = "on_the_way", S + D
+        lines = ["⚠️ Kuryer yo'lda — buyurtma kuryerga topshirilgan.",
+                 "To'langan pul QAYTARILMAYDI."]
+    V = max(0.0, S + D - pd)                         # mijoz to'lagan qiymat (pul + ishlatilgan keshbek)
+    forfeit_eff = min(forfeit, V)
+    R_total = V - forfeit_eff
+    cb_back = min(cb, R_total)
+    R_cash = R_total - cb_back
+    f_prod = min(forfeit_eff, S)
+    out.update(can_cancel=True, stage=stage, title="Buyurtmani rad etish", lines=lines, forfeit=forfeit_eff,
+               cashback_back=cb_back, refund_cash=R_cash, partner_credit=f_prod * (1 - c))
+    if stage != "on_the_way":
+        lines.append(f"Sizga qaytariladi: {_fm(R_total)} so'm" + (f" (shundan {_fm(cb_back)} so'm keshbek balansingizga)" if cb_back > 0 else "") + ".")
+    return out
+
+
+async def _client_for_cancel(db: AsyncSession, init_data: str) -> User:
+    tg_user = _get_telegram_user_or_403(init_data)
+    client = (await db.execute(select(User).where(_ident_cond(tg_user), User.role == UserRole.CLIENT))).scalars().first()
+    if not client:
+        raise HTTPException(status_code=404, detail="Mijoz topilmadi")
+    return client
+
+
+@cancel_router.post("/api/shop/orders/{order_id}/cancel-info")
+async def shop_cancel_info(order_id: int, body: CancelBody, db: AsyncSession = Depends(get_db)):
+    client = await _client_for_cancel(db, body.init_data)
+    order = (await db.execute(select(Order).where(Order.id == order_id, Order.client_id == client.id))).scalars().first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Buyurtma topilmadi")
+    partner = (await db.execute(select(PartnerProfile).where(PartnerProfile.id == order.partner_id))).scalars().first() if order.partner_id else None
+    q = await _cancel_quote(db, order, await _get_or_create_setting(db), partner)
+    return q
+
+
+@cancel_router.post("/api/shop/orders/{order_id}/cancel")
+async def shop_cancel_order(order_id: int, body: CancelBody, db: AsyncSession = Depends(get_db)):
+    if not body.confirm:
+        raise HTTPException(status_code=400, detail="Tasdiqlash kerak")
+    client = await _client_for_cancel(db, body.init_data)
+    order = (await db.execute(select(Order).where(Order.id == order_id, Order.client_id == client.id).with_for_update())).scalars().first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Buyurtma topilmadi")
+    if order.financials_applied or order.cancel_stage:
+        raise HTTPException(status_code=400, detail="Bu buyurtma allaqachon yopilgan")
+    setting = await _get_or_create_setting(db)
+    partner = (await db.execute(select(PartnerProfile).where(PartnerProfile.id == order.partner_id).with_for_update())).scalars().first() if order.partner_id else None
+    q = await _cancel_quote(db, order, setting, partner)
+    if not q["can_cancel"]:
+        raise HTTPException(status_code=400, detail=q["reason"] or "Rad etib bo'lmaydi")
+
+    stage = q["stage"]
+    S = float(order.total_price or 0)
+    D = float(order.delivery_fee or 0)
+    now = datetime.utcnow()
+    courier_user = None
+    # 1) Mijoz: keshbek qaytadi, naqd qaytim "kutilmoqda" holatida adminga tushadi
+    if q["cashback_back"] > 0:
+        client.cashback_balance = (client.cashback_balance or 0) + q["cashback_back"]
+    # 2) Hamkor: ushlab qolingan mahsulot puli (komissiya ayirilib)
+    if partner and q["partner_credit"] > 0:
+        partner.balance = (partner.balance or 0) + q["partner_credit"]
+        db.add(Transaction(partner_id=partner.id, type=TransactionType.DEPOSIT, amount=q["partner_credit"],
+                           note=f"Mijoz rad etgan buyurtma #{order.id} ({'tayyorlanayotgan' if stage == 'preparing' else 'tayyor' if stage == 'ready' else 'yo`lda'}) — kompensatsiya (komissiya ayirilgan)",
+                           created_by_id=None))
+    # 3) Kuryer yo'lda: mahsulot kuryerda qoladi
+    if stage == "on_the_way" and order.courier_id:
+        courier_user = (await db.execute(select(User).where(User.id == order.courier_id).options(selectinload(User.courier_profile)))).scalars().first()
+        if courier_user and courier_user.courier_profile:
+            cp = courier_user.courier_profile
+            cp.balance = (cp.balance or 0) - S
+            db.add(Transaction(user_id=courier_user.id, type=TransactionType.WITHDRAWAL, amount=S,
+                               note=f"Rad etilgan buyurtma #{order.id} — mahsulot sizda qoldi: mahsulot va komissiya balansingizdan yechildi",
+                               created_by_id=None))
+            cp.balance = (cp.balance or 0) + S + D
+            db.add(Transaction(user_id=courier_user.id, type=TransactionType.ORDER_FEE, amount=S + D,
+                               note=f"Rad etilgan buyurtma #{order.id} — mijoz to'lovi (mahsulot {_fm(S)} + yetkazish {_fm(D)}); yetkazish haqi komissiyasiz",
+                               created_by_id=None))
+    # 4) Buyurtma holati
+    order.status = OrderStatus.CANCELLED
+    order.financials_applied = True
+    order.cancel_stage = stage
+    order.cancelled_at = now
+    order.cancel_forfeit = q["forfeit"]
+    if q["refund_cash"] > 0.5:
+        order.refund_amount = q["refund_cash"]
+        order.refund_status = "pending"
+    await db.commit()
+
+    # Xabarlar
+    try:
+        label = {"unpaid": "to'lovsiz", "created": "qabul qilinmagan", "preparing": "tayyorlanayotgan", "ready": "tayyor (kuryer kutilmoqda)", "on_the_way": "kuryer yo'lda"}[stage]
+        if partner:
+            pu = (await db.execute(select(User).where(User.id == partner.user_id))).scalars().first()
+            if pu and pu.telegram_id:
+                extra = f"\nKompensatsiya: {_fm(q['partner_credit'])} so'm balansingizga qo'shildi." if q["partner_credit"] > 0 else ""
+                await send_telegram_message(pu.telegram_id, f"❌ Mijoz buyurtma #{order.id} ni rad etdi ({label}).{extra}")
+        if courier_user and courier_user.telegram_id:
+            await send_telegram_message(courier_user.telegram_id,
+                f"❌ Mijoz buyurtma #{order.id} ni rad etdi. Mahsulot sizda qoladi — do'kondan oling. "
+                f"Mahsulot puli ({_fm(S)} so'm) balansingizdan yechildi, mijoz to'lovi va yetkazish haqi ({_fm(D)} so'm) qo'shildi.")
+    except Exception as e:
+        print(f"Rad etish bildirishnomasi yuborilmadi: {e}")
+    msg = "Buyurtma bekor qilindi."
+    if q["refund_cash"] > 0.5:
+        msg += f" {_fm(q['refund_cash'])} so'm tez orada kartangizga qaytariladi."
+    if q["cashback_back"] > 0:
+        msg += f" {_fm(q['cashback_back'])} so'm keshbek balansingizga qaytarildi."
+    if stage == "on_the_way":
+        msg += " Kuryer yo'lda bo'lgani uchun to'lov qaytarilmaydi."
+    return {"ok": True, "stage": stage, "message": msg, "refund_cash": q["refund_cash"], "cashback_back": q["cashback_back"], "forfeit": q["forfeit"]}
+
+
+# ---- Admin: mijozga qaytariladigan pullar ----
+async def _refund_viewer(db: AsyncSession, user: User):
+    if user.role == UserRole.OWNER:
+        return None
+    if not await operator_can_see(db, user, "buyurtmalar") or user.city_id is None:
+        raise HTTPException(status_code=403, detail="Bu bo'limni ko'rish huquqingiz yo'q")
+    return user.city_id
+
+
+@cancel_router.get("/admin/refunds")
+async def admin_refunds(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_admin_user)):
+    scope_city = await _refund_viewer(db, current_user)
+    q = (select(Order, User, PartnerProfile).join(User, User.id == Order.client_id)
+         .outerjoin(PartnerProfile, PartnerProfile.id == Order.partner_id)
+         .where(Order.refund_status.in_(["pending", "paid"])).order_by(Order.refund_status.desc(), Order.id.desc()).limit(60))
+    if scope_city is not None:
+        q = q.where(PartnerProfile.city_id == scope_city)
+    items = []
+    for o, u, pr in (await db.execute(q)).all():
+        items.append({"order_id": o.id, "client": u.full_name or "", "phone": u.phone_number or "", "amount": o.refund_amount or 0,
+                      "status": o.refund_status, "stage": o.cancel_stage, "partner": pr.brand_name if pr else "—",
+                      "at": o.cancelled_at.isoformat() if o.cancelled_at else None})
+    return {"items": items}
+
+
+@cancel_router.post("/admin/refunds/{order_id}/paid")
+async def admin_refund_paid(order_id: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_admin_user)):
+    scope_city = await _refund_viewer(db, current_user)
+    o = (await db.execute(select(Order).where(Order.id == order_id).with_for_update())).scalars().first()
+    if not o or o.refund_status != "pending":
+        raise HTTPException(status_code=404, detail="Kutilayotgan qaytim topilmadi")
+    if scope_city is not None:
+        pr = (await db.execute(select(PartnerProfile).where(PartnerProfile.id == o.partner_id))).scalars().first()
+        if not pr or pr.city_id != scope_city:
+            raise HTTPException(status_code=404, detail="Kutilayotgan qaytim topilmadi")
+    o.refund_status = "paid"
+    o.refund_paid_at = datetime.utcnow()
+    await db.commit()
+    try:
+        cl = (await db.execute(select(User).where(User.id == o.client_id))).scalars().first()
+        if cl and cl.telegram_id:
+            await send_telegram_message(cl.telegram_id, f"💸 Buyurtma #{o.id} bo'yicha {_fm(o.refund_amount or 0)} so'm kartangizga qaytarildi.")
+    except Exception as e:
+        print(f"Qaytim xabari yuborilmadi: {e}")
+    return {"ok": True}
+
+
+@cancel_router.post("/admin/settings/cancel-policy")
+async def admin_set_cancel_policy(cancel_prep_percent: float = Form(..., allow_inf_nan=False), db: AsyncSession = Depends(get_db),
+                                  owner: User = Depends(require_owner)):
+    if cancel_prep_percent < 0 or cancel_prep_percent > 100:
+        raise HTTPException(status_code=400, detail="Foiz 0 dan 100 gacha bo'lishi kerak")
+    setting = await _get_or_create_setting(db)
+    setting.cancel_prep_percent = cancel_prep_percent
+    await db.commit()
+    return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
+
+
 app.include_router(ai_admin_router)
 app.include_router(banner_req_admin_router)
+app.include_router(cancel_router)
 app.include_router(support_admin_router)
 app.include_router(partner_router)
 app.include_router(shop_router)

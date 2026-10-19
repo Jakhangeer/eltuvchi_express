@@ -294,6 +294,13 @@ class Order(Base):
     on_the_way_at = Column(DateTime, nullable=True)
     ai_delay_notified = Column(Boolean, default=False)
     financials_applied = Column(Boolean, nullable=True)   # pul (kuryer/hamkor/keshbek) allaqachon hisoblangan — qayta hisoblanmasin
+    # ---- MIJOZ RAD ETGANDA (faqat onlayn/P2P) ----
+    cancel_stage = Column(String, nullable=True)          # unpaid | created | preparing | ready | on_the_way
+    cancelled_at = Column(DateTime, nullable=True)
+    cancel_forfeit = Column(Float, nullable=True)         # mijozdan ushlab qolingan summa
+    refund_amount = Column(Float, nullable=True)          # mijozga naqd qaytarilishi kerak bo'lgan summa
+    refund_status = Column(String, nullable=True)         # pending | paid
+    refund_paid_at = Column(DateTime, nullable=True)
     courier_rating_bonus = Column(Float, nullable=True)   # yuqori reytingli kuryerga admin belgilagan bonus (shahar bo'yicha)
 
     # ---- P2P (KARTADAN-KARTAGA) TO'LOV TEKSHIRUVI ----
@@ -436,6 +443,8 @@ class SystemSetting(Base):
     # yashirish uchun (matnni o'chirmasdan).
     referral_visible = Column(Boolean, default=True)
     cashback_visible = Column(Boolean, default=True)
+    # Mijoz onlayn buyurtmani rad etganda, do'kon tayyorlashni boshlagan bo'lsa mahsulot narxining necha foizi ushlab qolinadi
+    cancel_prep_percent = Column(Float, nullable=True, default=60.0)
 
     # Har bir rol uchun alohida shartlar — odam shu rolni tanlaganda
     # birinchi bo'lib shu matn ko'rsatiladi, "Roziman" bosmasa davom etolmaydi.

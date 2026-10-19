@@ -12,18 +12,23 @@
     var st = function (m) { try { (opts.onState || function () {})(m); } catch (e) {} };
     var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SR) { st(T("Bu qurilmada ovoz yozish ishlamaydi. Klaviaturadagi 🎤 tugmasini bosib ayting yoki matn yozing.")); return; }
-    var l = 'uz'; try { l = localStorage.getItem('zm_lang') || 'uz'; } catch (e) {}
-    var langs = [opts.lang || { uz: 'uz-UZ', uzc: 'uz-UZ', ru: 'ru-RU', en: 'en-US', kk: 'kk-KZ', tg: 'tg-TJ', ky: 'ky-KG' }[l] || 'uz-UZ'];
+    var l = 'uz', vl = ''; try { l = localStorage.getItem('zm_lang') || 'uz'; vl = localStorage.getItem('zm_voice_lang') || ''; } catch (e) {}
+    var langs = [opts.lang || vl || { uz: 'uz-UZ', uzc: 'uz-UZ', ru: 'ru-RU', en: 'en-US', kk: 'kk-KZ', tg: 'tg-TJ', ky: 'ky-KG' }[l] || 'uz-UZ'];
     if (langs[0] !== 'ru-RU') langs.push('ru-RU');
     var got = false, idx = 0;
     function run() {
       var r = new SR(), heard = '';
-      r.lang = langs[idx]; r.interimResults = true; r.maxAlternatives = 1; r.continuous = false;
+      r.lang = langs[idx]; r.interimResults = true; r.maxAlternatives = 4; r.continuous = false;
       r.onstart = function () { st('🎙 ' + T("Eshitilmoqda... gapiring")); };
       r.onresult = function (e) {
         var t = ''; for (var i = 0; i < e.results.length; i++) t += e.results[i][0].transcript;
         heard = t; st('🎙 ' + t);
-        if (e.results[e.results.length - 1].isFinal && !got) { got = true; cb(t); }
+        var last = e.results[e.results.length - 1];
+        if (last.isFinal && !got) {
+          got = true;
+          var alts = []; for (var k = 1; k < last.length; k++) { var a = last[k].transcript; if (a && a !== last[0].transcript) alts.push(a); }
+          cb(t, alts);
+        }
       };
       r.onerror = function (e) {
         var c = e && e.error;
