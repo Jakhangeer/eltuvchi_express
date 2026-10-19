@@ -747,7 +747,143 @@
             updateFavBadge();
         }
 
+
+        // ==================== POCHTA (shaxsiy buyum yuborish) ====================
+        let PC = { cfg: null, form: { size: 'small', payer: 'sender', pickup: null, dropoff: null } };
+        const pcE = (v) => String(v == null ? '' : v).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+        const pcN = (v) => Number(v || 0).toLocaleString('ru-RU');
+        async function pochtaSlot() {
+            try {
+                const r = await fetch('/api/shop/parcel/config'); PC.cfg = await r.json();
+                const el = document.getElementById('pochta-slot');
+                if (!el || !PC.cfg.enabled) return;
+                el.innerHTML = `<button onclick="openPochta()" class="w-full text-left card-bg p-3 rounded-2xl shadow-sm border flex items-center gap-3 active:scale-[.99]">
+                    <div class="w-10 h-10 rounded-xl bg-indigo-50 text-xl flex items-center justify-center">📮</div>
+                    <div class="flex-1"><div class="font-black text-sm text-title">Pochta — buyum yuborish</div>
+                    <div class="text-[11px] text-sub">Shaxsiy buyumingizni kuryer orqali manzilga yetkazing · ${pcN(PC.cfg.base_fee)} so'mdan</div></div>
+                    <i class="fa-solid fa-chevron-right text-sub text-xs"></i></button>`;
+            } catch (e) { }
+        }
+        let pcMapObj = null;
+        function pcPickOnMap(which) {
+            const ov = document.createElement('div');
+            ov.style.cssText = 'position:fixed;inset:0;z-index:99999;background:#000;display:flex;flex-direction:column';
+            ov.innerHTML = `<div style="padding:10px;background:#fff;display:flex;gap:8px;align-items:center"><b style="flex:1;font-size:13px">${which === 'pickup' ? '📍 Olish joyini' : '🏁 Topshirish joyini'} xaritada bosing</b><button id="pcm-ok" style="background:#4f46e5;color:#fff;border-radius:10px;padding:8px 14px;font-weight:800;font-size:12px;opacity:.5" disabled>Tasdiqlash</button><button id="pcm-x" style="background:#eee;border-radius:10px;padding:8px 12px;font-size:12px">✕</button></div><div id="pcm-map" style="flex:1"></div>`;
+            document.body.appendChild(ov);
+            const cur = PC.form[which] || userLocation;
+            const c = cur ? [cur.lat, cur.lng] : [41.5504, 60.6318];
+            pcMapObj = L.map('pcm-map').setView(c, 14);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(pcMapObj);
+            let mk = null, pt = PC.form[which] ? { lat: PC.form[which].lat, lng: PC.form[which].lng } : null;
+            const ok = ov.querySelector('#pcm-ok');
+            const put = (ll) => { pt = { lat: ll.lat, lng: ll.lng }; if (mk) mk.setLatLng(ll); else mk = L.marker(ll).addTo(pcMapObj); ok.disabled = false; ok.style.opacity = 1; };
+            if (pt) put(pt);
+            pcMapObj.on('click', (e) => put(e.latlng));
+            setTimeout(() => pcMapObj.invalidateSize(), 150);
+            const close = () => { try { pcMapObj.remove(); } catch (e) { } pcMapObj = null; ov.remove(); };
+            ov.querySelector('#pcm-x').onclick = close;
+            ok.onclick = () => { PC.form[which] = pt; close(); pcRefreshPts(); pcQuote(); };
+        }
+        function pcMyLoc(which) {
+            if (!navigator.geolocation) { alert("Joylashuvni aniqlab bo'lmadi, xaritadan tanlang."); return; }
+            navigator.geolocation.getCurrentPosition(p => { PC.form[which] = { lat: p.coords.latitude, lng: p.coords.longitude }; pcRefreshPts(); pcQuote(); },
+                () => alert("Joylashuvga ruxsat berilmadi. Xaritadan tanlang."), { enableHighAccuracy: true, timeout: 10000 });
+        }
+        function pcRefreshPts() {
+            ['pickup', 'dropoff'].forEach(w => { const el = document.getElementById('pc-pt-' + w); if (el) { const v = PC.form[w]; el.textContent = v ? '✅ Joy belgilandi' : 'Joy belgilanmagan'; el.style.color = v ? '#059669' : '#9ca3af'; } });
+        }
+        async function pcQuote() {
+            const f = PC.form, box = document.getElementById('pc-quote'); if (!box) return;
+            if (!f.pickup || !f.dropoff) { box.textContent = "Narxni bilish uchun ikkala joyni belgilang"; return; }
+            box.textContent = 'Hisoblanmoqda…';
+            try {
+                const r = await api('/parcel/quote', { pickup_lat: f.pickup.lat, pickup_lng: f.pickup.lng, dropoff_lat: f.dropoff.lat, dropoff_lng: f.dropoff.lng, size: f.size });
+                box.innerHTML = `Masofa ≈ <b>${r.km} km</b> · Narx: <b class="text-indigo-600">${pcN(r.fee)} so'm</b>`;
+            } catch (e) { box.innerHTML = `<span style="color:#dc2626">${pcE(e.message)}</span>`; }
+        }
+        function pcSet(k, v, btn) {
+            PC.form[k] = v;
+            btn.parentElement.querySelectorAll('button').forEach(b => { b.style.background = '#f3f4f6'; b.style.color = '#374151'; });
+            btn.style.background = '#4f46e5'; btn.style.color = '#fff';
+            if (k === 'size') pcQuote();
+        }
+        function pcSeg(k, items) {
+            return items.map(([v, t]) => `<button type="button" onclick="pcSet('${k}','${v}',this)" style="flex:1;padding:8px 4px;border-radius:10px;font-size:12px;font-weight:700;background:${PC.form[k] === v ? '#4f46e5' : '#f3f4f6'};color:${PC.form[k] === v ? '#fff' : '#374151'}">${t}</button>`).join('');
+        }
+        function openPochta() {
+            PC.form = { size: 'small', payer: 'sender', pickup: null, dropoff: null };
+            const app = document.getElementById('app');
+            const inp = 'class="w-full mt-1 p-2.5 border rounded-xl text-sm card-bg text-title"';
+            app.innerHTML = `<div class="space-y-3 pb-24">
+              <div class="flex items-center gap-2"><button onclick="goHome()" class="w-9 h-9 rounded-xl card-bg border"><i class="fa-solid fa-arrow-left"></i></button><h1 class="text-lg font-black text-title">📮 Pochta</h1></div>
+              <div class="card-bg p-3 rounded-2xl border space-y-2">
+                <b class="text-xs">📍 Qayerdan olamiz</b>
+                <input id="pc-pa" ${inp} placeholder="Manzil (ko'cha, uy, mo'ljal)">
+                <div class="flex items-center gap-2 text-[11px]"><button type="button" onclick="pcPickOnMap('pickup')" class="px-2.5 py-1.5 rounded-lg bg-indigo-50 text-indigo-700 font-bold">🗺 Xaritadan</button><button type="button" onclick="pcMyLoc('pickup')" class="px-2.5 py-1.5 rounded-lg bg-indigo-50 text-indigo-700 font-bold">📡 Shu yerdaman</button><span id="pc-pt-pickup" class="text-sub">Joy belgilanmagan</span></div>
+                <b class="text-xs block pt-1">🏁 Qayerga yetkazamiz</b>
+                <input id="pc-da" ${inp} placeholder="Manzil (ko'cha, uy, mo'ljal)">
+                <div class="flex items-center gap-2 text-[11px]"><button type="button" onclick="pcPickOnMap('dropoff')" class="px-2.5 py-1.5 rounded-lg bg-indigo-50 text-indigo-700 font-bold">🗺 Xaritadan</button><span id="pc-pt-dropoff" class="text-sub">Joy belgilanmagan</span></div>
+              </div>
+              <div class="card-bg p-3 rounded-2xl border space-y-2">
+                <b class="text-xs">👤 Qabul qiluvchi</b>
+                <input id="pc-rn" ${inp} placeholder="Ismi">
+                <input id="pc-rp" ${inp} placeholder="Telefon: +998 90 123 45 67" inputmode="tel">
+              </div>
+              <div class="card-bg p-3 rounded-2xl border space-y-2">
+                <b class="text-xs">📦 Buyum</b>
+                <input id="pc-item" ${inp} placeholder="Nima yuboriladi? (hujjat, kalit, sovg'a...)">
+                <div class="flex gap-1.5">${pcSeg('size', [['small', 'Kichik'], ['medium', "O'rta"], ['large', 'Katta']])}</div>
+                <p class="text-[10px] text-sub">Kichik — hujjat/kalit · O'rta — sumka/quti · Katta — katta quti</p>
+                <b class="text-xs block pt-1">💵 Kim to'laydi (naqd, kuryerga)</b>
+                <div class="flex gap-1.5">${pcSeg('payer', [['sender', 'Men'], ['receiver', 'Qabul qiluvchi']])}</div>
+                <textarea id="pc-cm" ${inp} rows="2" placeholder="Izoh (ixtiyoriy)"></textarea>
+              </div>
+              <div id="pc-quote" class="card-bg p-3 rounded-2xl border text-xs text-sub">Narxni bilish uchun ikkala joyni belgilang</div>
+              <p class="text-[10px] text-sub px-1">Buyum qabul qiluvchiga faqat 4 xonali kod aytilgandagina topshiriladi. Kodni yuborganingizdan so'ng ko'rasiz va qabul qiluvchiga o'zingiz aytasiz.</p>
+              <button onclick="pcCreate(this)" class="w-full py-3 rounded-2xl bg-indigo-600 text-white font-black text-sm">Pochta yuborish</button>
+              <button onclick="openMyPochta()" class="w-full py-2.5 rounded-2xl bg-gray-100 text-gray-700 font-bold text-xs">📋 Mening pochtalarim</button>
+            </div>`;
+            window.scrollTo(0, 0);
+        }
+        async function pcCreate(btn) {
+            const f = PC.form, v = (id) => (document.getElementById(id) || {}).value || '';
+            if (!f.pickup || !f.dropoff) { alert("Olish va topshirish joyini xaritada belgilang."); return; }
+            btn.disabled = true;
+            try {
+                const r = await api('/parcel/create', { pickup_lat: f.pickup.lat, pickup_lng: f.pickup.lng, dropoff_lat: f.dropoff.lat, dropoff_lng: f.dropoff.lng, size: f.size, payer: f.payer,
+                    pickup_address: v('pc-pa'), dropoff_address: v('pc-da'), receiver_name: v('pc-rn'), receiver_phone: v('pc-rp'), item_description: v('pc-item'), comment: v('pc-cm') });
+                alert('✅ Pochta qabul qilindi!\n\nTopshirish kodi: ' + (r.code || (r.order && r.order.code) || '—') + '\nKodni qabul qiluvchiga ayting — kuryerga faqat shu kodni aytganda buyum topshiriladi.');
+                openMyPochta();
+            } catch (e) { alert(e.message); btn.disabled = false; }
+        }
+        let pcTimer = null;
+        async function openMyPochta() {
+            const app = document.getElementById('app');
+            app.innerHTML = `<div class="space-y-3 pb-24"><div class="flex items-center gap-2"><button onclick="clearInterval(pcTimer);goHome()" class="w-9 h-9 rounded-xl card-bg border"><i class="fa-solid fa-arrow-left"></i></button><h1 class="text-lg font-black text-title">📋 Mening pochtalarim</h1></div><div id="pc-my" class="space-y-2"></div><button onclick="clearInterval(pcTimer);openPochta()" class="w-full py-3 rounded-2xl bg-indigo-600 text-white font-black text-sm">+ Yangi pochta</button></div>`;
+            const draw = async () => {
+                const el = document.getElementById('pc-my'); if (!el) { clearInterval(pcTimer); return; }
+                try {
+                    const d = await api('/parcel/my', {});
+                    const col = { new: '#b45309', accepted: '#1d4ed8', picked_up: '#4338ca', delivered: '#047857', cancelled: '#be123c' };
+                    el.innerHTML = d.items.map(o => `<div class="card-bg p-3 rounded-2xl border text-xs space-y-1">
+                        <div class="flex justify-between gap-2"><b class="text-title">#${o.id} · ${pcE(o.item)}</b><b style="color:${col[o.status] || '#555'}">${pcE(o.status_label)}</b></div>
+                        <div class="text-sub">📍 ${pcE(o.pickup_address)} → 🏁 ${pcE(o.dropoff_address)}</div>
+                        <div class="text-sub">Qabul qiluvchi: ${pcE(o.receiver_name)} ${pcE(o.receiver_phone)} · ${pcN(o.fee)} so'm (${o.payer === 'receiver' ? 'qabul qiluvchi' : 'siz'} to'laydi)</div>
+                        ${o.courier_name ? `<div class="text-sub">🛵 Kuryer: <b>${pcE(o.courier_name)}</b> <a href="tel:${pcE(o.courier_phone)}" class="text-indigo-600">${pcE(o.courier_phone || '')}</a></div>` : ''}
+                        ${o.code ? `<div class="mt-1 inline-block px-3 py-1 rounded-lg bg-indigo-50 text-indigo-700 font-black tracking-widest">Kod: ${pcE(o.code)}</div>` : ''}
+                        ${(o.status === 'new' || o.status === 'accepted') ? `<div><button onclick="pcCancel(${o.id})" class="mt-1 px-3 py-1.5 rounded-lg bg-rose-50 text-rose-700 font-bold">Bekor qilish</button></div>` : ''}
+                    </div>`).join('') || '<p class="text-center text-xs text-sub py-8">Hozircha pochta yo\'q.</p>';
+                } catch (e) { el.innerHTML = `<p class="text-xs text-red-500">${pcE(e.message)}</p>`; }
+            };
+            await draw(); clearInterval(pcTimer); pcTimer = setInterval(draw, 8000);
+        }
+        async function pcCancel(id) {
+            if (!confirm('Pochtani bekor qilasizmi?')) return;
+            try { await api('/parcel/cancel', { id }); openMyPochta(); } catch (e) { alert(e.message); }
+        }
+
         function goHome() {
+            try { clearInterval(pcTimer); } catch (e) { }
             if (currentCityId) {
                 loadPartners();
             } else if (allCities.length > 0) {
@@ -1071,8 +1207,10 @@
                     </button>
                 </div>
 
+                <div id="pochta-slot"></div>
                 <h1 class="text-lg font-black text-title pt-1">🏪 Muassasalar</h1>
                 <div class="space-y-2.5" id="partner-list"></div>`;
+            pochtaSlot();
 
             new Swiper(".mySwiper", {
                 autoplay: { delay: 3500, disableOnInteraction: false },

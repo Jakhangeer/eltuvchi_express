@@ -327,6 +327,19 @@
                 {% if is_owner or operator_perms.get('dokonlar') %}
                 <button onclick="showPage('dokonlar')" data-page-btn="dokonlar" class="nav-btn">🏪 Do'konlar</button>
                 {% endif %}
+                {% if is_owner or operator_perms.get('pochta') or operator_perms.get('taksi') %}
+                <div class="border-t my-2 dark:border-gray-700"></div>
+                <div class="px-3 text-[10px] font-bold uppercase tracking-wider text-gray-400">Qo'shimcha xizmatlar</div>
+                {% endif %}
+                {% if is_owner or operator_perms.get('pochta') %}
+                <button onclick="showPage('pochta')" data-page-btn="pochta" class="nav-btn">📮 Pochta <span id="pochta-nav-badge" class="hidden ml-1 bg-red-500 text-white text-[10px] font-bold px-1.5 rounded-full"></span></button>
+                {% endif %}
+                {% if is_owner or operator_perms.get('taksi') %}
+                <button onclick="showPage('taksi')" data-page-btn="taksi" class="nav-btn">🚕 Taksi</button>
+                {% endif %}
+                {% if is_owner or operator_perms.get('pochta') or operator_perms.get('taksi') %}
+                <div class="border-t my-2 dark:border-gray-700"></div>
+                {% endif %}
                 {% if is_owner or operator_perms.get('xabarlar', True) %}
                 <button onclick="showPage('xabarlar')" data-page-btn="xabarlar" class="nav-btn">💬 Chat va e'lonlar <span id="sup-nav-badge" class="hidden ml-1 bg-red-500 text-white text-[10px] font-bold rounded-full px-1.5 py-0.5"></span></button>
                 {% endif %}
@@ -1820,6 +1833,121 @@
             {% endif %}
         </div>
         {{ rules_block('referral','Referal bonusi — shahar va muddat bo\'yicha','so\'m','Masalan: faqat Toshkentda 1–30 noyabr 20 000 so\'m.') }}
+        </section>
+        {% endif %}
+
+        <!-- ============ POCHTA (shaxsiy buyum yuborish) — alohida bo'lim ============ -->
+        {% if is_owner or operator_perms.get('pochta') %}
+        <section class="app-page" data-page="pochta" style="display:none;">
+            <div class="card-bg bg-white p-6 rounded-xl shadow-md mb-6">
+                <div class="flex items-center justify-between gap-2 flex-wrap mb-1">
+                    <h2 class="theme-title text-lg font-bold text-indigo-700">📮 Pochta — shaxsiy buyum yuborish</h2>
+                    <span id="pochta-enabled-badge" class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-gray-200 text-gray-600">…</span>
+                </div>
+                <p class="text-xs text-gray-500 mb-3">Mijoz buyumni bir manzildan boshqasiga yuboradi, kuryer olib boradi. To'lov naqd (kuryerga). Qabul qiluvchi 4 xonali kodni aytgandagina «Topshirildi» bo'ladi.{% if not is_owner %} Siz faqat o'z shahringiz buyurtmalarini ko'rasiz.{% endif %}</p>
+                <div id="pochta-stats" class="flex flex-wrap gap-2 text-xs"></div>
+            </div>
+
+            {% if is_owner %}
+            <div class="card-bg bg-white p-6 rounded-xl shadow-md mb-6">
+                <h3 class="font-bold mb-2 text-sm">⚙️ Pochta sozlamalari (faqat egasi)</h3>
+                <form id="pochta-settings-form" class="space-y-3">
+                    <label class="flex items-center gap-2 text-sm font-bold cursor-pointer"><input type="checkbox" name="parcel_enabled" value="1" id="pc-enabled" class="w-4 h-4"> Pochta xizmati yoqilgan (mijozlarga ko'rinadi)</label>
+                    <div class="grid grid-cols-2 md:grid-cols-3 gap-3">
+                        <div><label class="block text-xs font-medium">Boshlang'ich narx (so'm)</label><input type="number" min="0" step="500" name="base_fee" id="pc-base" class="w-full mt-1 p-2 border rounded-lg text-sm dark:bg-gray-800"></div>
+                        <div><label class="block text-xs font-medium">Har km uchun (so'm)</label><input type="number" min="0" step="100" name="per_km" id="pc-km" class="w-full mt-1 p-2 border rounded-lg text-sm dark:bg-gray-800"></div>
+                        <div><label class="block text-xs font-medium">O'rta hajm qo'shimcha</label><input type="number" min="0" step="500" name="medium_fee" id="pc-med" class="w-full mt-1 p-2 border rounded-lg text-sm dark:bg-gray-800"></div>
+                        <div><label class="block text-xs font-medium">Katta hajm qo'shimcha</label><input type="number" min="0" step="500" name="large_fee" id="pc-large" class="w-full mt-1 p-2 border rounded-lg text-sm dark:bg-gray-800"></div>
+                        <div><label class="block text-xs font-medium">Kuryer ulushi (%)</label><input type="number" min="0" max="100" step="1" name="courier_percent" id="pc-pct" class="w-full mt-1 p-2 border rounded-lg text-sm dark:bg-gray-800"></div>
+                        <div><label class="block text-xs font-medium">Eng uzoq masofa (km)</label><input type="number" min="1" max="500" step="1" name="max_km" id="pc-max" class="w-full mt-1 p-2 border rounded-lg text-sm dark:bg-gray-800"></div>
+                    </div>
+                    <p class="text-[11px] text-gray-500">Narx = boshlang'ich + km × narx + hajm qo'shimchasi (500 so'mga yaxlitlanadi). Kuryer ulushi naqd pulda kuryerda qoladi, qolgani yetkazilgach kuryer balansidan yechiladi.</p>
+                    <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white py-2 px-4 rounded-lg font-bold text-sm">Saqlash</button>
+                    <span id="pc-save-msg" class="text-xs text-emerald-600 ml-2"></span>
+                </form>
+            </div>
+            {% endif %}
+
+            <div class="card-bg bg-white p-6 rounded-xl shadow-md">
+                <div class="flex flex-wrap gap-1.5 mb-3 text-xs font-bold" id="pochta-filters">
+                    <button data-f="" class="pc-f px-3 py-1.5 rounded-lg bg-indigo-600 text-white">Hammasi</button>
+                    <button data-f="new" class="pc-f px-3 py-1.5 rounded-lg bg-gray-100 text-gray-700">Kuryer izlanmoqda</button>
+                    <button data-f="accepted" class="pc-f px-3 py-1.5 rounded-lg bg-gray-100 text-gray-700">Qabul qilingan</button>
+                    <button data-f="picked_up" class="pc-f px-3 py-1.5 rounded-lg bg-gray-100 text-gray-700">Yo'lda</button>
+                    <button data-f="delivered" class="pc-f px-3 py-1.5 rounded-lg bg-gray-100 text-gray-700">Topshirilgan</button>
+                    <button data-f="cancelled" class="pc-f px-3 py-1.5 rounded-lg bg-gray-100 text-gray-700">Bekor</button>
+                    <button id="pochta-refresh" class="ml-auto px-3 py-1.5 rounded-lg bg-gray-100 text-gray-700">🔄</button>
+                </div>
+                <div id="pochta-list" class="space-y-2 text-sm"><p class="text-xs text-gray-400">Yuklanmoqda…</p></div>
+            </div>
+        </section>
+        <script>
+        (function(){
+            var F='', couriers=null, canEdit=false;
+            function e(v){return String(v==null?'':v).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+            function n(v){return Number(v||0).toLocaleString('ru-RU').replace(/,/g,' ');}
+            function j(url,opt){return fetch(url,Object.assign({credentials:'same-origin'},opt||{})).then(function(r){return r.json().then(function(d){if(!r.ok)throw new Error((d&&d.detail&&d.detail.message)||(typeof d.detail==='string'?d.detail:'')||'Xatolik');return d;});});}
+            var COL={new:'bg-amber-100 text-amber-800',accepted:'bg-blue-100 text-blue-800',picked_up:'bg-indigo-100 text-indigo-800',delivered:'bg-emerald-100 text-emerald-800',cancelled:'bg-rose-100 text-rose-800'};
+            var SZ={small:'Kichik',medium:"O'rta",large:'Katta'};
+            function card(o){
+                var act='';
+                if(o.status==='new'||o.status==='accepted'){
+                    act='<div class="flex flex-wrap items-center gap-2 mt-2"><select class="pc-sel border rounded-lg p-1.5 text-xs dark:bg-gray-800" data-id="'+o.id+'"><option value="">Kuryer tanlang…</option>'+((couriers||[]).map(function(c){return '<option value="'+c.id+'">'+(c.online?'🟢 ':'⚪ ')+e(c.name)+' · '+n(c.balance)+' so\'m</option>';}).join(''))+'</select><button data-assign="'+o.id+'" class="px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-xs font-bold">Biriktirish</button><button data-cancel="'+o.id+'" class="px-3 py-1.5 rounded-lg bg-rose-100 text-rose-700 text-xs font-bold">Bekor qilish</button></div>';
+                } else if(o.status==='picked_up'){
+                    act='<div class="mt-2"><button data-cancel="'+o.id+'" class="px-3 py-1.5 rounded-lg bg-rose-100 text-rose-700 text-xs font-bold">Bekor qilish</button></div>';
+                }
+                return '<div class="p-3 rounded-lg border"><div class="flex items-center justify-between gap-2"><b>#'+o.id+' · '+e(o.item)+' <span class="text-xs text-gray-500">('+(SZ[o.size]||o.size)+')</span></b><span class="text-[11px] font-bold px-2 py-0.5 rounded-full '+(COL[o.status]||'')+'">'+e(o.status_label)+'</span></div>'
+                  +'<div class="text-xs mt-1">📍 '+e(o.pickup_address)+' → 🏁 '+e(o.dropoff_address)+(o.km!=null?' · '+o.km+' km':'')+'</div>'
+                  +'<div class="text-[11px] text-gray-500 mt-1">Yuboruvchi: '+e(o.client)+' <a class="text-indigo-600" href="tel:'+e(o.client_phone)+'">'+e(o.client_phone)+'</a> · Qabul qiluvchi: '+e(o.receiver_name)+' <a class="text-indigo-600" href="tel:'+e(o.receiver_phone)+'">'+e(o.receiver_phone)+'</a></div>'
+                  +'<div class="text-[11px] text-gray-500">Narx: <b>'+n(o.fee)+'</b> so\'m (kuryerga '+n(o.earning)+') · to\'laydi: '+(o.payer==='receiver'?'qabul qiluvchi':'yuboruvchi')+(o.courier?' · Kuryer: <b>'+e(o.courier)+'</b> '+e(o.courier_phone||''):'')+(o.cancel_reason?' · Sabab: '+e(o.cancel_reason):'')+'</div>'+(o.comment?'<div class="text-[11px] text-gray-500">💬 '+e(o.comment)+'</div>':'')+act+'</div>';
+            }
+            function load(){
+                var p=j('/admin/pochta/list'+(F?'?status_filter='+F:''));
+                var cp=couriers?Promise.resolve():j('/admin/pochta/couriers').then(function(d){couriers=d.items;});
+                Promise.all([p,cp]).then(function(a){var d=a[0];
+                    var el=document.getElementById('pochta-list');if(!el)return;
+                    var c=d.counts||{};
+                    document.getElementById('pochta-stats').innerHTML=[['new','Kuryer izlanmoqda'],['accepted','Qabul qilingan'],['picked_up','Yo\'lda'],['delivered','Topshirilgan'],['cancelled','Bekor']].map(function(x){return '<span class="px-2.5 py-1 rounded-lg '+COL[x[0]]+'">'+x[1]+': <b>'+(c[x[0]]||0)+'</b></span>';}).join('')+'<span class="px-2.5 py-1 rounded-lg bg-gray-100 text-gray-700">24 soat tushum: <b>'+n(d.revenue_24h)+'</b> so\'m</span>';
+                    var b=document.getElementById('pochta-enabled-badge');b.textContent=d.enabled?'🟢 Yoqilgan':'⚪ O\'chirilgan';b.className='text-[11px] font-bold px-2 py-0.5 rounded-full '+(d.enabled?'bg-emerald-100 text-emerald-800':'bg-gray-200 text-gray-600');
+                    var nb=document.getElementById('pochta-nav-badge');if(nb){var k=c.new||0;nb.textContent=k;nb.classList.toggle('hidden',!k);}
+                    canEdit=d.can_edit_settings;
+                    el.innerHTML=(d.items||[]).map(card).join('')||'<p class="text-xs text-gray-400">Hozircha pochta buyurtmasi yo\'q.</p>';
+                    el.querySelectorAll('[data-assign]').forEach(function(bt){bt.onclick=function(){var id=bt.dataset.assign;var sel=el.querySelector('select[data-id="'+id+'"]');if(!sel.value){alert('Kuryerni tanlang');return;}
+                        j('/admin/pochta/'+id+'/assign',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({courier_id:+sel.value})}).then(load).catch(function(x){alert(x.message);});};});
+                    el.querySelectorAll('[data-cancel]').forEach(function(bt){bt.onclick=function(){var r=prompt('Bekor qilish sababi (mijozga yuboriladi):','');if(r===null)return;
+                        j('/admin/pochta/'+bt.dataset.cancel+'/cancel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({reason:r})}).then(load).catch(function(x){alert(x.message);});};});
+                }).catch(function(x){var el=document.getElementById('pochta-list');if(el)el.innerHTML='<p class="text-xs text-red-500">'+e(x.message)+'</p>';});
+            }
+            function loadSettings(){
+                if(!document.getElementById('pochta-settings-form'))return;
+                j('/admin/pochta/settings').then(function(c){
+                    document.getElementById('pc-enabled').checked=!!c.enabled;document.getElementById('pc-base').value=c.base_fee;document.getElementById('pc-km').value=c.per_km;
+                    document.getElementById('pc-med').value=c.medium_fee;document.getElementById('pc-large').value=c.large_fee;document.getElementById('pc-pct').value=c.courier_percent;document.getElementById('pc-max').value=c.max_km;});
+            }
+            document.addEventListener('DOMContentLoaded',function(){
+                document.querySelectorAll('.pc-f').forEach(function(b){b.onclick=function(){F=b.dataset.f;document.querySelectorAll('.pc-f').forEach(function(x){x.className='pc-f px-3 py-1.5 rounded-lg bg-gray-100 text-gray-700';});b.className='pc-f px-3 py-1.5 rounded-lg bg-indigo-600 text-white';load();};});
+                var r=document.getElementById('pochta-refresh');if(r)r.onclick=function(){couriers=null;load();};
+                var fm=document.getElementById('pochta-settings-form');
+                if(fm)fm.onsubmit=function(ev){ev.preventDefault();var fd=new FormData(fm);fetch('/admin/pochta/settings',{method:'POST',body:fd,credentials:'same-origin'}).then(function(r){return r.json().then(function(d){if(!r.ok)throw new Error(typeof d.detail==='string'?d.detail:'Xatolik');return d;});}).then(function(){var m=document.getElementById('pc-save-msg');m.textContent='Saqlandi ✓';setTimeout(function(){m.textContent='';},2500);load();}).catch(function(x){alert(x.message);});};
+                document.addEventListener('click',function(ev){if(ev.target.closest('[data-page-btn="pochta"]')){couriers=null;setTimeout(function(){load();loadSettings();},50);}});
+                setTimeout(function(){j('/admin/pochta/list?status_filter=new').then(function(d){var nb=document.getElementById('pochta-nav-badge');if(nb){var k=(d.counts||{}).new||0;nb.textContent=k;nb.classList.toggle('hidden',!k);}}).catch(function(){});},1200);
+                setInterval(function(){var pg=document.querySelector('.app-page[data-page="pochta"]');if(pg&&pg.style.display!=='none'&&!document.hidden)load();},15000);
+            });
+        })();
+        </script>
+        {% endif %}
+
+        <!-- ============ TAKSI — pochtadan alohida bo'lim ============ -->
+        {% if is_owner or operator_perms.get('taksi') %}
+        <section class="app-page" data-page="taksi" style="display:none;">
+            <div class="card-bg bg-white p-6 rounded-xl shadow-md">
+                <h2 class="theme-title text-lg font-bold mb-2 text-indigo-700">🚕 Taksi</h2>
+                <div class="rounded-xl border-2 border-dashed p-6 text-center">
+                    <p class="text-4xl mb-2">🚧</p>
+                    <p class="font-bold text-sm">Taksi xizmati keyingi bosqichda ishga tushiriladi</p>
+                    <p class="text-xs text-gray-500 mt-1">Bu bo'lim Pochtadan butunlay alohida. Taksi buyurtmalari, haydovchilar va tariflar shu yerda boshqariladi.</p>
+                </div>
+            </div>
         </section>
         {% endif %}
 

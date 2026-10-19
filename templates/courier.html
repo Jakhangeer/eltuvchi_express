@@ -427,6 +427,17 @@
         <div class="glass fade-up stagger-3 p-5 rounded-2xl" id="zm-ai-courier" data-led="0" data-cptab="dashboard"></div>
         {% endif %}
 
+        <!-- POCHTA (shaxsiy buyum yetkazish) -->
+        <div id="pc-wrap" class="glass fade-up stagger-3 p-5 rounded-2xl hidden" data-cptab="dashboard">
+            <h2 class="text-sm font-extrabold mb-1">📮 Pochta buyurtmalari</h2>
+            <p class="text-[11px] text-slate-500 mb-3">Shaxsiy buyum yetkazish. To'lov naqd. Topshirishda qabul qiluvchidan 4 xonali kodni so'rang.</p>
+            <div id="pc-active" class="space-y-2 mb-3"></div>
+            <div id="pc-avail" class="space-y-2"></div>
+        </div>
+        <div id="pc-hist-wrap" class="glass fade-up stagger-4 p-5 rounded-2xl hidden" data-cptab="history">
+            <h2 class="text-sm font-extrabold mb-2">📮 Pochta tarixi</h2>
+            <div id="pc-hist" class="space-y-1.5 text-xs"></div>
+        </div>
         <!-- BO'SH BUYURTMALAR -->
         <div class="glass fade-up stagger-3 p-5 rounded-2xl" data-live="c-available" data-cptab="dashboard">
             <h2 class="text-base font-extrabold mb-3 flex items-center gap-2">📦 Yangi Buyurtmalar</h2>
@@ -763,6 +774,43 @@
             <div class="zmn-ext"><span>Tashqi navigator:</span><a id="zmn-ext-g" target="_blank" rel="noopener">Google</a><a id="zmn-ext-y" target="_blank" rel="noopener">Yandex</a><a id="zmn-ext-2" target="_blank" rel="noopener">2GIS</a></div>
         </div>
     </div>
+    <script>
+    (function(){
+        function e(v){return String(v==null?'':v).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+        function n(v){return Number(v||0).toLocaleString('ru-RU');}
+        function call(url,body){return fetch(url,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})}).then(function(r){return r.json().catch(function(){return {};}).then(function(d){if(!r.ok){var m=d.detail;throw new Error(typeof m==='string'?m:(m&&m.message)||'Xatolik');}return d;});});}
+        function get(url){return fetch(url,{credentials:'same-origin'}).then(function(r){if(!r.ok)throw new Error('x');return r.json();});}
+        function map(o,lat,lng){return (lat!=null&&lng!=null)?'<a class="text-sky-500 font-bold" target="_blank" href="https://www.google.com/maps/dir/?api=1&destination='+lat+','+lng+'">🧭 Yo\'l</a>':'';}
+        function act(o){
+            var h='<div class="rounded-xl p-3 border" style="border-color:rgba(99,102,241,.4)"><div class="flex justify-between gap-2"><b>#'+o.id+' · '+e(o.item)+' <span class="text-[10px] text-slate-500">('+e(o.size_label)+')</span></b><span class="text-[11px] font-bold text-indigo-500">'+e(o.status_label)+'</span></div>'
+              +'<div class="text-[11px] mt-1">📍 '+e(o.pickup_address)+' '+map(o,o.pickup_lat,o.pickup_lng)+'</div><div class="text-[11px]">🏁 '+e(o.dropoff_address)+' '+map(o,o.dropoff_lat,o.dropoff_lng)+'</div>'
+              +'<div class="text-[11px] text-slate-500 mt-1">Yuboruvchi: '+e(o.sender_name||'')+' <a class="text-sky-500" href="tel:'+e(o.sender_phone)+'">'+e(o.sender_phone||'')+'</a><br>Qabul qiluvchi: '+e(o.receiver_name)+' <a class="text-sky-500" href="tel:'+e(o.receiver_phone)+'">'+e(o.receiver_phone)+'</a></div>'
+              +'<div class="text-[11px] mt-1">💵 Mijozdan olasiz: <b>'+n(o.fee)+'</b> so\'m ('+(o.payer==='receiver'?'qabul qiluvchidan':'yuboruvchidan')+') · sizga <b>'+n(o.earning)+'</b> · platforma ulushi '+n(o.platform_share)+(o.comment?'<br>💬 '+e(o.comment):'')+'</div><div class="flex flex-wrap items-center gap-2 mt-2">';
+            if(o.status==='accepted')h+='<button data-pc="picked" data-id="'+o.id+'" class="px-3 py-2 rounded-xl bg-indigo-600 text-white text-xs font-bold">📦 Buyumni oldim</button><button data-pc="release" data-id="'+o.id+'" class="px-3 py-2 rounded-xl bg-slate-200 text-slate-700 text-xs font-bold">Rad etish</button>';
+            else h+='<input id="pcc-'+o.id+'" inputmode="numeric" maxlength="4" placeholder="Kod" class="w-20 p-2 rounded-xl border text-center font-bold text-sm text-slate-800"><button data-pc="delivered" data-id="'+o.id+'" class="px-3 py-2 rounded-xl bg-emerald-600 text-white text-xs font-bold">✅ Topshirildi</button>';
+            return h+'</div></div>';
+        }
+        function load(){
+            Promise.all([get('/courier/parcels/available'),get('/courier/parcels/mine')]).then(function(r){
+                var a=r[0],m=r[1],w=document.getElementById('pc-wrap'); if(!w)return;
+                var show=a.enabled&&(a.items.length||m.active.length);
+                w.classList.toggle('hidden',!show);
+                document.getElementById('pc-active').innerHTML=m.active.map(act).join('');
+                document.getElementById('pc-avail').innerHTML=(a.items||[]).map(function(o){return '<div class="rounded-xl p-3 border border-slate-300/40"><div class="flex justify-between"><b class="text-xs">#'+o.id+' · '+e(o.item)+' ('+e(o.size_label)+')</b><b class="text-xs text-emerald-600">+'+n(o.earning)+' so\'m</b></div><div class="text-[11px] mt-1">📍 '+e(o.pickup_address)+'</div><div class="text-[11px]">🏁 '+e(o.dropoff_address)+'</div><div class="text-[11px] text-slate-500">'+(o.distance_km!=null?o.distance_km+' km':'')+(o.from_me_km!=null?' · sizdan '+o.from_me_km+' km':'')+'</div><button data-pc="accept" data-id="'+o.id+'" class="mt-2 px-3 py-2 rounded-xl bg-indigo-600 text-white text-xs font-bold">Qabul qilish</button></div>';}).join('');
+                var hw=document.getElementById('pc-hist-wrap');hw.classList.toggle('hidden',!(m.history||[]).length);
+                document.getElementById('pc-hist').innerHTML=(m.history||[]).map(function(h){return '<div class="flex justify-between gap-2"><span>#'+h.id+' '+e(h.route)+'</span><b class="text-emerald-600">+'+n(h.earning)+'</b></div>';}).join('');
+            }).catch(function(){});
+        }
+        document.addEventListener('click',function(ev){
+            var b=ev.target.closest('[data-pc]');if(!b)return;var id=b.dataset.id,k=b.dataset.pc,body={};
+            if(k==='delivered'){body={code:(document.getElementById('pcc-'+id)||{}).value||''};if(body.code.length<4){alert('4 xonali kodni kiriting');return;}}
+            if(k==='release'&&!confirm('Pochtani rad etasizmi? U boshqa kuryerga qaytadi.'))return;
+            b.disabled=true;
+            call('/courier/parcels/'+id+'/'+k,body).then(function(){load();}).catch(function(x){alert(x.message);b.disabled=false;});
+        });
+        document.addEventListener('DOMContentLoaded',function(){load();setInterval(function(){if(!document.hidden)load();},9000);});
+    })();
+    </script>
     <script src="/static/js/courier-nav.js?v=3"></script>
 
     <!-- ================= FAOL BUYURTMA UCHUN MINI-XARITA (do'kon → mijoz) ================= -->

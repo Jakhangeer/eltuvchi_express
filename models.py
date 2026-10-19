@@ -445,6 +445,14 @@ class SystemSetting(Base):
     cashback_visible = Column(Boolean, default=True)
     # Mijoz onlayn buyurtmani rad etganda, do'kon tayyorlashni boshlagan bo'lsa mahsulot narxining necha foizi ushlab qolinadi
     cancel_prep_percent = Column(Float, nullable=True, default=60.0)
+    # ---- POCHTA (shaxsiy buyum yuborish) sozlamalari ----
+    parcel_enabled = Column(Boolean, nullable=True, default=False)
+    parcel_base_fee = Column(Float, nullable=True, default=8000.0)       # boshlang'ich narx (so'm)
+    parcel_per_km = Column(Float, nullable=True, default=2000.0)         # har km uchun
+    parcel_medium_fee = Column(Float, nullable=True, default=3000.0)     # o'rta hajm uchun qo'shimcha
+    parcel_large_fee = Column(Float, nullable=True, default=8000.0)      # katta hajm uchun qo'shimcha
+    parcel_courier_percent = Column(Float, nullable=True, default=80.0)  # narxdan kuryer ulushi (%)
+    parcel_max_km = Column(Float, nullable=True, default=30.0)           # eng uzoq masofa
 
     # Har bir rol uchun alohida shartlar — odam shu rolni tanlaganda
     # birinchi bo'lib shu matn ko'rsatiladi, "Roziman" bosmasa davom etolmaydi.
@@ -867,3 +875,47 @@ class CityRatingBonus(Base):
     min_rating = Column(Float, default=4.7)       # kamida shuncha o'rtacha baho
     min_count = Column(Integer, default=5)        # kamida shuncha baho olgan bo'lsin
     bonus_amount = Column(Float, default=0.0)     # har buyurtmaga so'm
+
+
+class ParcelOrder(Base):
+    """Pochta: shaxsiy buyumni bir manzildan boshqasiga kuryer orqali yuborish (do'kon buyurtmasidan alohida)."""
+    __tablename__ = "parcel_orders"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    city_id = Column(Integer, ForeignKey("cities.id"), nullable=True, index=True)
+    # new -> accepted -> picked_up -> delivered | cancelled
+    status = Column(String, nullable=False, default="new", index=True)
+
+    pickup_address = Column(String, nullable=False)
+    pickup_lat = Column(Float, nullable=True)
+    pickup_lng = Column(Float, nullable=True)
+    dropoff_address = Column(String, nullable=False)
+    dropoff_lat = Column(Float, nullable=True)
+    dropoff_lng = Column(Float, nullable=True)
+
+    receiver_name = Column(String, nullable=False)
+    receiver_phone = Column(String, nullable=False)
+    item_description = Column(String, nullable=False)
+    size = Column(String, nullable=False, default="small")        # small | medium | large
+    comment = Column(Text, nullable=True)
+    payer = Column(String, nullable=False, default="sender")      # sender | receiver (naqd, kuryerga)
+
+    distance_km = Column(Float, nullable=True)
+    fee = Column(Float, nullable=False, default=0.0)
+    courier_earning = Column(Float, nullable=True)
+    platform_share = Column(Float, nullable=True)
+    delivery_code = Column(String, nullable=True)                 # qabul qiluvchi kuryerga aytadigan 4 xonali kod
+
+    courier_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    accepted_at = Column(DateTime, nullable=True)
+    picked_at = Column(DateTime, nullable=True)
+    delivered_at = Column(DateTime, nullable=True)
+    cancelled_at = Column(DateTime, nullable=True)
+    cancelled_by = Column(String, nullable=True)                  # client | courier | admin
+    cancel_reason = Column(String, nullable=True)
+    financials_applied = Column(Boolean, nullable=False, default=False)
+
+    client = relationship("User", foreign_keys=[client_id])
+    courier = relationship("User", foreign_keys=[courier_id])

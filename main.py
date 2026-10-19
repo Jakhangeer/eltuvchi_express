@@ -4,6 +4,7 @@ import os
 import html
 import uuid
 import math
+import secrets
 import traceback
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
@@ -65,6 +66,7 @@ from models import (
     Card,
     OperatorPermission,
     PaymentReceipt,
+    ParcelOrder,
     LedAd,
     AIMessage,
     AIMessageLog,
@@ -522,6 +524,8 @@ SECTION_LABELS_UZ = {
     "xabarlar": "💬 Chat va e'lonlar (hamkor/kuryer/mijoz xabarlari)",
     "mahsulot_qoshish": "🍕 Do'konga yangi mahsulot qo'shish (o'z shahrida)",
     "banner_sorovlari": "📣 Hamkorlarning banner reklama so'rovlarini ko'rish (o'z shahrida)",
+    "pochta": "📮 Pochta (shaxsiy buyum yuborish) — o'z shahri buyurtmalari",
+    "taksi": "🚕 Taksi bo'limi",
 }
 DEFAULT_OPERATOR_SECTION_VISIBILITY = {
     # Kundalik operativ ish uchun shart bo'lgan bo'limlar — standart OCHIQ
@@ -543,6 +547,8 @@ DEFAULT_OPERATOR_SECTION_VISIBILITY = {
     "xabarlar": True,
     "banner_sorovlari": False,   # standart YOPIQ — egasi ruxsat bergandagina operator ko'radi
     "mahsulot_qoshish": False,   # standart YOPIQ — egasi ruxsat bergandagina operator mahsulot qo'sha oladi
+    "pochta": True,              # pochta buyurtmalarini operator o'z shahrida boshqaradi (egasi xohlasa yopadi)
+    "taksi": False,
 }
 # "xavfzone" (tizimni butunlay tozalash) — BU YERDA ATAYLAB YO'Q: shu bo'lim
 # har doim, hech qanday sozlamadan qat'i nazar, FAQAT OWNER'ga ko'rinadi va
@@ -2078,7 +2084,11 @@ async def _courier_reserved_hold(db: AsyncSession, courier_id: int, courier_pct:
     res = await db.execute(
         select(Order).where(Order.courier_id == courier_id, Order.status == OrderStatus.ON_THE_WAY)
     )
-    return sum(_courier_cash_hold(o, courier_pct) for o in res.scalars().all())
+    held = sum(_courier_cash_hold(o, courier_pct) for o in res.scalars().all())
+    # Pochta: yo'ldagi pochta buyurtmalarining platforma ulushi ham balansdan band
+    pr = await db.execute(select(func.coalesce(func.sum(ParcelOrder.platform_share), 0.0)).where(
+        ParcelOrder.courier_id == courier_id, ParcelOrder.status.in_(["accepted", "picked_up"])))
+    return held + float(pr.scalar() or 0.0)
 
 
 async def auto_assign_nearest_courier(db: AsyncSession, order: Order) -> Optional[User]:
@@ -8834,9 +8844,504 @@ async def admin_set_cancel_policy(cancel_prep_percent: float = Form(..., allow_i
     return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
 
 
+
+# ==================== POCHTA (SHAXSIY BUYUM YUBORISH) ====================
+# Do'kon buyurtmalaridan alohida xizmat: mijoz buyumni A manzildan B manzilga yuboradi, kuryer olib boradi.
+# To'lov — naqd, kuryerga (yuboruvchi olishda YOKI qabul qiluvchi topshirishda to'laydi). Kuryer o'z ulushini
+# o'zida qoldiradi, platforma ulushi yetkazilgach kuryer balansidan yechiladi. Qabul qiluvchi 4 xonali kodni
+# kuryerga aytadi — shundan keyingina "Topshirildi" bo'ladi.
+parcel_router = APIRouter(tags=["Pochta"])
+PARCEL_SIZES = {"small": "Kichik (hujjat, kichik paket)", "medium": "O'rta (sumka, quti)", "large": "Katta (katta quti)"}
+PARCEL_STATUS_UZ = {"new": "Kuryer izlanmoqda", "accepted": "Kuryer qabul qildi", "picked_up": "Kuryer yo'lda",
+                    "delivered": "Topshirildi", "cancelled": "Bekor qilindi"}
+
+
+def _parcel_cfg(setting) -> dict:
+    def g(name, d):
+        v = getattr(setting, name, None)
+        return d if v is None else v
+    return {"enabled": bool(g("parcel_enabled", False)), "base_fee": float(g("parcel_base_fee", 8000.0)),
+            "per_km": float(g("parcel_per_km", 2000.0)), "medium_fee": float(g("parcel_medium_fee", 3000.0)),
+            "large_fee": float(g("parcel_large_fee", 8000.0)), "courier_percent": float(g("parcel_courier_percent", 80.0)),
+            "max_km": float(g("parcel_max_km", 30.0))}
+
+
+def _parcel_price(cfg: dict, km: float, size: str) -> float:
+    extra = {"small": 0.0, "medium": cfg["medium_fee"], "large": cfg["large_fee"]}.get(size, 0.0)
+    raw = cfg["base_fee"] + cfg["per_km"] * km + extra
+    return float(math.ceil(raw / 500.0) * 500)
+
+
+def _parcel_km_or_400(setting, a_lat, a_lng, b_lat, b_lng, cfg) -> float:
+    km = _road_km(setting, a_lat, a_lng, b_lat, b_lng)
+    if km is None:
+        raise HTTPException(status_code=400, detail="Olish va topshirish nuqtalarini xaritada belgilang")
+    if km > cfg["max_km"]:
+        raise HTTPException(status_code=400, detail=f"Masofa juda uzoq ({km:.1f} km). Eng ko'pi bilan {cfg['max_km']:g} km.")
+    return km
+
+
+def _parcel_phone_ok(v: str) -> str:
+    digits = "".join(ch for ch in (v or "") if ch.isdigit())
+    if len(digits) < 9 or len(digits) > 15:
+        raise HTTPException(status_code=400, detail="Qabul qiluvchining telefon raqamini to'g'ri kiriting")
+    return ("+" + digits) if (v or "").strip().startswith("+") or len(digits) > 9 else digits
+
+
+class ParcelQuoteBody(BaseModel):
+    init_data: str
+    pickup_lat: float
+    pickup_lng: float
+    dropoff_lat: float
+    dropoff_lng: float
+    size: str = "small"
+
+
+class ParcelCreateBody(ParcelQuoteBody):
+    pickup_address: str
+    dropoff_address: str
+    receiver_name: str
+    receiver_phone: str
+    item_description: str
+    comment: Optional[str] = None
+    payer: str = "sender"
+
+
+class ParcelIdBody(BaseModel):
+    init_data: str
+    id: int
+
+
+def _parcel_public(o: ParcelOrder, with_code: bool) -> dict:
+    d = {"id": o.id, "status": o.status, "status_label": PARCEL_STATUS_UZ.get(o.status, o.status),
+         "pickup_address": o.pickup_address, "dropoff_address": o.dropoff_address, "receiver_name": o.receiver_name,
+         "receiver_phone": o.receiver_phone, "item": o.item_description, "size": o.size, "fee": o.fee, "payer": o.payer,
+         "distance_km": o.distance_km, "created_at": o.created_at.isoformat() if o.created_at else None,
+         "courier_name": None, "courier_phone": None}
+    if o.courier is not None and o.status in ("accepted", "picked_up", "delivered"):
+        d["courier_name"] = o.courier.full_name
+        d["courier_phone"] = o.courier.phone_number
+    if with_code and o.status in ("new", "accepted", "picked_up"):
+        d["code"] = o.delivery_code
+    return d
+
+
+@parcel_router.get("/api/shop/parcel/config")
+async def parcel_config(db: AsyncSession = Depends(get_db)):
+    cfg = _parcel_cfg(await _get_or_create_setting(db))
+    await db.commit()
+    return {**cfg, "sizes": PARCEL_SIZES}
+
+
+@parcel_router.post("/api/shop/parcel/quote")
+async def parcel_quote(body: ParcelQuoteBody, db: AsyncSession = Depends(get_db)):
+    await _client_for_cancel(db, body.init_data)
+    setting = await _get_or_create_setting(db)
+    cfg = _parcel_cfg(setting)
+    if not cfg["enabled"]:
+        raise HTTPException(status_code=403, detail="Pochta xizmati hozircha ishlamayapti")
+    if body.size not in PARCEL_SIZES:
+        raise HTTPException(status_code=400, detail="Hajmni tanlang")
+    km = _parcel_km_or_400(setting, body.pickup_lat, body.pickup_lng, body.dropoff_lat, body.dropoff_lng, cfg)
+    return {"km": km, "fee": _parcel_price(cfg, km, body.size)}
+
+
+@parcel_router.post("/api/shop/parcel/create")
+async def parcel_create(body: ParcelCreateBody, db: AsyncSession = Depends(get_db)):
+    client = await _client_for_cancel(db, body.init_data)
+    setting = await _get_or_create_setting(db)
+    cfg = _parcel_cfg(setting)
+    if not cfg["enabled"]:
+        raise HTTPException(status_code=403, detail="Pochta xizmati hozircha ishlamayapti")
+    if body.size not in PARCEL_SIZES or body.payer not in ("sender", "receiver"):
+        raise HTTPException(status_code=400, detail="Ma'lumot noto'g'ri")
+    pa, da = (body.pickup_address or "").strip()[:300], (body.dropoff_address or "").strip()[:300]
+    rn, item = (body.receiver_name or "").strip()[:100], (body.item_description or "").strip()[:300]
+    if len(pa) < 3 or len(da) < 3 or len(rn) < 2 or len(item) < 2:
+        raise HTTPException(status_code=400, detail="Barcha maydonlarni to'ldiring")
+    rphone = _parcel_phone_ok(body.receiver_phone)
+    if client.city_id is None:
+        raise HTTPException(status_code=400, detail="Avval shaharingizni tanlang")
+    active = (await db.execute(select(func.count(ParcelOrder.id)).where(
+        ParcelOrder.client_id == client.id, ParcelOrder.status.in_(["new", "accepted", "picked_up"])))).scalar() or 0
+    if active >= 5:
+        raise HTTPException(status_code=400, detail="Bir vaqtning o'zida 5 tadan ortiq faol pochta yubora olmaysiz")
+    km = _parcel_km_or_400(setting, body.pickup_lat, body.pickup_lng, body.dropoff_lat, body.dropoff_lng, cfg)
+    fee = _parcel_price(cfg, km, body.size)
+    earning = round(fee * cfg["courier_percent"] / 100.0)
+    code = f"{secrets.randbelow(9000) + 1000}"
+    o = ParcelOrder(client_id=client.id, city_id=client.city_id, status="new", pickup_address=pa,
+                    pickup_lat=body.pickup_lat, pickup_lng=body.pickup_lng, dropoff_address=da,
+                    dropoff_lat=body.dropoff_lat, dropoff_lng=body.dropoff_lng, receiver_name=rn, receiver_phone=rphone,
+                    item_description=item, size=body.size, comment=(body.comment or "").strip()[:500] or None,
+                    payer=body.payer, distance_km=km, fee=fee, courier_earning=earning, platform_share=fee - earning,
+                    delivery_code=code)
+    db.add(o)
+    await db.commit()
+    # Shahardagi onlayn kuryerlarga xabar
+    try:
+        rows = (await db.execute(
+            select(User).join(CourierProfile, CourierProfile.user_id == User.id).where(
+                User.city_id == client.city_id, CourierProfile.is_online == True, CourierProfile.is_blocked == False,
+                User.telegram_id.isnot(None)).limit(40))).scalars().all()
+        for cu in rows:
+            await send_telegram_message(cu.telegram_id, f"📮 Yangi pochta buyurtmasi #{o.id}: {pa} → {da}\n"
+                                                         f"Masofa {km:.1f} km · sizga {_fm(earning)} so'm. Kuryer kabinetini oching.")
+    except Exception as e:
+        print(f"Pochta xabari yuborilmadi: {e}")
+    return {"ok": True, "id": o.id, "fee": fee, "code": code, "km": km}
+
+
+class ParcelInitBody(BaseModel):
+    init_data: str
+
+
+@parcel_router.post("/api/shop/parcel/my")
+async def parcel_my(body: ParcelInitBody, db: AsyncSession = Depends(get_db)):
+    client = await _client_for_cancel(db, body.init_data)
+    rows = (await db.execute(select(ParcelOrder).options(selectinload(ParcelOrder.courier))
+                             .where(ParcelOrder.client_id == client.id).order_by(ParcelOrder.id.desc()).limit(30))).scalars().all()
+    return {"items": [_parcel_public(o, True) for o in rows]}
+
+
+@parcel_router.post("/api/shop/parcel/cancel")
+async def parcel_cancel(body: ParcelIdBody, db: AsyncSession = Depends(get_db)):
+    client = await _client_for_cancel(db, body.init_data)
+    o = (await db.execute(select(ParcelOrder).where(ParcelOrder.id == body.id, ParcelOrder.client_id == client.id)
+                          .with_for_update())).scalars().first()
+    if not o:
+        raise HTTPException(status_code=404, detail="Buyurtma topilmadi")
+    if o.status not in ("new", "accepted"):
+        raise HTTPException(status_code=400, detail="Kuryer buyumni olgandan keyin bekor qilib bo'lmaydi. Administratsiyaga yozing.")
+    courier_id = o.courier_id
+    o.status = "cancelled"
+    o.cancelled_at = datetime.utcnow()
+    o.cancelled_by = "client"
+    await db.commit()
+    if courier_id:
+        try:
+            cu = (await db.execute(select(User).where(User.id == courier_id))).scalars().first()
+            if cu and cu.telegram_id:
+                await send_telegram_message(cu.telegram_id, f"❌ Mijoz pochta buyurtmasi #{o.id} ni bekor qildi.")
+        except Exception as e:
+            print(f"Pochta bekor xabari yuborilmadi: {e}")
+    return {"ok": True}
+
+
+async def _parcel_notify_client(db: AsyncSession, o: ParcelOrder, text: str) -> None:
+    try:
+        cl = (await db.execute(select(User).where(User.id == o.client_id))).scalars().first()
+        if cl and cl.telegram_id:
+            await send_telegram_message(cl.telegram_id, text)
+    except Exception as e:
+        print(f"Pochta xabari yuborilmadi: {e}")
+
+
+async def _parcel_courier_guard(db: AsyncSession, user: User) -> CourierProfile:
+    cp = (await db.execute(select(CourierProfile).where(CourierProfile.user_id == user.id).with_for_update())).scalars().first()
+    if not cp or cp.application_status == "pending":
+        raise HTTPException(status_code=403, detail="Kuryer arizangiz hali tasdiqlanmagan")
+    if cp.is_blocked:
+        raise HTTPException(status_code=403, detail="Siz administrator tomonidan vaqtincha bloklangansiz")
+    return cp
+
+
+async def _parcel_balance_check(db: AsyncSession, cp: CourierProfile, courier_id: int, need: float, setting) -> None:
+    courier_pct = (setting.courier_share_percent or 0) / 100
+    reserved = await _courier_reserved_hold(db, courier_id, courier_pct)
+    free = (cp.balance or 0) - reserved
+    if free < need:
+        raise HTTPException(status_code=403, detail=(
+            f"Balansingiz yetarli emas: bu pochta uchun kamida {_fm(need)} so'm kerak, sizda {_fm(max(free, 0))} so'm bor. "
+            f"Avval balansingizni to'ldiring."))
+
+
+# ---- Kuryer ----
+courier_parcel_router = APIRouter(prefix="/courier/parcels", tags=["Kuryer: pochta"])
+
+
+def _parcel_for_courier(o: ParcelOrder, my: bool, d_courier=None) -> dict:
+    d = {"id": o.id, "status": o.status, "status_label": PARCEL_STATUS_UZ.get(o.status, o.status),
+         "pickup_address": o.pickup_address, "dropoff_address": o.dropoff_address, "item": o.item_description,
+         "size": o.size, "size_label": PARCEL_SIZES.get(o.size, o.size), "fee": o.fee, "earning": o.courier_earning,
+         "platform_share": o.platform_share, "distance_km": o.distance_km, "payer": o.payer,
+         "pickup_lat": o.pickup_lat, "pickup_lng": o.pickup_lng, "dropoff_lat": o.dropoff_lat, "dropoff_lng": o.dropoff_lng,
+         "comment": o.comment, "from_me_km": round(d_courier, 1) if d_courier is not None else None}
+    if my:
+        d["receiver_name"] = o.receiver_name
+        d["receiver_phone"] = o.receiver_phone
+        d["sender_name"] = o.client.full_name if o.client else None
+        d["sender_phone"] = o.client.phone_number if o.client else None
+    return d
+
+
+@courier_parcel_router.get("/available")
+async def courier_parcels_available(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_courier_user)):
+    setting = await _get_or_create_setting(db)
+    if not _parcel_cfg(setting)["enabled"]:
+        return {"enabled": False, "items": []}
+    cp = (await db.execute(select(CourierProfile).where(CourierProfile.user_id == user.id))).scalars().first()
+    q = select(ParcelOrder).where(ParcelOrder.status == "new").order_by(ParcelOrder.id.desc()).limit(30)
+    if user.city_id is not None:
+        q = q.where(ParcelOrder.city_id == user.city_id)
+    rows = (await db.execute(q)).scalars().all()
+    out = []
+    for o in rows:
+        dk = _road_km(setting, cp.latitude, cp.longitude, o.pickup_lat, o.pickup_lng) if cp else None
+        out.append(_parcel_for_courier(o, False, dk))
+    out.sort(key=lambda x: (x["from_me_km"] is None, x["from_me_km"] or 0))
+    return {"enabled": True, "items": out}
+
+
+@courier_parcel_router.get("/mine")
+async def courier_parcels_mine(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_courier_user)):
+    rows = (await db.execute(select(ParcelOrder).options(selectinload(ParcelOrder.client))
+                             .where(ParcelOrder.courier_id == user.id, ParcelOrder.status.in_(["accepted", "picked_up"]))
+                             .order_by(ParcelOrder.id.desc()))).scalars().all()
+    hist = (await db.execute(select(ParcelOrder).where(ParcelOrder.courier_id == user.id, ParcelOrder.status == "delivered")
+                             .order_by(ParcelOrder.delivered_at.desc()).limit(15))).scalars().all()
+    return {"active": [_parcel_for_courier(o, True) for o in rows],
+            "history": [{"id": o.id, "fee": o.fee, "earning": o.courier_earning, "at": o.delivered_at.isoformat() if o.delivered_at else None,
+                         "route": f"{o.pickup_address} → {o.dropoff_address}"} for o in hist]}
+
+
+@courier_parcel_router.post("/{pid}/accept")
+async def courier_parcel_accept(pid: int, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_courier_user)):
+    cp = await _parcel_courier_guard(db, user)
+    setting = await _get_or_create_setting(db)
+    if not _parcel_cfg(setting)["enabled"]:
+        raise HTTPException(status_code=403, detail="Pochta xizmati hozircha ishlamayapti")
+    o = (await db.execute(select(ParcelOrder).where(ParcelOrder.id == pid).with_for_update())).scalars().first()
+    if not o or o.status != "new":
+        raise HTTPException(status_code=404, detail="Bu pochta allaqachon boshqa kuryer tomonidan olingan yoki bekor qilingan")
+    if user.city_id is not None and o.city_id is not None and user.city_id != o.city_id:
+        raise HTTPException(status_code=403, detail="Bu buyurtma boshqa shaharniki")
+    mine = (await db.execute(select(func.count(ParcelOrder.id)).where(
+        ParcelOrder.courier_id == user.id, ParcelOrder.status.in_(["accepted", "picked_up"])))).scalar() or 0
+    if mine >= 3:
+        raise HTTPException(status_code=400, detail="Bir vaqtda 3 tadan ortiq pochta ola olmaysiz")
+    await _parcel_balance_check(db, cp, user.id, float(o.platform_share or 0), setting)
+    o.status = "accepted"
+    o.courier_id = user.id
+    o.accepted_at = datetime.utcnow()
+    await db.commit()
+    await _parcel_notify_client(db, o, f"📮 Pochta #{o.id}: kuryer {user.full_name} ({user.phone_number}) buyurtmani qabul qildi.\n"
+                                       f"Qabul qiluvchi kuryerga aytadigan kod: <b>{o.delivery_code}</b>")
+    return {"ok": True}
+
+
+async def _my_parcel(db: AsyncSession, pid: int, user: User, statuses: list) -> ParcelOrder:
+    o = (await db.execute(select(ParcelOrder).where(ParcelOrder.id == pid, ParcelOrder.courier_id == user.id).with_for_update())).scalars().first()
+    if not o or o.status not in statuses:
+        raise HTTPException(status_code=404, detail="Buyurtma topilmadi yoki holati mos emas")
+    return o
+
+
+@courier_parcel_router.post("/{pid}/picked")
+async def courier_parcel_picked(pid: int, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_courier_user)):
+    o = await _my_parcel(db, pid, user, ["accepted"])
+    o.status = "picked_up"
+    o.picked_at = datetime.utcnow()
+    await db.commit()
+    await _parcel_notify_client(db, o, f"📮 Pochta #{o.id}: kuryer buyumni oldi va yo'lga chiqdi.")
+    return {"ok": True}
+
+
+@courier_parcel_router.post("/{pid}/release")
+async def courier_parcel_release(pid: int, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_courier_user)):
+    """Kuryer buyumni olishdan oldin buyurtmadan voz kechadi — u yana umumiy ro'yxatga qaytadi."""
+    o = await _my_parcel(db, pid, user, ["accepted"])
+    o.status = "new"
+    o.courier_id = None
+    o.accepted_at = None
+    await db.commit()
+    await _parcel_notify_client(db, o, f"📮 Pochta #{o.id}: kuryer voz kechdi, boshqa kuryer izlanmoqda.")
+    return {"ok": True}
+
+
+class ParcelCodeBody(BaseModel):
+    code: str
+
+
+@courier_parcel_router.post("/{pid}/delivered")
+async def courier_parcel_delivered(pid: int, body: ParcelCodeBody, db: AsyncSession = Depends(get_db),
+                                   user: User = Depends(get_current_courier_user)):
+    o = await _my_parcel(db, pid, user, ["picked_up"])
+    if not secrets.compare_digest((body.code or "").strip().encode(), (o.delivery_code or "x").encode()):
+        raise HTTPException(status_code=400, detail="Kod noto'g'ri. Qabul qiluvchidan 4 xonali kodni so'rang.")
+    cp = (await db.execute(select(CourierProfile).where(CourierProfile.user_id == user.id).with_for_update())).scalars().first()
+    if not o.financials_applied:
+        share = float(o.platform_share or 0)
+        if cp is not None and share > 0:
+            cp.balance = (cp.balance or 0) - share
+            db.add(Transaction(user_id=user.id, type=TransactionType.WITHDRAWAL, amount=share,
+                               note=f"Pochta #{o.id} — platforma ulushi balansingizdan yechildi (naqd {_fm(o.fee)} so'm sizda)",
+                               created_by_id=None))
+        o.financials_applied = True
+    o.status = "delivered"
+    o.delivered_at = datetime.utcnow()
+    await db.commit()
+    await _parcel_notify_client(db, o, f"✅ Pochta #{o.id} qabul qiluvchiga topshirildi. Rahmat!")
+    return {"ok": True, "earning": o.courier_earning}
+
+
+# ---- Owner / operator paneli ----
+admin_parcel_router = APIRouter(prefix="/admin/pochta", tags=["Pochta boshqaruvi"])
+
+
+def _parcel_admin_dict(o: ParcelOrder) -> dict:
+    return {"id": o.id, "status": o.status, "status_label": PARCEL_STATUS_UZ.get(o.status, o.status),
+            "client": o.client.full_name if o.client else "", "client_phone": o.client.phone_number if o.client else "",
+            "receiver_name": o.receiver_name, "receiver_phone": o.receiver_phone, "pickup_address": o.pickup_address,
+            "dropoff_address": o.dropoff_address, "item": o.item_description, "size": o.size, "fee": o.fee,
+            "earning": o.courier_earning, "payer": o.payer, "km": o.distance_km, "comment": o.comment,
+            "courier": o.courier.full_name if o.courier else None, "courier_phone": o.courier.phone_number if o.courier else None,
+            "courier_id": o.courier_id, "city_id": o.city_id, "cancel_reason": o.cancel_reason, "cancelled_by": o.cancelled_by,
+            "at": o.created_at.isoformat() if o.created_at else None}
+
+
+def _parcel_scope(current_user: User):
+    return current_user.city_id if is_scoped_to_city(current_user) else None
+
+
+@admin_parcel_router.get("/list")
+async def admin_parcel_list(status_filter: Optional[str] = None, db: AsyncSession = Depends(get_db),
+                            current_user: User = Depends(require_section("pochta"))):
+    scope = _parcel_scope(current_user)
+    q = select(ParcelOrder).options(selectinload(ParcelOrder.client), selectinload(ParcelOrder.courier)).order_by(ParcelOrder.id.desc()).limit(150)
+    if scope is not None:
+        q = q.where(ParcelOrder.city_id == scope)
+    if status_filter in PARCEL_STATUS_UZ:
+        q = q.where(ParcelOrder.status == status_filter)
+    rows = (await db.execute(q)).scalars().all()
+    cq = select(ParcelOrder.status, func.count(ParcelOrder.id)).group_by(ParcelOrder.status)
+    since = datetime.utcnow() - timedelta(hours=24)
+    rq = select(func.coalesce(func.sum(ParcelOrder.fee), 0.0)).where(ParcelOrder.status == "delivered", ParcelOrder.delivered_at >= since)
+    if scope is not None:
+        cq = cq.where(ParcelOrder.city_id == scope)
+        rq = rq.where(ParcelOrder.city_id == scope)
+    counts = {k: v for k, v in (await db.execute(cq)).all()}
+    setting = await _get_or_create_setting(db)
+    return {"items": [_parcel_admin_dict(o) for o in rows], "counts": counts, "revenue_24h": float((await db.execute(rq)).scalar() or 0),
+            "enabled": _parcel_cfg(setting)["enabled"], "can_edit_settings": current_user.role == UserRole.OWNER}
+
+
+@admin_parcel_router.get("/couriers")
+async def admin_parcel_couriers(db: AsyncSession = Depends(get_db), current_user: User = Depends(require_section("pochta"))):
+    scope = _parcel_scope(current_user)
+    q = (select(User, CourierProfile).join(CourierProfile, CourierProfile.user_id == User.id)
+         .where(CourierProfile.is_blocked == False, CourierProfile.application_status != "pending").order_by(CourierProfile.is_online.desc(), User.full_name).limit(100))
+    if scope is not None:
+        q = q.where(User.city_id == scope)
+    return {"items": [{"id": u.id, "name": u.full_name, "phone": u.phone_number, "online": bool(cp.is_online), "balance": cp.balance or 0}
+                      for u, cp in (await db.execute(q)).all()]}
+
+
+async def _admin_parcel_get(db: AsyncSession, pid: int, current_user: User, lock: bool = True) -> ParcelOrder:
+    q = select(ParcelOrder).where(ParcelOrder.id == pid)
+    if lock:
+        q = q.with_for_update()
+    o = (await db.execute(q)).scalars().first()
+    scope = _parcel_scope(current_user)
+    if not o or (scope is not None and o.city_id != scope):
+        raise HTTPException(status_code=404, detail="Buyurtma topilmadi")
+    return o
+
+
+class ParcelAssignBody(BaseModel):
+    courier_id: int
+
+
+@admin_parcel_router.post("/{pid}/assign")
+async def admin_parcel_assign(pid: int, body: ParcelAssignBody, db: AsyncSession = Depends(get_db),
+                              current_user: User = Depends(require_section("pochta"))):
+    o = await _admin_parcel_get(db, pid, current_user)
+    if o.status not in ("new", "accepted"):
+        raise HTTPException(status_code=400, detail="Bu buyurtmaga kuryer biriktirib bo'lmaydi")
+    cu = (await db.execute(select(User).where(User.id == body.courier_id))).scalars().first()
+    if not cu or (o.city_id is not None and cu.city_id != o.city_id):
+        raise HTTPException(status_code=404, detail="Kuryer topilmadi (boshqa shahardan bo'lishi mumkin)")
+    cp = await _parcel_courier_guard(db, cu)
+    setting = await _get_or_create_setting(db)
+    old = o.courier_id
+    if old != cu.id:
+        await _parcel_balance_check(db, cp, cu.id, float(o.platform_share or 0), setting)
+    o.courier_id = cu.id
+    o.status = "accepted"
+    o.accepted_at = datetime.utcnow()
+    await db.commit()
+    try:
+        if cu.telegram_id:
+            await send_telegram_message(cu.telegram_id, f"📮 Sizga pochta #{o.id} biriktirildi: {o.pickup_address} → {o.dropoff_address}")
+        if old and old != cu.id:
+            ou = (await db.execute(select(User).where(User.id == old))).scalars().first()
+            if ou and ou.telegram_id:
+                await send_telegram_message(ou.telegram_id, f"ℹ️ Pochta #{o.id} sizdan boshqa kuryerga o'tkazildi.")
+    except Exception as e:
+        print(f"Pochta biriktirish xabari yuborilmadi: {e}")
+    await _parcel_notify_client(db, o, f"📮 Pochta #{o.id}: kuryer {cu.full_name} ({cu.phone_number}) biriktirildi.\nKod: <b>{o.delivery_code}</b>")
+    return {"ok": True}
+
+
+class ParcelCancelBody(BaseModel):
+    reason: Optional[str] = ""
+
+
+@admin_parcel_router.post("/{pid}/cancel")
+async def admin_parcel_cancel(pid: int, body: ParcelCancelBody, db: AsyncSession = Depends(get_db),
+                              current_user: User = Depends(require_section("pochta"))):
+    o = await _admin_parcel_get(db, pid, current_user)
+    if o.status in ("delivered", "cancelled"):
+        raise HTTPException(status_code=400, detail="Bu buyurtma allaqachon yakunlangan")
+    courier_id = o.courier_id
+    o.status = "cancelled"
+    o.cancelled_at = datetime.utcnow()
+    o.cancelled_by = "admin"
+    o.cancel_reason = (body.reason or "").strip()[:200] or None
+    await db.commit()
+    reason = f"\nSabab: {o.cancel_reason}" if o.cancel_reason else ""
+    await _parcel_notify_client(db, o, f"❌ Pochta #{o.id} bekor qilindi.{reason}")
+    if courier_id:
+        try:
+            cu = (await db.execute(select(User).where(User.id == courier_id))).scalars().first()
+            if cu and cu.telegram_id:
+                await send_telegram_message(cu.telegram_id, f"❌ Pochta #{o.id} administrator tomonidan bekor qilindi.{reason}")
+        except Exception as e:
+            print(f"Pochta xabari yuborilmadi: {e}")
+    return {"ok": True}
+
+
+@admin_parcel_router.get("/settings")
+async def admin_parcel_settings_get(db: AsyncSession = Depends(get_db), current_user: User = Depends(require_section("pochta"))):
+    return _parcel_cfg(await _get_or_create_setting(db))
+
+
+@admin_parcel_router.post("/settings")
+async def admin_parcel_settings_set(
+    parcel_enabled: Optional[str] = Form(None),
+    base_fee: float = Form(..., allow_inf_nan=False), per_km: float = Form(..., allow_inf_nan=False),
+    medium_fee: float = Form(0.0, allow_inf_nan=False), large_fee: float = Form(0.0, allow_inf_nan=False),
+    courier_percent: float = Form(80.0, allow_inf_nan=False), max_km: float = Form(30.0, allow_inf_nan=False),
+    db: AsyncSession = Depends(get_db), owner: User = Depends(require_owner),
+):
+    if not (0 <= courier_percent <= 100) or min(base_fee, per_km, medium_fee, large_fee) < 0 or not (1 <= max_km <= 500) \
+            or max(base_fee, per_km, medium_fee, large_fee) > 10_000_000:
+        raise HTTPException(status_code=400, detail="Qiymatlar noto'g'ri")
+    st = await _get_or_create_setting(db)
+    st.parcel_enabled = bool(parcel_enabled)
+    st.parcel_base_fee, st.parcel_per_km = base_fee, per_km
+    st.parcel_medium_fee, st.parcel_large_fee = medium_fee, large_fee
+    st.parcel_courier_percent, st.parcel_max_km = courier_percent, max_km
+    await db.commit()
+    return {"ok": True}
+
+
 app.include_router(ai_admin_router)
 app.include_router(banner_req_admin_router)
 app.include_router(cancel_router)
+app.include_router(parcel_router)
+app.include_router(courier_parcel_router)
+app.include_router(admin_parcel_router)
 app.include_router(support_admin_router)
 app.include_router(partner_router)
 app.include_router(shop_router)
