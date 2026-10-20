@@ -20,6 +20,7 @@
     <div><div class="font-black" id="dr-name">🚗 Magistral haydovchi</div><div class="text-xs opacity-70" id="dr-car"></div></div>
     <div class="text-right"><div class="text-[11px] opacity-70">Hisoblangan haq</div><div class="font-black text-emerald-600" id="dr-bal">0</div><a href="/logout" class="text-[11px] text-indigo-500">Chiqish</a></div>
   </div>
+  <div class="card hidden" id="mag-box"></div>
   <div class="card" id="new-box">
     <b class="text-sm">➕ Yangi reys</b>
     <div class="text-xs opacity-70 mt-1">Reysni oching, so'ng terminalga boring — operator posilkalarni QR orqali sizga yuklaydi.</div>
@@ -38,7 +39,8 @@ async function load(){
   var s=await api('/driver/express/state');
   document.getElementById('dr-name').textContent='🚗 '+s.name;document.getElementById('dr-car').textContent=s.car;document.getElementById('dr-bal').textContent=n(s.balance)+' so\'m';
   var sel=document.getElementById('tr-route');sel.innerHTML=s.routes.map(function(r){return '<option value="'+r.from+'|'+r.to+'">'+e(r.label)+'</option>';}).join('')||'<option value="">Yo\'nalish yo\'q</option>';
-  document.getElementById('new-box').style.display=s.trips.length?'none':'';
+  var mg=await api('/driver/mag/state');renderMag(mg);
+  document.getElementById('new-box').style.display=(s.trips.length||mg.enabled)?'none':'';
   document.getElementById('trips').innerHTML=s.trips.map(function(t){
     var h='<div class="card"><div class="flex justify-between"><b>'+e(t.from)+' → '+e(t.to)+'</b><span class="text-xs">'+ST[t.status]+'</span></div>';
     h+='<div class="text-xs mt-1">🏢 '+e(t.from)+': '+e(t.from_address||'')+nav(t.from_lat,t.from_lng)+'<br>🏢 '+e(t.to)+': '+e(t.to_address||'')+nav(t.to_lat,t.to_lng)+'</div>';
@@ -50,6 +52,29 @@ async function load(){
   document.getElementById('hist').innerHTML=s.history.map(function(h){return '<div>#'+h.id+' — +'+n(h.fare)+' so\'m</div>';}).join('')||'Hali yo\'q';
 }
 document.getElementById('trips').addEventListener('click',async function(ev){var b=ev.target.closest('button[data-a]');if(!b)return;b.disabled=true;try{await api('/driver/express/trips/'+b.dataset.id+'/'+b.dataset.a,{});await load();}catch(x){alert(x.message);b.disabled=false;}});
+function renderMag(m){
+  var b=document.getElementById('mag-box');if(!m.enabled&&!m.entry){b.classList.add('hidden');return;}b.classList.remove('hidden');
+  var h='<b class="text-sm">🚐 Magistral navbat</b><div class="text-xs opacity-70 mt-1">Depozit: <b>'+n(m.deposit)+'</b> so\'m · platforma ulushi '+m.commission+'% · navbat uchun terminaldan '+m.radius_m+' m ichida bo\'ling</div>';
+  if(m.blacklisted)h+='<div class="mt-2 p-2 rounded-xl bg-rose-100 text-rose-800 text-xs font-bold">⛔ Siz qora ro\'yxatdasiz'+(m.blacklist_reason?': '+e(m.blacklist_reason):'')+'</div>';
+  var en=m.entry;
+  if(en){
+    h+='<div class="mt-2 p-3 rounded-xl border"><div class="flex justify-between"><b>'+e(en.from)+' → '+e(en.to)+'</b><span class="text-xs">'+(en.status==='departed'?'🚗 Yo\'lda':'⏳ Navbat: <b>'+en.position+'</b> / '+en.queue_len)+'</span></div>'
+     +'<div class="text-xs mt-1">O\'rindiq: yo\'lovchi '+en.seats_booked+' + posilka '+en.parcel_seats+' / '+en.capacity+' (bo\'sh '+en.free_seats+')</div>'
+     +'<div class="text-xs">Daromad: <b>'+n(en.income)+'</b> / jo\'nash uchun '+n(en.min_income)+' so\'m '+(en.ready?'✅':'')+'</div>'
+     +en.passengers.map(function(p){return '<div class="text-xs py-1 border-t">🧍 '+e(p.name)+' <a class="text-indigo-500" href="tel:'+e(p.phone)+'">'+e(p.phone)+'</a> · '+p.seats+' o\'rindiq · '+n(p.amount)+' so\'m (naqd)</div>';}).join('')
+     +'<div class="text-xs mt-1 opacity-70">'+(en.status==='waiting'?(en.position===1?(en.ready?'Jo\'nash sharti bajarildi — «Jo\'nadim» tugmasini bosing.':'Sizning navbatingiz. Daromad yetarli bo\'lguncha kuting; posilka operator yuklaydi.'):'Oldingizdagi mashina jo\'nashini kuting.'):'')+'</div><div class="flex gap-2 mt-2">'
+     +(en.status==='waiting'?(en.position===1&&en.ready?'<button class="btn" onclick="magAct(\'depart\','+en.trip_id+')">🚗 Jo\'nadim</button>':'')+'<button class="btn2" onclick="magLeave()">Navbatdan chiqish</button>':'')+'</div></div>';
+  } else if(m.enabled&&!m.blacklisted){
+    if(m.last_drop)h+='<div class="mt-2 p-2 rounded-xl bg-amber-100 text-amber-800 text-xs">⚠️ Navbatdan tushdingiz: '+e(m.last_drop.reason||'')+'. Qayta yoziling.</div>';
+    h+='<div class="mt-2 space-y-2"><select id="mg-route">'+(m.routes.map(function(r){return '<option value="'+r.from+'|'+r.to+'">'+e(r.label)+' · o\'rindiq '+n(r.seat_price)+(r.dist_m!=null?' · terminalgacha '+r.dist_m+' m':'')+'</option>';}).join('')||'<option value="">Yo\'nalish yo\'q</option>')+'</select><button class="btn w-full" onclick="magApply()">📍 Navbatga yozilish</button></div>';
+  }
+  b.innerHTML=h;
+}
+async function magApply(){var v=(document.getElementById('mg-route').value||'').split('|');if(v.length<2||!v[0])return alert('Yo\'nalishni tanlang');
+  if(!navigator.geolocation)return alert('Geolokatsiya mavjud emas');
+  navigator.geolocation.getCurrentPosition(async function(p){try{await api('/driver/express/location',{lat:p.coords.latitude,lng:p.coords.longitude});await api('/driver/mag/apply',{from_city_id:+v[0],to_city_id:+v[1]});load();}catch(x){alert(x.message);}},function(){alert('Joylashuvga ruxsat bering');},{enableHighAccuracy:true,timeout:15000});}
+async function magLeave(){if(!confirm('Navbatdan chiqasizmi? Yuklangan posilka va bronlar bekor bo\'ladi.'))return;try{await api('/driver/mag/leave',{});load();}catch(x){alert(x.message);}}
+async function magAct(a,id){try{await api('/driver/express/trips/'+id+'/'+a,{});load();}catch(x){alert(x.message);}}
 async function createTrip(){var v=document.getElementById('tr-route').value.split('|');if(v.length<2||!v[0])return alert('Yo\'nalishni tanlang');try{await api('/driver/express/trips',{from_city_id:+v[0],to_city_id:+v[1]});load();}catch(x){alert(x.message);}}
 function sendLoc(){if(!navigator.geolocation)return;navigator.geolocation.getCurrentPosition(function(p){api('/driver/express/location',{lat:p.coords.latitude,lng:p.coords.longitude}).catch(function(){});},function(){},{maximumAge:30000,timeout:10000});}
 load().catch(function(x){alert(x.message);});sendLoc();setInterval(sendLoc,45000);setInterval(function(){load().catch(function(){});},20000);

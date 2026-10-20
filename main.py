@@ -67,7 +67,7 @@ from models import (
     OperatorPermission,
     PaymentReceipt,
     ParcelOrder,
-    ExpressDriver, ExpressFare, Terminal, TerminalOperator, LinehaulTrip, IntercityOrder, IntercityEvent, TerminalCashLog,
+    ExpressDriver, ExpressFare, Terminal, TerminalOperator, LinehaulTrip, IntercityOrder, IntercityEvent, TerminalCashLog, MagRoute, MagQueueEntry, MagBooking,
     LedAd,
     AIMessage,
     AIMessageLog,
@@ -9985,6 +9985,8 @@ async def driver_ic_trip_create(body: IcTripCreate, db: AsyncSession = Depends(g
     st = await _get_or_create_setting(db)
     if not _ic_cfg(st)["enabled"]:
         raise HTTPException(status_code=403, detail="Tumanlararo xizmat hozircha o'chirilgan")
+    if _mag_cfg(st)["enabled"]:
+        raise HTTPException(status_code=400, detail="Reys ochish uchun terminal yaqinida navbatga yoziling")
     if not (await db.execute(select(ExpressFare.id).where(ExpressFare.from_city_id == body.from_city_id, ExpressFare.to_city_id == body.to_city_id, ExpressFare.is_active == True))).first():
         raise HTTPException(status_code=400, detail="Bu yo'nalishda xizmat yo'q")
     ta, tb = await _ic_active_terminal(db, body.from_city_id), await _ic_active_terminal(db, body.to_city_id)
@@ -10008,7 +10010,8 @@ async def _ic_depart(db: AsyncSession, t: LinehaulTrip, actor: User, role: str) 
     if t.status != "waiting":
         raise HTTPException(status_code=400, detail="Reys holati mos emas")
     os_ = await _ic_trip_orders(db, t)
-    if not os_:
+    in_queue = await _mag_prepare_depart(db, t)
+    if not os_ and not in_queue:
         raise HTTPException(status_code=400, detail="Reysga hali posilka yuklanmagan")
     t.status, t.departed_at = "departed", datetime.utcnow()
     for o in os_:
@@ -10031,6 +10034,7 @@ async def driver_ic_arrive(tid: int, db: AsyncSession = Depends(get_db), user: U
     if t.status != "departed":
         raise HTTPException(status_code=400, detail="Reys holati mos emas")
     t.status, t.arrived_at = "arrived", datetime.utcnow()
+    await _mag_finish(db, t)
     await db.commit()
     return {"ok": True}
 
@@ -10176,6 +10180,14 @@ async def terminal_load(body: IcQrBody, db: AsyncSession = Depends(get_db), ctx=
     t = (await db.execute(select(LinehaulTrip).where(LinehaulTrip.id == (body.trip_id or 0)).with_for_update())).scalars().first()
     if not t or t.status != "waiting" or t.from_terminal_id != T.id or t.to_terminal_id != o.to_terminal_id:
         raise HTTPException(status_code=400, detail="Reys mos emas (kutayotgan, to'g'ri yo'nalishdagi reysni tanlang)")
+    ent = await _mag_entry_for_trip(db, t.id)
+    if ent is not None:
+        stg = await _get_or_create_setting(db)
+        mcfg = _mag_cfg(stg)
+        drv_ = (await db.execute(select(ExpressDriver).where(ExpressDriver.user_id == t.driver_id))).scalars().first()
+        inf = await _mag_info(db, ent, mcfg, None, drv_)
+        if inf["capacity"] - inf["seats_booked"] - inf["parcel_seats"] < _mag_pseat(mcfg, o.size) - 1e-9:
+            raise HTTPException(status_code=400, detail="Bu mashinada posilka uchun joy yetarli emas")
     o.trip_id, o.status = t.id, "in_transit"
     await _ic_event(db, o, "in_transit", user, "operator", T.id, f"Magistral haydovchiga topshirildi: {t.driver_id}")
     await db.commit()
@@ -10206,6 +10218,7 @@ async def terminal_recv_driver(body: IcQrBody, db: AsyncSession = Depends(get_db
     o.status, o.at_b_at = "at_b", datetime.utcnow()
     if t and t.status == "departed":
         t.status, t.arrived_at = "arrived", datetime.utcnow()
+        await _mag_finish(db, t)
     await _ic_event(db, o, "at_b", user, "operator", T.id, "B-terminalda qabul qilindi")
     await db.commit()
     link = _ic_track_url(o)
@@ -10647,6 +10660,516 @@ async def admin_ic_services_set(body: IcServiceBody, db: AsyncSession = Depends(
 
 
 
+# ==================== MAGISTRAL TAKSI (B bosqich): navbat, bron, geofence ====================
+MAG_TOP = 5
+
+
+def _mag_cfg(setting) -> dict:
+    def g(n, d):
+        v = getattr(setting, n, None)
+        return d if v is None else v
+    return {"enabled": bool(g("taxi_magistral_enabled", False)), "radius_m": int(g("mag_radius_m", 500)), "stale_min": int(g("mag_stale_min", 5)),
+            "commission": float(g("mag_commission_percent", 10.0)), "min_deposit": float(g("mag_min_deposit", 0.0)),
+            "seat_small": float(g("mag_seat_small", 0.25)), "seat_medium": float(g("mag_seat_medium", 0.5)), "seat_large": float(g("mag_seat_large", 1.0))}
+
+
+def _mag_pseat(cfg: dict, size: str) -> float:
+    return cfg.get("seat_" + (size or "small"), cfg["seat_small"])
+
+
+def _mag_dist_m(drv, terminal) -> Optional[float]:
+    if drv is None or terminal is None or None in (drv.latitude, drv.longitude, terminal.latitude, terminal.longitude):
+        return None
+    return _haversine_km(drv.latitude, drv.longitude, terminal.latitude, terminal.longitude) * 1000.0
+
+
+async def _mag_route(db: AsyncSession, from_city_id: int, to_city_id: int) -> Optional[MagRoute]:
+    return (await db.execute(select(MagRoute).where(MagRoute.from_city_id == from_city_id, MagRoute.to_city_id == to_city_id,
+                                                    MagRoute.is_active == True))).scalars().first()
+
+
+async def _mag_entry_for_trip(db: AsyncSession, trip_id: int) -> Optional[MagQueueEntry]:
+    return (await db.execute(select(MagQueueEntry).where(MagQueueEntry.trip_id == trip_id))).scalars().first()
+
+
+async def _mag_info(db: AsyncSession, e: MagQueueEntry, cfg: dict, route: Optional[MagRoute], drv: ExpressDriver) -> dict:
+    bk = (await db.execute(select(MagBooking).options(selectinload(MagBooking.client)).where(MagBooking.entry_id == e.id, MagBooking.status == "booked").order_by(MagBooking.id))).scalars().all()
+    ps = (await db.execute(select(IntercityOrder).where(IntercityOrder.trip_id == e.trip_id, IntercityOrder.status == "in_transit"))).scalars().all()
+    rt = (await db.execute(select(IntercityOrder).where(IntercityOrder.return_trip_id == e.trip_id, IntercityOrder.status == "returning"))).scalars().all()
+    pseats = sum(_mag_pseat(cfg, o.size) for o in ps + rt)
+    sb = sum(b.seats for b in bk)
+    income = sum(b.amount for b in bk) + sum(float(o.fare or 0) for o in ps)
+    cap = (drv.seats if drv and drv.seats else 4)
+    free = cap - sb - pseats
+    minv = float(route.min_income) if route else 0.0
+    full = free <= 1e-6
+    ready = full or (income > 0 and income >= minv)
+    return {"entry_id": e.id, "trip_id": e.trip_id, "capacity": cap, "seats_booked": sb, "parcel_seats": round(pseats, 2), "free_seats": max(int(free + 1e-9), 0),
+            "income": income, "min_income": minv, "ready": ready, "full": full, "price": float(route.seat_price) if route else 0.0,
+            "passengers": [{"id": b.id, "name": b.client.full_name if b.client else "", "phone": b.client.phone_number if b.client else "", "seats": b.seats, "amount": b.amount} for b in bk],
+            "parcels": len(ps) + len(rt)}
+
+
+async def _mag_release(db: AsyncSession, e: MagQueueEntry, status: str, reason: str) -> None:
+    """Navbatdan chiqarish: posilkalar terminalga qaytariladi, bronlar bekor, komissiya depozitga qaytadi."""
+    t = (await db.execute(select(LinehaulTrip).where(LinehaulTrip.id == e.trip_id).with_for_update())).scalars().first()
+    if t is not None:
+        for o in await _ic_trip_orders(db, t):
+            if o.status == "in_transit" and o.trip_id == t.id:
+                o.status, o.trip_id = "at_a", None
+                await _ic_event(db, o, "at_a", None, "system", e.from_terminal_id, "Haydovchi navbatdan tushdi — posilka terminalga qaytarildi")
+            elif o.status == "returning" and o.return_trip_id == t.id:
+                o.status, o.return_trip_id = "at_b", None
+        t.status = "cancelled"
+    drv = (await db.execute(select(ExpressDriver).where(ExpressDriver.user_id == e.driver_id).with_for_update())).scalars().first()
+    bks = (await db.execute(select(MagBooking).where(MagBooking.entry_id == e.id, MagBooking.status == "booked"))).scalars().all()
+    for b in bks:
+        b.status = "dropped"
+        if drv is not None:
+            drv.deposit = (drv.deposit or 0) + (b.commission or 0)
+        await _ic_notify(db, b.client_id, "⚠️ Haydovchi navbatdan tushdi, broningiz bekor bo'ldi. Iltimos, boshqa mashinani tanlang.")
+    e.status, e.drop_reason, e.ended_at = status, reason, datetime.utcnow()
+    if status == "dropped":
+        await _ic_notify(db, e.driver_id, f"⚠️ Siz navbatdan tushdingiz: {reason}. Qayta navbatga yozilishingiz kerak.")
+
+
+async def _mag_sweep(db: AsyncSession) -> None:
+    """Geofencing: offlayn yoki terminaldan uzoqlashgan, qora ro'yxatdagi haydovchilar navbatdan tushadi."""
+    cfg = _mag_cfg(await _get_or_create_setting(db))
+    es = (await db.execute(select(MagQueueEntry).options(selectinload(MagQueueEntry.from_terminal)).where(MagQueueEntry.status == "waiting"))).scalars().all()
+    changed = False
+    now = datetime.utcnow()
+    for e in es:
+        drv = (await db.execute(select(ExpressDriver).where(ExpressDriver.user_id == e.driver_id))).scalars().first()
+        reason, status = None, "dropped"
+        if drv is None or not drv.is_active or drv.blacklisted:
+            reason, status = "qora ro'yxat yoki o'chirilgan", "removed"
+        elif drv.location_at is None or (now - drv.location_at).total_seconds() > cfg["stale_min"] * 60:
+            reason = "onlayn emas (joylashuv kelmayapti)"
+        else:
+            d = _mag_dist_m(drv, e.from_terminal)
+            if d is not None and d > cfg["radius_m"] * 2:
+                reason = f"terminaldan uzoqlashdi ({int(d)} m)"
+        if reason:
+            await _mag_release(db, e, status, reason)
+            changed = True
+    if changed:
+        await db.commit()
+
+
+async def _mag_waiting(db: AsyncSession, from_tid: int, to_tid: int):
+    return (await db.execute(select(MagQueueEntry).options(selectinload(MagQueueEntry.driver)).where(
+        MagQueueEntry.from_terminal_id == from_tid, MagQueueEntry.to_terminal_id == to_tid, MagQueueEntry.status == "waiting")
+        .order_by(MagQueueEntry.applied_at, MagQueueEntry.id))).scalars().all()
+
+
+async def _mag_prepare_depart(db: AsyncSession, trip: LinehaulTrip) -> bool:
+    """Navbatli reys uchun jo'nash shartlari. Navbat yozuvi bo'lsa True."""
+    e = await _mag_entry_for_trip(db, trip.id)
+    if e is None:
+        return False
+    if e.status != "waiting":
+        raise HTTPException(status_code=400, detail="Bu mashina navbatda emas")
+    q = await _mag_waiting(db, e.from_terminal_id, e.to_terminal_id)
+    if not q or q[0].id != e.id:
+        raise HTTPException(status_code=400, detail="Hali sizning navbatingiz emas — oldingi mashina jo'nashi kerak")
+    cfg = _mag_cfg(await _get_or_create_setting(db))
+    drv = (await db.execute(select(ExpressDriver).where(ExpressDriver.user_id == e.driver_id))).scalars().first()
+    fcity = (await db.execute(select(Terminal.city_id).where(Terminal.id == e.from_terminal_id))).scalar()
+    tcity = (await db.execute(select(Terminal.city_id).where(Terminal.id == e.to_terminal_id))).scalar()
+    info = await _mag_info(db, e, cfg, await _mag_route(db, fcity, tcity), drv)
+    if not info["ready"]:
+        raise HTTPException(status_code=400, detail=f"Jo'nash uchun daromad yetarli emas: {_fm(info['income'])} / {_fm(info['min_income'])} so'm")
+    e.status = "departed"
+    return True
+
+
+async def _mag_finish(db: AsyncSession, trip: LinehaulTrip) -> None:
+    e = await _mag_entry_for_trip(db, trip.id)
+    if e is None or e.status != "departed":
+        return
+    e.status, e.ended_at = "arrived", datetime.utcnow()
+    for b in (await db.execute(select(MagBooking).where(MagBooking.entry_id == e.id, MagBooking.status == "booked"))).scalars().all():
+        b.status = "done"
+
+
+# ---------------- Haydovchi ----------------
+driver_mag_router = APIRouter(prefix="/driver/mag", tags=["Magistral taksi: haydovchi"])
+
+
+@driver_mag_router.get("/state")
+async def driver_mag_state(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_express_driver)):
+    await _mag_sweep(db)
+    st = await _get_or_create_setting(db)
+    cfg = _mag_cfg(st)
+    drv = (await db.execute(select(ExpressDriver).where(ExpressDriver.user_id == user.id))).scalars().first()
+    terms = {t.city_id: t for t in (await db.execute(select(Terminal).where(Terminal.is_active == True))).scalars().all()}
+    routes = (await db.execute(select(MagRoute).where(MagRoute.is_active == True))).scalars().all()
+    out_routes = []
+    for r in routes:
+        a, b = terms.get(r.from_city_id), terms.get(r.to_city_id)
+        if a and b:
+            d = _mag_dist_m(drv, a)
+            out_routes.append({"from": r.from_city_id, "to": r.to_city_id, "label": f"{a.name} → {b.name}", "seat_price": r.seat_price, "min_income": r.min_income,
+                               "dist_m": None if d is None else int(d)})
+    e = (await db.execute(select(MagQueueEntry).options(selectinload(MagQueueEntry.from_terminal), selectinload(MagQueueEntry.to_terminal)).where(
+        MagQueueEntry.driver_id == user.id, MagQueueEntry.status.in_(["waiting", "departed"])).order_by(MagQueueEntry.id.desc()))).scalars().first()
+    entry = None
+    if e:
+        route = await _mag_route(db, e.from_terminal.city_id, e.to_terminal.city_id)
+        info = await _mag_info(db, e, cfg, route, drv)
+        pos, total = None, None
+        if e.status == "waiting":
+            q = await _mag_waiting(db, e.from_terminal_id, e.to_terminal_id)
+            total = len(q)
+            pos = next((i + 1 for i, x in enumerate(q) if x.id == e.id), None)
+        entry = {**info, "status": e.status, "position": pos, "queue_len": total, "from": e.from_terminal.name, "to": e.to_terminal.name}
+    last = (await db.execute(select(MagQueueEntry).where(MagQueueEntry.driver_id == user.id, MagQueueEntry.status.in_(["dropped", "removed"])).order_by(MagQueueEntry.id.desc()).limit(1))).scalars().first()
+    return {"enabled": cfg["enabled"], "radius_m": cfg["radius_m"], "deposit": drv.deposit or 0, "min_deposit": cfg["min_deposit"], "commission": cfg["commission"],
+            "blacklisted": bool(drv.blacklisted), "blacklist_reason": drv.blacklist_reason, "routes": out_routes, "entry": entry,
+            "last_drop": {"reason": last.drop_reason, "at": last.ended_at.isoformat() if last.ended_at else None} if last and not entry else None}
+
+
+class MagApplyBody(BaseModel):
+    from_city_id: int
+    to_city_id: int
+
+
+@driver_mag_router.post("/apply")
+async def driver_mag_apply(body: MagApplyBody, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_express_driver)):
+    st = await _get_or_create_setting(db)
+    cfg = _mag_cfg(st)
+    if not cfg["enabled"]:
+        raise HTTPException(status_code=403, detail="Magistral taksi hozircha yoqilmagan")
+    drv = (await db.execute(select(ExpressDriver).where(ExpressDriver.user_id == user.id).with_for_update())).scalars().first()
+    if drv.blacklisted:
+        raise HTTPException(status_code=403, detail="Siz qora ro'yxatdasiz" + (f": {drv.blacklist_reason}" if drv.blacklist_reason else ""))
+    if (drv.deposit or 0) < cfg["min_deposit"]:
+        raise HTTPException(status_code=400, detail=f"Depozit yetarli emas (kerak: {_fm(cfg['min_deposit'])} so'm, sizda: {_fm(drv.deposit or 0)})")
+    route = await _mag_route(db, body.from_city_id, body.to_city_id)
+    if not route:
+        raise HTTPException(status_code=400, detail="Bu yo'nalishda magistral taksi yo'q")
+    ta, tb = await _ic_active_terminal(db, body.from_city_id), await _ic_active_terminal(db, body.to_city_id)
+    if (await db.execute(select(MagQueueEntry.id).where(MagQueueEntry.driver_id == user.id, MagQueueEntry.status.in_(["waiting", "departed"])))).first():
+        raise HTTPException(status_code=400, detail="Siz allaqachon navbatdasiz yoki yo'ldasiz")
+    for t in (await db.execute(select(LinehaulTrip).where(LinehaulTrip.driver_id == user.id, LinehaulTrip.status.in_(["waiting", "departed", "arrived"])))).scalars().all():
+        if t.status != "arrived" or await _ic_trip_orders(db, t):
+            raise HTTPException(status_code=400, detail="Sizda tugallanmagan reys bor")
+    now = datetime.utcnow()
+    if drv.location_at is None or (now - drv.location_at).total_seconds() > cfg["stale_min"] * 60:
+        raise HTTPException(status_code=400, detail="Joylashuvingiz aniqlanmadi. Geolokatsiyani yoqing va qayta urinib ko'ring.")
+    d = _mag_dist_m(drv, ta)
+    if d is None:
+        raise HTTPException(status_code=400, detail="Terminal koordinatasi belgilanmagan")
+    if d > cfg["radius_m"]:
+        raise HTTPException(status_code=400, detail=f"Terminaldan {int(d)} m uzoqdasiz. Navbatga yozilish uchun {cfg['radius_m']} m ichida bo'ling.")
+    trip = LinehaulTrip(driver_id=user.id, from_terminal_id=ta.id, to_terminal_id=tb.id, status="waiting")
+    db.add(trip)
+    await db.flush()
+    db.add(MagQueueEntry(driver_id=user.id, trip_id=trip.id, from_terminal_id=ta.id, to_terminal_id=tb.id, status="waiting"))
+    await db.commit()
+    return {"ok": True}
+
+
+@driver_mag_router.post("/leave")
+async def driver_mag_leave(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_express_driver)):
+    e = (await db.execute(select(MagQueueEntry).where(MagQueueEntry.driver_id == user.id, MagQueueEntry.status == "waiting").with_for_update())).scalars().first()
+    if not e:
+        raise HTTPException(status_code=404, detail="Siz navbatda emassiz")
+    await _mag_release(db, e, "removed", "Haydovchi o'zi chiqdi")
+    await db.commit()
+    return {"ok": True}
+
+
+# ---------------- Mijoz (yo'lovchi) ----------------
+mag_client_router = APIRouter(prefix="/api/shop/mag", tags=["Magistral taksi: yo'lovchi"])
+
+
+@mag_client_router.post("/config")
+async def mag_config(body: IcConfigBody, db: AsyncSession = Depends(get_db)):
+    client = await _client_for_cancel(db, body.init_data)
+    cfg = _mag_cfg(await _get_or_create_setting(db))
+    dests = []
+    if cfg["enabled"] and client.city_id is not None:
+        rows = (await db.execute(select(MagRoute.to_city_id, City.name, MagRoute.seat_price).join(City, City.id == MagRoute.to_city_id).where(
+            MagRoute.from_city_id == client.city_id, MagRoute.is_active == True, City.is_active == True).order_by(City.name))).all()
+        for cid, nm, pr in rows:
+            if (await db.execute(select(Terminal.id).where(Terminal.city_id == cid, Terminal.is_active == True))).first():
+                dests.append({"id": cid, "name": nm, "price": pr})
+        if not (await db.execute(select(Terminal.id).where(Terminal.city_id == client.city_id, Terminal.is_active == True))).first():
+            dests = []
+    return {"enabled": bool(dests), "destinations": dests}
+
+
+class MagQueueBody(BaseModel):
+    init_data: str
+    to_city_id: int
+
+
+@mag_client_router.post("/queue")
+async def mag_queue(body: MagQueueBody, db: AsyncSession = Depends(get_db)):
+    client = await _client_for_cancel(db, body.init_data)
+    await _mag_sweep(db)
+    cfg = _mag_cfg(await _get_or_create_setting(db))
+    if not cfg["enabled"] or client.city_id is None:
+        raise HTTPException(status_code=403, detail="Magistral taksi hozircha ishlamayapti")
+    route = await _mag_route(db, client.city_id, body.to_city_id)
+    if not route:
+        raise HTTPException(status_code=400, detail="Bu yo'nalishda xizmat yo'q")
+    ta, tb = await _ic_active_terminal(db, client.city_id), await _ic_active_terminal(db, body.to_city_id)
+    q = (await _mag_waiting(db, ta.id, tb.id))[:MAG_TOP]
+    items = []
+    for i, e in enumerate(q):
+        drv = (await db.execute(select(ExpressDriver).where(ExpressDriver.user_id == e.driver_id))).scalars().first()
+        info = await _mag_info(db, e, cfg, route, drv)
+        per_comm = round(route.seat_price * cfg["commission"] / 100.0)
+        items.append({"entry_id": e.id, "position": i + 1, "driver": e.driver.full_name, "car": f"{drv.car_model or ''} {drv.car_plate or ''}".strip(),
+                      "free_seats": info["free_seats"], "capacity": info["capacity"], "ready": info["ready"],
+                      "bookable": info["free_seats"] >= 1 and (drv.deposit or 0) >= per_comm})
+    return {"price": route.seat_price, "from_terminal": ta.name, "from_address": ta.address, "to_terminal": tb.name, "items": items}
+
+
+class MagBookBody(BaseModel):
+    init_data: str
+    entry_id: int
+    seats: int = 1
+
+
+@mag_client_router.post("/book")
+async def mag_book(body: MagBookBody, db: AsyncSession = Depends(get_db)):
+    client = await _client_for_cancel(db, body.init_data)
+    await _mag_sweep(db)
+    cfg = _mag_cfg(await _get_or_create_setting(db))
+    if not cfg["enabled"]:
+        raise HTTPException(status_code=403, detail="Magistral taksi hozircha ishlamayapti")
+    if body.seats < 1 or body.seats > 6:
+        raise HTTPException(status_code=400, detail="O'rindiqlar soni noto'g'ri")
+    if (await db.execute(select(func.count(MagBooking.id)).where(MagBooking.client_id == client.id, MagBooking.status == "booked"))).scalar():
+        raise HTTPException(status_code=400, detail="Sizda allaqachon faol bron bor. Avval uni bekor qiling.")
+    e = (await db.execute(select(MagQueueEntry).options(selectinload(MagQueueEntry.from_terminal), selectinload(MagQueueEntry.to_terminal)).where(
+        MagQueueEntry.id == body.entry_id, MagQueueEntry.status == "waiting").with_for_update())).scalars().first()
+    if not e or e.from_terminal.city_id != client.city_id:
+        raise HTTPException(status_code=404, detail="Bu mashina navbatda emas")
+    q = (await _mag_waiting(db, e.from_terminal_id, e.to_terminal_id))[:MAG_TOP]
+    if e.id not in [x.id for x in q]:
+        raise HTTPException(status_code=400, detail="Bu mashina hali birinchi 5 talikda emas")
+    route = await _mag_route(db, e.from_terminal.city_id, e.to_terminal.city_id)
+    if not route:
+        raise HTTPException(status_code=400, detail="Yo'nalish topilmadi")
+    drv = (await db.execute(select(ExpressDriver).where(ExpressDriver.user_id == e.driver_id).with_for_update())).scalars().first()
+    info = await _mag_info(db, e, cfg, route, drv)
+    if body.seats > info["free_seats"]:
+        raise HTTPException(status_code=400, detail=f"Bo'sh o'rindiq yetarli emas (bo'sh: {info['free_seats']})")
+    amount = float(route.seat_price) * body.seats
+    comm = float(round(amount * cfg["commission"] / 100.0))
+    if (drv.deposit or 0) < comm:
+        raise HTTPException(status_code=400, detail="Bu haydovchida depozit yetarli emas, boshqa mashinani tanlang")
+    drv.deposit = (drv.deposit or 0) - comm
+    b = MagBooking(entry_id=e.id, client_id=client.id, seats=body.seats, amount=amount, commission=comm)
+    db.add(b)
+    await db.commit()
+    await _ic_notify(db, e.driver_id, f"🧍 Yangi yo'lovchi: {client.full_name} ({client.phone_number}), {body.seats} o'rindiq — {_fm(amount)} so'm (naqd).")
+    return {"ok": True, "id": b.id, "amount": amount, "driver": e.driver.full_name if e.driver else None}
+
+
+@mag_client_router.post("/my")
+async def mag_my(body: IcConfigBody, db: AsyncSession = Depends(get_db)):
+    client = await _client_for_cancel(db, body.init_data)
+    await _mag_sweep(db)
+    rows = (await db.execute(select(MagBooking).options(selectinload(MagBooking.entry).selectinload(MagQueueEntry.driver),
+                                                        selectinload(MagBooking.entry).selectinload(MagQueueEntry.from_terminal),
+                                                        selectinload(MagBooking.entry).selectinload(MagQueueEntry.to_terminal))
+                             .where(MagBooking.client_id == client.id).order_by(MagBooking.id.desc()).limit(10))).scalars().all()
+    out = []
+    for b in rows:
+        e = b.entry
+        drv = (await db.execute(select(ExpressDriver).where(ExpressDriver.user_id == e.driver_id))).scalars().first()
+        pos = None
+        if b.status == "booked" and e.status == "waiting":
+            q = await _mag_waiting(db, e.from_terminal_id, e.to_terminal_id)
+            pos = next((i + 1 for i, x in enumerate(q) if x.id == e.id), None)
+        show = b.status in ("booked", "done")
+        out.append({"id": b.id, "status": b.status, "trip_status": e.status, "seats": b.seats, "amount": b.amount, "position": pos,
+                    "from": e.from_terminal.name, "from_address": e.from_terminal.address, "to": e.to_terminal.name,
+                    "driver": e.driver.full_name if show else None, "driver_phone": e.driver.phone_number if show else None,
+                    "car": f"{drv.car_model or ''} {drv.car_plate or ''}".strip() if show and drv else None,
+                    "created_at": b.created_at.isoformat() if b.created_at else None})
+    return {"items": out}
+
+
+@mag_client_router.post("/cancel")
+async def mag_cancel(body: IcIdBody, db: AsyncSession = Depends(get_db)):
+    client = await _client_for_cancel(db, body.init_data)
+    b = (await db.execute(select(MagBooking).where(MagBooking.id == body.id, MagBooking.client_id == client.id).with_for_update())).scalars().first()
+    if not b or b.status != "booked":
+        raise HTTPException(status_code=404, detail="Bron topilmadi")
+    e = (await db.execute(select(MagQueueEntry).where(MagQueueEntry.id == b.entry_id))).scalars().first()
+    if e.status != "waiting":
+        raise HTTPException(status_code=400, detail="Mashina yo'lga chiqib bo'lgan, bekor qilib bo'lmaydi")
+    drv = (await db.execute(select(ExpressDriver).where(ExpressDriver.user_id == e.driver_id).with_for_update())).scalars().first()
+    if drv:
+        drv.deposit = (drv.deposit or 0) + (b.commission or 0)
+    b.status = "cancelled"
+    await db.commit()
+    await _ic_notify(db, e.driver_id, f"❌ Yo'lovchi {client.full_name} broni bekor qildi ({b.seats} o'rindiq).")
+    return {"ok": True}
+
+
+# ---------------- Terminal operatori ----------------
+@terminal_router.get("/terminal/api/mag")
+async def terminal_mag(db: AsyncSession = Depends(get_db), ctx=Depends(get_current_terminal_op)):
+    user, T = ctx
+    await _mag_sweep(db)
+    cfg = _mag_cfg(await _get_or_create_setting(db))
+    es = (await db.execute(select(MagQueueEntry).options(selectinload(MagQueueEntry.driver), selectinload(MagQueueEntry.to_terminal)).where(
+        MagQueueEntry.from_terminal_id == T.id, MagQueueEntry.status == "waiting").order_by(MagQueueEntry.applied_at, MagQueueEntry.id))).scalars().all()
+    out, seen = [], {}
+    for e in es:
+        drv = (await db.execute(select(ExpressDriver).where(ExpressDriver.user_id == e.driver_id))).scalars().first()
+        route = await _mag_route(db, T.city_id, e.to_terminal.city_id)
+        seen[e.to_terminal_id] = seen.get(e.to_terminal_id, 0) + 1
+        info = await _mag_info(db, e, cfg, route, drv)
+        out.append({**info, "driver": e.driver.full_name, "phone": e.driver.phone_number, "car": f"{drv.car_model or ''} {drv.car_plate or ''}".strip(),
+                    "to": e.to_terminal.name, "position": seen[e.to_terminal_id], "can_depart": seen[e.to_terminal_id] == 1 and info["ready"]})
+    return {"items": out, "enabled": cfg["enabled"]}
+
+
+@terminal_router.post("/terminal/api/mag/{eid}/remove")
+async def terminal_mag_remove(eid: int, db: AsyncSession = Depends(get_db), ctx=Depends(get_current_terminal_op)):
+    user, T = ctx
+    e = (await db.execute(select(MagQueueEntry).where(MagQueueEntry.id == eid, MagQueueEntry.from_terminal_id == T.id, MagQueueEntry.status == "waiting").with_for_update())).scalars().first()
+    if not e:
+        raise HTTPException(status_code=404, detail="Navbat yozuvi topilmadi")
+    await _mag_release(db, e, "removed", "Operator navbatdan chiqardi")
+    await db.commit()
+    return {"ok": True}
+
+
+# ---------------- Admin ----------------
+admin_mag_router = APIRouter(prefix="/admin/mag", tags=["Magistral taksi boshqaruvi"])
+
+
+@admin_mag_router.get("/overview")
+async def admin_mag_overview(db: AsyncSession = Depends(get_db), current_user: User = Depends(require_section("taksi"))):
+    await _mag_sweep(db)
+    st = await _get_or_create_setting(db)
+    cfg = _mag_cfg(st)
+    cities = (await db.execute(select(City).order_by(City.name))).scalars().all()
+    routes = (await db.execute(select(MagRoute).order_by(MagRoute.id))).scalars().all()
+    drivers = (await db.execute(select(ExpressDriver, User).join(User, User.id == ExpressDriver.user_id).order_by(User.full_name))).all()
+    es = (await db.execute(select(MagQueueEntry).options(selectinload(MagQueueEntry.driver), selectinload(MagQueueEntry.from_terminal), selectinload(MagQueueEntry.to_terminal)).where(
+        MagQueueEntry.status.in_(["waiting", "departed"])).order_by(MagQueueEntry.applied_at))).scalars().all()
+    queue = []
+    for e in es:
+        drv = (await db.execute(select(ExpressDriver).where(ExpressDriver.user_id == e.driver_id))).scalars().first()
+        info = await _mag_info(db, e, cfg, await _mag_route(db, e.from_terminal.city_id, e.to_terminal.city_id), drv)
+        queue.append({**info, "status": e.status, "driver": e.driver.full_name, "from": e.from_terminal.name, "to": e.to_terminal.name})
+    return {"cfg": cfg, "is_owner": current_user.role == UserRole.OWNER, "cities": [{"id": c.id, "name": c.name} for c in cities],
+            "routes": [{"id": r.id, "from": r.from_city_id, "to": r.to_city_id, "seat_price": r.seat_price, "min_income": r.min_income, "active": bool(r.is_active)} for r in routes],
+            "drivers": [{"user_id": u.id, "name": u.full_name, "phone": u.phone_number, "deposit": d.deposit or 0, "blacklisted": bool(d.blacklisted), "reason": d.blacklist_reason,
+                         "seats": d.seats or 4, "active": bool(d.is_active)} for d, u in drivers], "queue": queue}
+
+
+@admin_mag_router.post("/settings")
+async def admin_mag_settings(radius_m: int = Form(500), stale_min: int = Form(5), commission: float = Form(10.0, allow_inf_nan=False),
+                             min_deposit: float = Form(0.0, allow_inf_nan=False), seat_small: float = Form(0.25, allow_inf_nan=False),
+                             seat_medium: float = Form(0.5, allow_inf_nan=False), seat_large: float = Form(1.0, allow_inf_nan=False),
+                             db: AsyncSession = Depends(get_db), owner: User = Depends(require_owner)):
+    if not (50 <= radius_m <= 20000) or not (1 <= stale_min <= 120) or not (0 <= commission <= 60) or min_deposit < 0 or min_deposit > 100_000_000 \
+            or not all(0 < v <= 6 for v in (seat_small, seat_medium, seat_large)):
+        raise HTTPException(status_code=400, detail="Qiymatlar noto'g'ri")
+    st = await _get_or_create_setting(db)
+    st.mag_radius_m, st.mag_stale_min, st.mag_commission_percent, st.mag_min_deposit = radius_m, stale_min, commission, min_deposit
+    st.mag_seat_small, st.mag_seat_medium, st.mag_seat_large = seat_small, seat_medium, seat_large
+    await db.commit()
+    return {"ok": True}
+
+
+class MagRouteBody(BaseModel):
+    from_city_id: int
+    to_city_id: int
+    seat_price: float
+    min_income: float = 0.0
+    is_active: bool = True
+
+
+@admin_mag_router.post("/route")
+async def admin_mag_route(body: MagRouteBody, db: AsyncSession = Depends(get_db), owner: User = Depends(require_owner)):
+    if body.from_city_id == body.to_city_id or not (0 < body.seat_price <= 100_000_000) or not (0 <= body.min_income <= 1_000_000_000):
+        raise HTTPException(status_code=400, detail="Qiymatlar noto'g'ri")
+    r = (await db.execute(select(MagRoute).where(MagRoute.from_city_id == body.from_city_id, MagRoute.to_city_id == body.to_city_id))).scalars().first()
+    if not r:
+        r = MagRoute(from_city_id=body.from_city_id, to_city_id=body.to_city_id)
+        db.add(r)
+    r.seat_price, r.min_income, r.is_active = body.seat_price, body.min_income, body.is_active
+    await db.commit()
+    return {"ok": True}
+
+
+@admin_mag_router.post("/route/{rid}/delete")
+async def admin_mag_route_delete(rid: int, db: AsyncSession = Depends(get_db), owner: User = Depends(require_owner)):
+    await db.execute(delete(MagRoute).where(MagRoute.id == rid))
+    await db.commit()
+    return {"ok": True}
+
+
+class MagDepositBody(BaseModel):
+    amount: float
+
+
+@admin_mag_router.post("/drivers/{uid}/deposit")
+async def admin_mag_deposit(uid: int, body: MagDepositBody, db: AsyncSession = Depends(get_db), owner: User = Depends(require_owner)):
+    d = (await db.execute(select(ExpressDriver).where(ExpressDriver.user_id == uid).with_for_update())).scalars().first()
+    if not d or body.amount == 0 or abs(body.amount) > 1_000_000_000 or (d.deposit or 0) + body.amount < 0:
+        raise HTTPException(status_code=400, detail="Summa noto'g'ri")
+    d.deposit = (d.deposit or 0) + body.amount
+    db.add(Transaction(user_id=uid, type=TransactionType.DEPOSIT if body.amount > 0 else TransactionType.WITHDRAWAL, amount=abs(body.amount),
+                       note="Magistral depozit " + ("to'ldirildi" if body.amount > 0 else "yechildi"), created_by_id=owner.id))
+    await db.commit()
+    return {"ok": True, "deposit": d.deposit}
+
+
+class MagBlackBody(BaseModel):
+    value: bool
+    reason: Optional[str] = None
+
+
+@admin_mag_router.post("/drivers/{uid}/blacklist")
+async def admin_mag_blacklist(uid: int, body: MagBlackBody, db: AsyncSession = Depends(get_db), owner: User = Depends(require_owner)):
+    d = (await db.execute(select(ExpressDriver).where(ExpressDriver.user_id == uid).with_for_update())).scalars().first()
+    if not d:
+        raise HTTPException(status_code=404, detail="Haydovchi topilmadi")
+    d.blacklisted, d.blacklist_reason = body.value, (body.reason or "").strip()[:200] or None if body.value else None
+    await db.commit()
+    await _mag_sweep(db)
+    return {"ok": True}
+
+
+class MagSeatsBody(BaseModel):
+    seats: int
+
+
+@admin_mag_router.post("/drivers/{uid}/seats")
+async def admin_mag_seats(uid: int, body: MagSeatsBody, db: AsyncSession = Depends(get_db), owner: User = Depends(require_owner)):
+    d = (await db.execute(select(ExpressDriver).where(ExpressDriver.user_id == uid))).scalars().first()
+    if not d or not (1 <= body.seats <= 12):
+        raise HTTPException(status_code=400, detail="Qiymat noto'g'ri")
+    d.seats = body.seats
+    await db.commit()
+    return {"ok": True}
+
+
+@admin_mag_router.post("/queue/{eid}/remove")
+async def admin_mag_remove(eid: int, db: AsyncSession = Depends(get_db), owner: User = Depends(require_owner)):
+    e = (await db.execute(select(MagQueueEntry).where(MagQueueEntry.id == eid, MagQueueEntry.status == "waiting").with_for_update())).scalars().first()
+    if not e:
+        raise HTTPException(status_code=404, detail="Topilmadi")
+    await _mag_release(db, e, "removed", "Administrator navbatdan chiqardi")
+    await db.commit()
+    return {"ok": True}
+
+
+
 app.include_router(ai_admin_router)
 app.include_router(banner_req_admin_router)
 app.include_router(cancel_router)
@@ -10656,6 +11179,9 @@ app.include_router(admin_parcel_router)
 app.include_router(express_router)
 app.include_router(track_router)
 app.include_router(terminal_router)
+app.include_router(driver_mag_router)
+app.include_router(mag_client_router)
+app.include_router(admin_mag_router)
 app.include_router(courier_express_router)
 app.include_router(driver_express_router)
 app.include_router(admin_express_router)

@@ -35,7 +35,8 @@ function n(v){return Math.round(v||0).toLocaleString('ru-RU').replace(/ /g,' ')
 function e(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
 async function api(path,body){var o=body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)};var r=await fetch(path,o);var d={};try{d=await r.json();}catch(x){}if(!r.ok)throw new Error(d.detail||'Xatolik');return d;}
 var S=null;
-async function load(){S=await api('/terminal/api/state');document.getElementById('cash').textContent=n(S.terminal.cash)+' so\'m';render();}
+var MG=[];
+async function load(){S=await api('/terminal/api/state');try{MG=(await api('/terminal/api/mag')).items;}catch(x){MG=[];}document.getElementById('cash').textContent=n(S.terminal.cash)+' so\'m';render();}
 function waitingTrips(toId,out){return S.trips.filter(function(t){return t.status==='waiting'&&t.outgoing;});}
 function match(o){var q=document.getElementById('q').value.trim().toUpperCase();return !q||o.qr.indexOf(q)>=0;}
 function info(o){return '<b>'+e(o.qr)+'</b> #'+o.id+' · '+e(o.item)+' · '+e(o.size)+'<br><span class="opacity-70">'+e(o.from)+' → '+e(o.to)+' · '+(o.payer==='receiver'?'qabul qiluvchi to\'laydi':'jo\'natuvchi to\'ladi')+' · '+n(o.total)+' so\'m</span>';}
@@ -45,6 +46,7 @@ function render(){
  if(!S)return;var h='';
  h+=sec('⬇️ Fider-1 olib keldi (qabul qiling)',S.incoming_fider,function(o){return '<div class="mt-1">Kuryer: '+e(o.f1||'')+(o.cash_held?' · naqd: <b>'+n(o.cash_held)+'</b> so\'m':'')+'</div><div class="flex gap-2 mt-1"><button class="btng" data-a="receive-from-fider" data-qr="'+o.qr+'">✅ Qabul qildim'+(o.cash_held?' + naqd oldim':'')+'</button><a class="btn2" target="_blank" href="/terminal/api/photo/'+o.id+'">📷 Rasm</a></div>';});
  h+=sec('📦 Magistralga tayyor (A-terminal)',S.at_a,function(o){var tr=waitingTrips();var opts=tr.filter(function(t){return t.to===o.to;}).map(function(t){return '<option value="'+t.id+'">Reys #'+t.id+' · '+e(t.driver)+'</option>';}).join('');return '<div class="flex gap-2 mt-1 items-center">'+(opts?'<select id="tr'+o.id+'">'+opts+'</select><button class="btn" data-a="load" data-qr="'+o.qr+'" data-sel="tr'+o.id+'">Haydovchiga yukladim</button>':'<span class="text-xs text-amber-600">'+e(o.to)+' yo\'nalishida kutayotgan reys yo\'q</span>')+'<a class="btn2" target="_blank" href="/terminal/api/label/'+o.id+'">🖨</a></div>';});
+ if(MG.length)h+='<div class="card"><b class="text-sm">🚦 Magistral navbat</b>'+MG.map(function(q){return '<div class="row"><b>'+e(q.to)+' · #'+q.position+' '+e(q.driver)+'</b> '+e(q.phone)+' · '+e(q.car)+'<br>Yo\'lovchi '+q.seats_booked+' + posilka '+q.parcel_seats+' / '+q.capacity+' · daromad <b>'+n(q.income)+'</b>/'+n(q.min_income)+(q.ready?' ✅':'')+(q.passengers.length?'<br>'+q.passengers.map(function(p){return '🧍 '+e(p.name)+' ('+p.seats+')';}).join(', '):'')+'<div class="flex gap-2 mt-1">'+(q.can_depart?'<button class="btng" data-a="depart" data-id="'+q.trip_id+'">🚗 Jo\'natish</button>':'')+'<button class="btn2" data-a="mag-remove" data-id="'+q.entry_id+'">Navbatdan chiqarish</button></div></div>';}).join('')+'</div>';
  var tr='';S.trips.forEach(function(t){tr+='<div class="row">Reys #'+t.id+' · '+e(t.driver)+' ('+e(t.driver_phone)+') · '+e(t.from)+' → '+e(t.to)+' · <b>'+t.parcels+'</b> posilka · '+({waiting:'kutmoqda',departed:'yo\'lda',arrived:'yetib kelgan'})[t.status]+(t.outgoing&&t.status==='waiting'&&t.parcels?' <button class="btn" data-a="depart" data-id="'+t.id+'">🚗 Jo\'natish</button>':'')+'</div>';});
  if(tr)h+='<div class="card"><b class="text-sm">🚗 Magistral reyslar</b>'+tr+'</div>';
  h+=sec('🚗 Haydovchi olib keldi (qabul qiling)',S.incoming_driver,function(o){return '<div class="mt-1">Haydovchi: '+e(o.driver||'')+'</div><div class="mt-1"><button class="btng" data-a="receive-from-driver" data-qr="'+o.qr+'">✅ Qabul qildim</button></div>';});
@@ -68,6 +70,7 @@ document.getElementById('sec').addEventListener('click',async function(ev){
  try{
   if(a==='load'){body.trip_id=+document.getElementById(b.dataset.sel).value;}
   else if(a==='depart'){url='/terminal/api/trips/'+b.dataset.id+'/depart';body={};}
+  else if(a==='mag-remove'){if(!confirm('Navbatdan chiqarasizmi?'))return;url='/terminal/api/mag/'+b.dataset.id+'/remove';body={};}
   else if(a==='cash'){url='/terminal/api/cash/receive';body={courier_id:+b.dataset.id};}
   else if(a==='deposit'){url='/terminal/api/cash/deposit';body={amount:+document.getElementById('dep').value};}
   else if(a==='claim'){var m=prompt('Qabul qiluvchi PIN kodi (bo\'sh qoldirsangiz — pasport tekshirildi deb belgilanadi):');if(m===null)return;if(m)body.pin=m;else body.passport_ok=true;var f=+b.dataset.fee;if(f>0){if(!confirm('Qabul qiluvchidan '+n(f)+' so\'m naqd oldingizmi?'))return;body.cash_received=true;}}

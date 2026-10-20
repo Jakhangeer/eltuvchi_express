@@ -472,6 +472,14 @@ class SystemSetting(Base):
     ic_storage_fee_day = Column(Float, nullable=True, default=2000.0)     # 4-kundan har kuniga (so'm)
     ic_max_days = Column(Integer, nullable=True, default=8)               # shundan keyin ortga qaytariladi
     ic_max_value = Column(Float, nullable=True, default=1000000.0)        # e'lon qilinadigan eng katta qiymat
+    # Magistral taksi (B bosqich)
+    mag_radius_m = Column(Integer, nullable=True, default=500)              # navbatga turish uchun terminalgacha masofa (m)
+    mag_stale_min = Column(Integer, nullable=True, default=5)               # joylashuv shuncha daqiqa kelmasa navbatdan tushadi
+    mag_commission_percent = Column(Float, nullable=True, default=10.0)     # yo'lovchi daromadidan platforma ulushi
+    mag_min_deposit = Column(Float, nullable=True, default=0.0)             # navbatga turish uchun minimal depozit
+    mag_seat_small = Column(Float, nullable=True, default=0.25)             # kichik posilka = o'rindiq
+    mag_seat_medium = Column(Float, nullable=True, default=0.5)
+    mag_seat_large = Column(Float, nullable=True, default=1.0)
 
     # Har bir rol uchun alohida shartlar — odam shu rolni tanlaganda
     # birinchi bo'lib shu matn ko'rsatiladi, "Roziman" bosmasa davom etolmaydi.
@@ -953,6 +961,10 @@ class ExpressDriver(Base):
     latitude = Column(Float, nullable=True)
     longitude = Column(Float, nullable=True)
     location_at = Column(DateTime, nullable=True)
+    deposit = Column(Float, default=0.0)                # magistral taksi depoziti (komissiya shundan yechiladi)
+    blacklisted = Column(Boolean, default=False)
+    blacklist_reason = Column(String, nullable=True)
+    seats = Column(Integer, default=4)                  # mashinadagi yo'lovchi o'rindiqlari
     created_at = Column(DateTime, default=datetime.utcnow)
 
     user = relationship("User", foreign_keys=[user_id])
@@ -1119,3 +1131,52 @@ class TerminalCashLog(Base):
     order_id = Column(Integer, nullable=True)
     note = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class MagRoute(Base):
+    """Magistral taksi yo'nalishi: o'rindiq narxi va jo'nash uchun minimal daromad (owner belgilaydi)."""
+    __tablename__ = "mag_routes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    from_city_id = Column(Integer, ForeignKey("cities.id", ondelete="CASCADE"), nullable=False, index=True)
+    to_city_id = Column(Integer, ForeignKey("cities.id", ondelete="CASCADE"), nullable=False, index=True)
+    seat_price = Column(Float, nullable=False, default=0.0)
+    min_income = Column(Float, nullable=False, default=0.0)   # shu daromad yig'ilgach navbatdagi birinchi mashina jo'naydi
+    is_active = Column(Boolean, default=True)
+
+
+class MagQueueEntry(Base):
+    """Haydovchining terminaldagi navbati (reys bilan bog'langan)."""
+    __tablename__ = "mag_queue"
+
+    id = Column(Integer, primary_key=True, index=True)
+    driver_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    trip_id = Column(Integer, ForeignKey("linehaul_trips.id"), nullable=False, unique=True, index=True)
+    from_terminal_id = Column(Integer, ForeignKey("terminals.id"), nullable=False, index=True)
+    to_terminal_id = Column(Integer, ForeignKey("terminals.id"), nullable=False, index=True)
+    status = Column(String, default="waiting", index=True)   # waiting | departed | arrived | dropped | removed
+    drop_reason = Column(String, nullable=True)
+    applied_at = Column(DateTime, default=datetime.utcnow)
+    ended_at = Column(DateTime, nullable=True)
+
+    driver = relationship("User", foreign_keys=[driver_id])
+    trip = relationship("LinehaulTrip", foreign_keys=[trip_id])
+    from_terminal = relationship("Terminal", foreign_keys=[from_terminal_id])
+    to_terminal = relationship("Terminal", foreign_keys=[to_terminal_id])
+
+
+class MagBooking(Base):
+    """Yo'lovchi broni (o'rindiq). Naqd haydovchiga to'lanadi; komissiya haydovchi depozitidan band qilinadi."""
+    __tablename__ = "mag_bookings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    entry_id = Column(Integer, ForeignKey("mag_queue.id", ondelete="CASCADE"), nullable=False, index=True)
+    client_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    seats = Column(Integer, nullable=False, default=1)
+    amount = Column(Float, nullable=False, default=0.0)
+    commission = Column(Float, nullable=False, default=0.0)
+    status = Column(String, default="booked", index=True)    # booked | cancelled | done | dropped
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    entry = relationship("MagQueueEntry", foreign_keys=[entry_id])
+    client = relationship("User", foreign_keys=[client_id])
