@@ -1868,6 +1868,100 @@
             </div>
             {% endif %}
 
+            <!-- TUMANLARARO POSILKA (terminalli zanjir) -->
+            <div class="card-bg bg-white p-6 rounded-xl shadow-md mb-6" id="ex-box">
+                <div class="flex items-center justify-between gap-2 flex-wrap mb-1">
+                    <h3 class="font-bold text-sm text-indigo-700">🚀 Tumanlararo posilka — terminalli zanjir</h3>
+                    <span id="ex-badge" class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-gray-200 text-gray-600">…</span>
+                </div>
+                <p class="text-xs text-gray-500 mb-3">Zanjir: eshik → Fider-1 kuryer → <b>A-terminal</b> (operator, QR) → magistral haydovchi → <b>B-terminal</b> (operator, QR) → Fider-2 kuryer → eshik (PIN). Magistral narx shaharlar juftligi va hajm bo'yicha qat'iy.</p>
+                <div id="ex-owner" class="space-y-4"></div>
+                <h4 class="font-bold text-xs mt-4 mb-2">🚗 Magistral haydovchilar</h4>
+                <div id="ex-drivers" class="space-y-1.5 text-xs"></div>
+                <h4 class="font-bold text-xs mt-4 mb-2">📦 Tumanlararo buyurtmalar</h4>
+                <div id="ex-orders" class="space-y-2 text-xs"></div>
+            </div>
+            <script>
+            (function(){
+                function e(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+                function n(v){return Number(v||0).toLocaleString('ru-RU');}
+                function j(url,opt){return fetch(url,Object.assign({credentials:'same-origin'},opt||{})).then(function(r){return r.json().catch(function(){return {};}).then(function(d){if(!r.ok)throw new Error(typeof d.detail==='string'?d.detail:'Xatolik');return d;});});}
+                function post(url,body){return j(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})});}
+                function form(url,fd){return j(url,{method:'POST',body:fd});}
+                var O=null,SV=null,CN={};
+                var INP='class="block w-full mt-1 p-2 border rounded-lg text-sm dark:bg-gray-800"';
+                function opts(sel){return O.cities.map(function(c){return '<option value="'+c.id+'"'+(sel==c.id?' selected':'')+'>'+e(c.name)+'</option>';}).join('');}
+                function tname(id){var t=O.terminals.filter(function(x){return x.id==id;})[0];return t?t.name:'—';}
+                function num(l,nm,v,st){return '<div><label class="text-xs">'+l+'</label><input '+INP+' type="number" step="'+(st||1)+'" min="0" name="'+nm+'" value="'+v+'"></div>';}
+                function ownerHtml(){
+                    var c=O.cfg,h='';
+                    h+='<div><b class="text-xs">🔌 Xizmatlar (ketma-ket yoqib boriladi)</b><div class="grid grid-cols-2 gap-2 mt-1">'+[['pochta_local','📮 Shahar ichida pochta'],['pochta_intercity','🚀 Tumanlararo posilka'],['taxi_local','🚕 Ichki taksi'],['taxi_magistral','🚐 Magistral taksi']].map(function(x){var on=SV&&SV.services[x[0]];return '<label class="flex items-center gap-2 p-2 border rounded-lg text-xs font-bold"><input type="checkbox" data-svc="'+x[0]+'" '+(on?'checked':'')+'> '+x[1]+'</label>';}).join('')+'</div><p class="text-[11px] text-gray-500 mt-1">Ichki va magistral taksi hozircha faqat belgi sifatida saqlanadi (keyingi bosqichlarda ishga tushadi).</p></div>';
+                    h+='<form id="ex-set" class="space-y-2"><b class="text-xs">⚙️ Sozlamalar</b><input type="hidden" name="express_enabled" value="'+(c.enabled?'1':'')+'"><div class="grid grid-cols-2 md:grid-cols-4 gap-2">'
+                      +num('Fider boshlang\'ich (so\'m)','courier_base',c.leg_base,500)+num('Fider har km (so\'m)','courier_per_km',c.leg_per_km,100)+num('Platforma ulushi (%)','platform_percent',c.platform_percent,0.5)
+                      +num('Eshikdan terminalgacha eng uzoq (km)','max_leg_km',c.max_leg_km)+num('Bepul saqlash (kun)','free_days',c.free_days)+num('Saqlash haqi (so\'m/kun)','storage_fee_day',c.storage_fee_day,500)
+                      +num('Eng ko\'p saqlash (kun)','max_days',c.max_days)+num('Buyum qiymati chegarasi (so\'m)','max_value',c.max_value,10000)+'</div>'
+                      +'<button class="bg-indigo-600 text-white py-2 px-4 rounded-lg font-bold text-sm">Saqlash</button> <span id="ex-set-msg" class="text-xs text-emerald-600"></span></form>';
+                    h+='<div><b class="text-xs">🏢 Terminallar (har shaharda bitta)</b><div class="space-y-1 mt-1">'+(O.terminals.map(function(t){return '<div class="p-2 border rounded-lg text-xs flex flex-wrap gap-2 items-center"><b>'+e(t.name)+'</b> · '+e(CN[t.city_id])+' · '+e(t.address)+' · '+(t.lat!=null?t.lat+', '+t.lng:'<span class="text-rose-600">koordinata yo\'q</span>')+' · kassa <b>'+n(t.cash)+'</b> '+(t.active?'🟢':'⚪')+'</div>';}).join('')||'<p class="text-xs text-gray-500">Hali terminal yo\'q</p>')+'</div>'
+                      +'<form id="ex-term" class="flex flex-wrap items-end gap-2 mt-2"><div><label class="text-[11px]">Shahar</label><select name="city" class="block p-1.5 border rounded text-xs dark:bg-gray-800">'+opts()+'</select></div>'
+                      +'<input name="name" placeholder="Nomi" class="p-1.5 border rounded text-xs dark:bg-gray-800" required><input name="address" placeholder="Manzil" class="p-1.5 border rounded text-xs dark:bg-gray-800" required>'
+                      +'<input name="lat" placeholder="Kenglik" class="p-1.5 border rounded text-xs w-24 dark:bg-gray-800" required><input name="lng" placeholder="Uzunlik" class="p-1.5 border rounded text-xs w-24 dark:bg-gray-800" required><input name="hours" placeholder="Ish vaqti" class="p-1.5 border rounded text-xs w-28 dark:bg-gray-800">'
+                      +'<label class="text-xs flex items-center gap-1"><input type="checkbox" name="active" checked> faol</label><button class="bg-indigo-600 text-white py-1.5 px-3 rounded text-xs font-bold">Saqlash / yangilash</button></form></div>';
+                    h+='<div><b class="text-xs">👷 Terminal operatorlari</b><div class="space-y-1 mt-1">'+(O.operators.map(function(o){return '<div class="p-2 border rounded-lg text-xs flex flex-wrap gap-2 items-center"><b>'+e(o.name)+'</b> '+e(o.phone)+' · '+e(tname(o.terminal_id))+' <button data-opact="'+o.user_id+'" data-v="'+(o.active?'0':'1')+'" class="px-2 py-0.5 rounded bg-gray-100">'+(o.active?'O\'chirish':'Yoqish')+'</button></div>';}).join('')||'<p class="text-xs text-gray-500">Hali operator yo\'q</p>')+'</div>'
+                      +'<form id="ex-op" class="flex flex-wrap items-end gap-2 mt-2"><input name="full_name" placeholder="Ismi" class="p-1.5 border rounded text-xs dark:bg-gray-800" required><input name="phone_number" placeholder="+998..." class="p-1.5 border rounded text-xs dark:bg-gray-800" required><input name="password" placeholder="Parol" class="p-1.5 border rounded text-xs dark:bg-gray-800" required>'
+                      +'<select name="terminal_id" class="p-1.5 border rounded text-xs dark:bg-gray-800">'+O.terminals.map(function(t){return '<option value="'+t.id+'">'+e(t.name)+'</option>';}).join('')+'</select><button class="bg-indigo-600 text-white py-1.5 px-3 rounded text-xs font-bold">Operator qo\'shish</button></form><p class="text-[11px] text-gray-500 mt-1">Operator /login orqali kiradi va terminal panelini ko\'radi.</p></div>';
+                    h+='<div><b class="text-xs">💵 Magistral narxlar (qat\'iy: shaharlar juftligi × hajm)</b><div class="space-y-1 mt-1">'+(O.fares.map(function(f){return '<div class="flex flex-wrap items-center gap-2 p-2 border rounded-lg text-xs"><b>'+e(CN[f.from])+' → '+e(CN[f.to])+'</b> kichik '+n(f.small)+' · o\'rta '+n(f.medium)+' · katta '+n(f.large)+' <button data-fdel="'+f.id+'" class="px-2 py-0.5 rounded bg-rose-100 text-rose-700">O\'chirish</button></div>';}).join('')||'<p class="text-xs text-gray-500">Hali yo\'nalish yo\'q</p>')+'</div>'
+                      +'<form id="ex-fare" class="flex flex-wrap items-end gap-2 mt-2"><div><label class="text-[11px]">Qayerdan</label><select name="from" class="block p-1.5 border rounded text-xs dark:bg-gray-800">'+opts()+'</select></div><div><label class="text-[11px]">Qayerga</label><select name="to" class="block p-1.5 border rounded text-xs dark:bg-gray-800">'+opts()+'</select></div>'
+                      +'<div><label class="text-[11px]">Kichik</label><input name="s" type="number" min="0" step="500" class="block p-1.5 border rounded text-xs w-24 dark:bg-gray-800" required></div><div><label class="text-[11px]">O\'rta</label><input name="m" type="number" min="0" step="500" class="block p-1.5 border rounded text-xs w-24 dark:bg-gray-800"></div><div><label class="text-[11px]">Katta</label><input name="l" type="number" min="0" step="500" class="block p-1.5 border rounded text-xs w-24 dark:bg-gray-800"></div><button class="bg-indigo-600 text-white py-1.5 px-3 rounded text-xs font-bold">Qo\'shish / yangilash</button></form>'
+                      +'<p class="text-[11px] text-gray-500 mt-1">Teskari yo\'nalish (B→A) alohida qo\'shiladi — u qaytarish narxi ham bo\'ladi.</p></div>';
+                    h+='<form id="ex-drv" class="flex flex-wrap items-end gap-2"><b class="text-xs w-full">➕ Magistral haydovchi qo\'shish</b><input name="full_name" placeholder="Ismi" class="p-1.5 border rounded text-xs dark:bg-gray-800" required><input name="phone_number" placeholder="+998..." class="p-1.5 border rounded text-xs dark:bg-gray-800" required><input name="password" placeholder="Parol" class="p-1.5 border rounded text-xs dark:bg-gray-800" required><input name="car_model" placeholder="Mashina" class="p-1.5 border rounded text-xs dark:bg-gray-800"><input name="car_plate" placeholder="Davlat raqami" class="p-1.5 border rounded text-xs dark:bg-gray-800"><button class="bg-indigo-600 text-white py-1.5 px-3 rounded text-xs font-bold">Qo\'shish</button></form>';
+                    return h;
+                }
+                function drivers(){
+                    document.getElementById('ex-drivers').innerHTML=O.drivers.map(function(d){return '<div class="flex flex-wrap items-center gap-2 p-2 border rounded-lg"><b>'+e(d.name)+'</b><a class="text-indigo-600" href="tel:'+e(d.phone)+'">'+e(d.phone)+'</a> '+e(d.car)+' · haq: <b>'+n(d.balance)+'</b> '+(O.is_owner?'<button data-pay="'+d.user_id+'" class="px-2 py-0.5 rounded bg-emerald-100 text-emerald-700">To\'langan</button><button data-act="'+d.user_id+'" data-v="'+(d.active?'0':'1')+'" class="px-2 py-0.5 rounded bg-gray-100">'+(d.active?'O\'chirish':'Yoqish')+'</button>':'')+'</div>';}).join('')||'<p class="text-gray-500">Haydovchi yo\'q</p>';
+                }
+                var ST={new:'bg-amber-100 text-amber-800',delivered:'bg-emerald-100 text-emerald-800',cancelled:'bg-rose-100 text-rose-800',failed:'bg-rose-100 text-rose-800'};
+                function orders(d){
+                    document.getElementById('ex-orders').innerHTML=(d.items||[]).map(function(o){
+                        return '<div class="p-3 border rounded-lg"><div class="flex justify-between gap-2"><b>#'+o.id+' · '+e(o.item)+' ('+e(o.from_terminal)+' → '+e(o.to_terminal)+') · '+e(o.qr)+'</b><span class="px-2 py-0.5 rounded-full text-[11px] font-bold '+(ST[o.status]||'bg-indigo-100 text-indigo-800')+'">'+e(o.status_label)+'</span></div>'
+                          +'<div class="text-gray-500 mt-1">'+e(o.pickup_address)+' → '+e(o.dropoff_address)+'</div>'
+                          +'<div class="text-gray-500">Yuboruvchi: '+e(o.client)+' '+e(o.client_phone)+' · Qabul qiluvchi: '+e(o.receiver_name)+' '+e(o.receiver_phone)+' · qiymat '+n(o.declared_value)+'</div>'
+                          +'<div class="text-gray-500">Jami <b>'+n(o.total)+'</b> (fider1 '+n(o.leg1_fee)+' + magistral '+n(o.fare)+' + fider2 '+n(o.leg3_fee)+' + platforma '+n(o.platform_fee)+') · to\'laydi: '+(o.payer==='receiver'?'qabul qiluvchi':'jo\'natuvchi')+(o.storage_fee>0?' · saqlash haqi '+n(o.storage_fee):'')+(o.cash_held>0?' · <b class="text-amber-600">kuryerda naqd '+n(o.cash_held)+'</b>':'')+'</div>'
+                          +'<div class="text-gray-500">Fider-1: '+e(o.f1_name||'—')+' · Haydovchi: '+e(o.driver_name||'—')+' · Fider-2: '+e(o.f2_name||'—')+(o.cancel_reason?' · Sabab: '+e(o.cancel_reason):'')+'</div>'
+                          +'<div class="flex gap-2 mt-1"><button data-xe="'+o.id+'" class="px-3 py-1 rounded bg-gray-100 font-bold">📜 Tarix</button>'+(o.has_photo?'<a target="_blank" href="/admin/express/orders/'+o.id+'/photo" class="px-3 py-1 rounded bg-gray-100 font-bold">📷 Rasm</a>':'')+'<a target="_blank" href="'+e(o.track_url)+'" class="px-3 py-1 rounded bg-gray-100 font-bold">📍 Kuzatuv</a>'
+                          +((['delivered','cancelled','returned_done'].indexOf(o.status)<0)?'<button data-xc="'+o.id+'" class="px-3 py-1 rounded bg-rose-100 text-rose-700 font-bold">Bekor qilish</button>':'')+'</div><div id="xe-'+o.id+'" class="text-[11px] text-gray-500 mt-1"></div></div>';}).join('')||'<p class="text-gray-500">Hozircha yo\'q</p>';
+                }
+                function load(){
+                    Promise.all([j('/admin/express/overview'),j('/admin/express/orders'),j('/admin/express/services')]).then(function(r){
+                        O=r[0];SV=r[2];CN={};O.cities.forEach(function(c){CN[c.id]=c.name;});
+                        var b=document.getElementById('ex-badge');b.textContent=O.cfg.enabled?'🟢 Yoqilgan':'⚪ O\'chirilgan';b.className='text-[11px] font-bold px-2 py-0.5 rounded-full '+(O.cfg.enabled?'bg-emerald-100 text-emerald-700':'bg-gray-200 text-gray-600');
+                        var ow=document.getElementById('ex-owner');
+                        if(O.is_owner&&!(document.activeElement&&ow.contains(document.activeElement)&&document.activeElement.matches('input,select'))){ow.innerHTML=ownerHtml();wire();}else if(!O.is_owner)ow.innerHTML='<p class="text-xs text-gray-500">Sozlamalar va narxlarni faqat egasi o\'zgartiradi.</p>';
+                        drivers();orders(r[1]);
+                    }).catch(function(x){var o=document.getElementById('ex-orders');if(o)o.innerHTML='<p class="text-red-500">'+e(x.message)+'</p>';});
+                }
+                function wire(){
+                    var f=document.getElementById('ex-set');f.onsubmit=function(ev){ev.preventDefault();form('/admin/express/settings',new FormData(f)).then(function(){document.getElementById('ex-set-msg').textContent='✓ Saqlandi';load();}).catch(function(x){alert(x.message);});};
+                    document.querySelectorAll('[data-svc]').forEach(function(c){c.onchange=function(){post('/admin/express/services',{key:c.dataset.svc,value:c.checked}).then(load).catch(function(x){alert(x.message);c.checked=!c.checked;});};});
+                    document.querySelectorAll('[data-fdel]').forEach(function(b){b.onclick=function(){if(confirm('Yo\'nalishni o\'chirasizmi?'))post('/admin/express/fare/'+b.dataset.fdel+'/delete').then(load).catch(function(x){alert(x.message);});};});
+                    document.querySelectorAll('[data-opact]').forEach(function(b){b.onclick=function(){post('/admin/express/operators/'+b.dataset.opact+'/active',{active:b.dataset.v==='1'}).then(load).catch(function(x){alert(x.message);});};});
+                    var ff=document.getElementById('ex-fare');ff.onsubmit=function(ev){ev.preventDefault();var g=function(k){return ff.elements[k].value;};post('/admin/express/fare',{from_city_id:+g('from'),to_city_id:+g('to'),price_small:+g('s'),price_medium:+g('m')||0,price_large:+g('l')||0}).then(load).catch(function(x){alert(x.message);});};
+                    var ft=document.getElementById('ex-term');ft.onsubmit=function(ev){ev.preventDefault();var g=function(k){return ft.elements[k].value;};post('/admin/express/terminal',{city_id:+g('city'),name:g('name'),address:g('address'),lat:+g('lat'),lng:+g('lng'),hours:g('hours'),active:ft.elements.active.checked}).then(load).catch(function(x){alert(x.message);});};
+                    var fo=document.getElementById('ex-op');fo.onsubmit=function(ev){ev.preventDefault();form('/admin/express/operators/create',new FormData(fo)).then(function(){fo.reset();load();}).catch(function(x){alert(x.message);});};
+                    var fd=document.getElementById('ex-drv');fd.onsubmit=function(ev){ev.preventDefault();form('/admin/express/drivers/create',new FormData(fd)).then(function(){fd.reset();load();}).catch(function(x){alert(x.message);});};
+                }
+                document.addEventListener('DOMContentLoaded',function(){
+                    document.addEventListener('click',function(ev){
+                        if(ev.target.closest('[data-page-btn="pochta"]'))setTimeout(load,80);
+                        var b=ev.target.closest('[data-pay]');if(b){var a=prompt('Haydovchiga to\'langan summa (so\'m):','');if(a&&+a>0)post('/admin/express/drivers/'+b.dataset.pay+'/payout',{amount:+a}).then(load).catch(function(x){alert(x.message);});}
+                        b=ev.target.closest('[data-act]');if(b)post('/admin/express/drivers/'+b.dataset.act+'/active',{active:b.dataset.v==='1'}).then(load).catch(function(x){alert(x.message);});
+                        b=ev.target.closest('[data-xc]');if(b){var r=prompt('Bekor qilish sababi:','');if(r!==null)post('/admin/express/orders/'+b.dataset.xc+'/cancel',{reason:r}).then(load).catch(function(x){alert(x.message);});}
+                        b=ev.target.closest('[data-xe]');if(b)j('/admin/express/orders/'+b.dataset.xe+'/events').then(function(d){document.getElementById('xe-'+b.dataset.xe).innerHTML=d.items.map(function(x){return e(new Date(x.at+'Z').toLocaleString('uz-UZ'))+' — '+e(x.status)+(x.who?' ('+e(x.who)+')':'')+(x.note?' · '+e(x.note):'');}).join('<br>');}).catch(function(x){alert(x.message);});
+                    });
+                    setInterval(function(){var pg=document.querySelector('.app-page[data-page="pochta"]');if(pg&&pg.style.display!=='none'&&!document.hidden&&!document.activeElement.matches('input,select,textarea'))load();},15000);
+                });
+            })();
+            </script>
+
             <div class="card-bg bg-white p-6 rounded-xl shadow-md">
                 <div class="flex flex-wrap gap-1.5 mb-3 text-xs font-bold" id="pochta-filters">
                     <button data-f="" class="pc-f px-3 py-1.5 rounded-lg bg-indigo-600 text-white">Hammasi</button>

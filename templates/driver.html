@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Magistral haydovchi</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+ body{background:#f1f5f9;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+ .card{background:#fff;border-radius:16px;padding:14px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+ .btn{padding:9px 14px;border-radius:12px;font-weight:700;font-size:13px;background:#4f46e5;color:#fff}
+ .btn2{padding:9px 14px;border-radius:12px;font-weight:700;font-size:13px;background:#e5e7eb;color:#374151}
+ select{border:1px solid #d1d5db;border-radius:12px;padding:9px;width:100%;font-size:14px;background:#fff}
+ @media(prefers-color-scheme:dark){body{background:#0f172a;color:#e2e8f0}.card{background:#1e293b}select{background:#0f172a;color:#e2e8f0;border-color:#334155}.btn2{background:#334155;color:#e2e8f0}}
+</style>
+</head>
+<body class="pb-16">
+<div class="max-w-xl mx-auto p-3 space-y-3">
+  <div class="card flex items-center justify-between">
+    <div><div class="font-black" id="dr-name">🚗 Magistral haydovchi</div><div class="text-xs opacity-70" id="dr-car"></div></div>
+    <div class="text-right"><div class="text-[11px] opacity-70">Hisoblangan haq</div><div class="font-black text-emerald-600" id="dr-bal">0</div><a href="/logout" class="text-[11px] text-indigo-500">Chiqish</a></div>
+  </div>
+  <div class="card" id="new-box">
+    <b class="text-sm">➕ Yangi reys</b>
+    <div class="text-xs opacity-70 mt-1">Reysni oching, so'ng terminalga boring — operator posilkalarni QR orqali sizga yuklaydi.</div>
+    <div class="space-y-2 mt-2"><select id="tr-route"></select><button class="btn w-full" onclick="createTrip()">Reysni ochish</button></div>
+  </div>
+  <div id="trips" class="space-y-3"></div>
+  <div class="card"><b class="text-sm">✅ Oxirgi topshirilganlar</b><div id="hist" class="text-xs mt-2 space-y-1"></div></div>
+</div>
+<script>
+function n(v){return Math.round(v||0).toLocaleString('ru-RU').replace(/ /g,' ');}
+function e(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+async function api(path,body){var o=body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)};var r=await fetch(path,o);var d={};try{d=await r.json();}catch(x){}if(!r.ok)throw new Error(d.detail||'Xatolik');return d;}
+function nav(la,lg){return la!=null&&lg!=null?' <a class="text-indigo-500" target="_blank" href="https://www.google.com/maps/dir/?api=1&destination='+la+','+lg+'">🧭</a>':'';}
+var ST={waiting:'Terminalda yuklanmoqda',departed:'Yo\'lda',arrived:'Yetib keldi (topshiring)'};
+async function load(){
+  var s=await api('/driver/express/state');
+  document.getElementById('dr-name').textContent='🚗 '+s.name;document.getElementById('dr-car').textContent=s.car;document.getElementById('dr-bal').textContent=n(s.balance)+' so\'m';
+  var sel=document.getElementById('tr-route');sel.innerHTML=s.routes.map(function(r){return '<option value="'+r.from+'|'+r.to+'">'+e(r.label)+'</option>';}).join('')||'<option value="">Yo\'nalish yo\'q</option>';
+  document.getElementById('new-box').style.display=s.trips.length?'none':'';
+  document.getElementById('trips').innerHTML=s.trips.map(function(t){
+    var h='<div class="card"><div class="flex justify-between"><b>'+e(t.from)+' → '+e(t.to)+'</b><span class="text-xs">'+ST[t.status]+'</span></div>';
+    h+='<div class="text-xs mt-1">🏢 '+e(t.from)+': '+e(t.from_address||'')+nav(t.from_lat,t.from_lng)+'<br>🏢 '+e(t.to)+': '+e(t.to_address||'')+nav(t.to_lat,t.to_lng)+'</div>';
+    h+='<div class="mt-2 text-xs">'+(t.parcels.length?t.parcels.map(function(p){return '<div class="py-1 border-t">📦 <b>'+e(p.qr)+'</b> · '+e(p.size)+(p.ret?' ↩️ qaytarma':'')+'</div>';}).join(''):'Hali posilka yuklanmagan')+'</div>';
+    h+='<div class="text-xs mt-2">Hisoblangan haq: <b>'+n(t.earn)+'</b> so\'m (B-terminalda operator qabul qilgach hisobingizga tushadi)</div><div class="flex gap-2 mt-2">';
+    if(t.status==='waiting'){if(t.parcels.length)h+='<button class="btn" data-a="depart" data-id="'+t.id+'">🚗 Jo\'nadim</button>';else h+='<button class="btn2" data-a="cancel" data-id="'+t.id+'">Reysni bekor qilish</button>';}
+    if(t.status==='departed')h+='<button class="btn" data-a="arrive" data-id="'+t.id+'">📍 Yetib keldim</button>';
+    return h+'</div></div>';}).join('');
+  document.getElementById('hist').innerHTML=s.history.map(function(h){return '<div>#'+h.id+' — +'+n(h.fare)+' so\'m</div>';}).join('')||'Hali yo\'q';
+}
+document.getElementById('trips').addEventListener('click',async function(ev){var b=ev.target.closest('button[data-a]');if(!b)return;b.disabled=true;try{await api('/driver/express/trips/'+b.dataset.id+'/'+b.dataset.a,{});await load();}catch(x){alert(x.message);b.disabled=false;}});
+async function createTrip(){var v=document.getElementById('tr-route').value.split('|');if(v.length<2||!v[0])return alert('Yo\'nalishni tanlang');try{await api('/driver/express/trips',{from_city_id:+v[0],to_city_id:+v[1]});load();}catch(x){alert(x.message);}}
+function sendLoc(){if(!navigator.geolocation)return;navigator.geolocation.getCurrentPosition(function(p){api('/driver/express/location',{lat:p.coords.latitude,lng:p.coords.longitude}).catch(function(){});},function(){},{maximumAge:30000,timeout:10000});}
+load().catch(function(x){alert(x.message);});sendLoc();setInterval(sendLoc,45000);setInterval(function(){load().catch(function(){});},20000);
+</script>
+</body>
+</html>

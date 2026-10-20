@@ -17,7 +17,7 @@ from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, text, extract, or_, and_, inspect as sa_inspect
+from sqlalchemy import select, func, text, extract, or_, and_, delete, inspect as sa_inspect
 from sqlalchemy.schema import CreateColumn
 from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.attributes import set_committed_value
@@ -67,6 +67,7 @@ from models import (
     OperatorPermission,
     PaymentReceipt,
     ParcelOrder,
+    ExpressDriver, ExpressFare, Terminal, TerminalOperator, LinehaulTrip, IntercityOrder, IntercityEvent, TerminalCashLog,
     LedAd,
     AIMessage,
     AIMessageLog,
@@ -679,7 +680,10 @@ async def telegram_login(body: TelegramLoginBody, request: Request, db: AsyncSes
     can_partner = user.partner_profile is not None and user.partner_profile.application_status != "pending"
     can_courier = user.courier_profile is not None and user.courier_profile.application_status != "pending"
 
-    if not (can_admin or can_partner or can_courier):
+    can_driver = (await db.execute(select(ExpressDriver.id).where(ExpressDriver.user_id == user.id, ExpressDriver.is_active == True))).first() is not None
+    can_terminal = (await db.execute(select(TerminalOperator.id).where(TerminalOperator.user_id == user.id, TerminalOperator.is_active == True))).first() is not None
+
+    if not (can_admin or can_partner or can_courier or can_driver or can_terminal):
         if (user.partner_profile and user.partner_profile.application_status == "pending") or (
             user.courier_profile and user.courier_profile.application_status == "pending"
         ):
@@ -701,6 +705,10 @@ async def telegram_login(body: TelegramLoginBody, request: Request, db: AsyncSes
         redirect_to = "/partner"
     elif can_courier:
         redirect_to = "/courier"
+    elif can_driver:
+        redirect_to = "/driver"
+    elif can_terminal:
+        redirect_to = "/terminal"
 
     return {"ok": True, "redirect": redirect_to}
 
@@ -747,7 +755,9 @@ async def login_submit(
     can_admin = user.role in (UserRole.OWNER, UserRole.ADMIN)
     can_partner = user.partner_profile is not None and user.partner_profile.application_status != "pending"
     can_courier = user.courier_profile is not None and user.courier_profile.application_status != "pending"
-    available = [can_admin, can_partner, can_courier].count(True)
+    can_driver = (await db.execute(select(ExpressDriver.id).where(ExpressDriver.user_id == user.id, ExpressDriver.is_active == True))).first() is not None
+    can_terminal = (await db.execute(select(TerminalOperator.id).where(TerminalOperator.user_id == user.id, TerminalOperator.is_active == True))).first() is not None
+    available = [can_admin, can_partner, can_courier, can_driver, can_terminal].count(True)
 
     if available == 0 and (
         (user.partner_profile and user.partner_profile.application_status == "pending")
@@ -769,6 +779,10 @@ async def login_submit(
         return RedirectResponse(url="/partner", status_code=status.HTTP_303_SEE_OTHER)
     if can_courier:
         return RedirectResponse(url="/courier", status_code=status.HTTP_303_SEE_OTHER)
+    if can_driver:
+        return RedirectResponse(url="/driver", status_code=status.HTTP_303_SEE_OTHER)
+    if can_terminal:
+        return RedirectResponse(url="/terminal", status_code=status.HTTP_303_SEE_OTHER)
 
     # Hech qanday panelga ruxsati yo'q (masalan oddiy CLIENT parol bilan
     # kirishga urinsa — clientlar odatda parolga ega bo'lmaydi, lekin
@@ -801,6 +815,10 @@ async def choose_panel(request: Request, db: AsyncSession = Depends(get_db)):
         panels.append({"url": "/partner", "label": "🏪 Hamkor Kabineti"})
     if user.courier_profile:
         panels.append({"url": "/courier", "label": "🛵 Kuryer Kabineti"})
+    if (await db.execute(select(ExpressDriver.id).where(ExpressDriver.user_id == user.id, ExpressDriver.is_active == True))).first():
+        panels.append({"url": "/driver", "label": "🚗 Magistral haydovchi"})
+    if (await db.execute(select(TerminalOperator.id).where(TerminalOperator.user_id == user.id, TerminalOperator.is_active == True))).first():
+        panels.append({"url": "/terminal", "label": "🏢 Terminal operatori"})
 
     return templates.TemplateResponse(request=request, name="choose_panel.html", context={"panels": panels})
 
@@ -2088,7 +2106,12 @@ async def _courier_reserved_hold(db: AsyncSession, courier_id: int, courier_pct:
     # Pochta: yo'ldagi pochta buyurtmalarining platforma ulushi ham balansdan band
     pr = await db.execute(select(func.coalesce(func.sum(ParcelOrder.platform_share), 0.0)).where(
         ParcelOrder.courier_id == courier_id, ParcelOrder.status.in_(["accepted", "picked_up"])))
-    return held + float(pr.scalar() or 0.0)
+    # Express pochta: naqd yig'adigan kuryer uchun kutilayotgan ulush (qabul qilingandan yetkazilgungacha)
+    ex1 = await db.execute(select(func.coalesce(func.sum(IntercityOrder.total), 0.0)).where(
+        IntercityOrder.f1_id == courier_id, IntercityOrder.payer == "sender", IntercityOrder.status == "f1_accepted"))
+    ex2 = await db.execute(select(func.coalesce(func.sum(IntercityOrder.total), 0.0)).where(
+        IntercityOrder.f2_id == courier_id, IntercityOrder.payer == "receiver", IntercityOrder.status.in_(["at_b", "out_for_delivery"])))
+    return held + float(pr.scalar() or 0.0) + float(ex1.scalar() or 0.0) + float(ex2.scalar() or 0.0)
 
 
 async def auto_assign_nearest_courier(db: AsyncSession, order: Order) -> Optional[User]:
@@ -9336,12 +9359,1306 @@ async def admin_parcel_settings_set(
     return {"ok": True}
 
 
+# ==================== TUMANLARARO POSILKA (terminalli zanjir) ====================
+# Zanjir: eshik -> Fider-1 -> A-terminal (operator, QR) -> magistral haydovchi -> B-terminal (operator, QR) -> Fider-2 -> eshik (PIN)
+from sms import send_sms, sms_configured
+
+IC_STATUS_UZ = {
+    "new": "Fider-1 kuryer izlanmoqda", "f1_accepted": "Kuryer buyumni olgani ketmoqda", "f1_picked": "Kuryer A-terminalga olib bormoqda",
+    "at_a": "A-terminalda (magistralga biriktirilmoqda)", "in_transit": "Shaharlararo yo'lda", "at_b": "Manzil shahar terminalida",
+    "out_for_delivery": "Kuryer eshikka olib bormoqda", "failed": "Topshirib bo'lmadi, terminalga qaytmoqda", "delivered": "Topshirildi",
+    "returning": "Jo'natuvchiga qaytarilmoqda", "returned": "Qaytarildi (A-terminalda)", "returned_done": "Jo'natuvchiga topshirildi",
+    "cancelled": "Bekor qilindi"}
+IC_ACTIVE = ("new", "f1_accepted", "f1_picked", "at_a", "in_transit", "at_b", "out_for_delivery", "failed", "returning", "returned")
+IC_STAGE = ["new", "f1_accepted", "f1_picked", "at_a", "in_transit", "at_b", "out_for_delivery", "delivered"]
+_QR_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+
+def _ic_cfg(setting) -> dict:
+    def g(n, d):
+        v = getattr(setting, n, None)
+        return d if v is None else v
+    return {"enabled": bool(g("express_enabled", False)), "leg_base": float(g("express_courier_base", 6000.0)),
+            "leg_per_km": float(g("express_courier_per_km", 2000.0)), "max_leg_km": float(g("express_max_leg_km", 20.0)),
+            "platform_percent": float(g("ic_platform_percent", 10.0)), "free_days": int(g("ic_free_days", 3)),
+            "storage_fee_day": float(g("ic_storage_fee_day", 2000.0)), "max_days": int(g("ic_max_days", 8)),
+            "max_value": float(g("ic_max_value", 1000000.0))}
+
+
+def _ic_round(v: float) -> float:
+    return float(math.ceil(v / 500.0) * 500)
+
+
+def _ic_pin() -> str:
+    return f"{secrets.randbelow(9000) + 1000}"
+
+
+async def _ic_unique_qr(db: AsyncSession) -> str:
+    for _ in range(20):
+        code = "ZM" + "".join(secrets.choice(_QR_ALPHABET) for _ in range(6))
+        if not (await db.execute(select(IntercityOrder.id).where(IntercityOrder.qr_code == code))).first():
+            return code
+    raise HTTPException(status_code=500, detail="Kod yaratib bo'lmadi, qayta urinib ko'ring")
+
+
+def _ic_storage(o: IntercityOrder, cfg: dict, now=None):
+    """Terminalda saqlash: (kun, to'lov). 3 kun bepul, 4-kundan har kuniga."""
+    if o.status not in ("at_b", "out_for_delivery", "failed") or not o.at_b_at:
+        return 0, 0.0
+    el = ((now or datetime.utcnow()) - o.at_b_at).total_seconds() / 86400.0
+    d = int(el)
+    extra = d - cfg["free_days"] + 1 if d >= cfg["free_days"] else 0
+    return d, float(max(extra, 0)) * cfg["storage_fee_day"]
+
+
+async def _ic_event(db: AsyncSession, o: IntercityOrder, status: str, actor: Optional[User], role: str,
+                    terminal_id=None, note: Optional[str] = None, lat=None, lng=None) -> None:
+    db.add(IntercityEvent(order_id=o.id, status=status, actor_id=actor.id if actor else None, actor_role=role,
+                          terminal_id=terminal_id, note=(note or None) and note[:200], lat=lat, lng=lng))
+
+
+async def _ic_notify(db: AsyncSession, user_id, text: str) -> None:
+    try:
+        if not user_id:
+            return
+        u = (await db.execute(select(User).where(User.id == user_id))).scalars().first()
+        if u and u.telegram_id:
+            await send_telegram_message(u.telegram_id, text)
+    except Exception as e:
+        print(f"Tumanlararo xabar yuborilmadi: {e}")
+
+
+def _ic_track_url(o: IntercityOrder) -> str:
+    return f"{get_public_base_url(None)}/track/{o.track_token}"
+
+
+async def _ic_credit(db: AsyncSession, courier_id: int, amount: float, note: str, tx_type=None) -> None:
+    cp = (await db.execute(select(CourierProfile).where(CourierProfile.user_id == courier_id).with_for_update())).scalars().first()
+    if cp is None or amount <= 0:
+        return
+    cp.balance = (cp.balance or 0) + amount
+    db.add(Transaction(user_id=courier_id, type=tx_type or TransactionType.DEPOSIT, amount=amount, note=note))
+
+
+async def _ic_debit(db: AsyncSession, courier_id: int, amount: float, note: str) -> None:
+    cp = (await db.execute(select(CourierProfile).where(CourierProfile.user_id == courier_id).with_for_update())).scalars().first()
+    if cp is None or amount <= 0:
+        return
+    cp.balance = (cp.balance or 0) - amount
+    db.add(Transaction(user_id=courier_id, type=TransactionType.WITHDRAWAL, amount=amount, note=note))
+
+
+async def _ic_pay_driver(db: AsyncSession, driver_user_id: int, amount: float) -> None:
+    dr = (await db.execute(select(ExpressDriver).where(ExpressDriver.user_id == driver_user_id).with_for_update())).scalars().first()
+    if dr and amount > 0:
+        dr.balance = (dr.balance or 0) + amount
+
+
+async def _ic_terminal_cash(db: AsyncSession, terminal_id: int, amount: float, user_id, kind: str, order_id=None, note=None) -> None:
+    t = (await db.execute(select(Terminal).where(Terminal.id == terminal_id).with_for_update())).scalars().first()
+    if t is None:
+        return
+    t.cash_balance = (t.cash_balance or 0) + amount
+    db.add(TerminalCashLog(terminal_id=terminal_id, user_id=user_id, amount=amount, kind=kind, order_id=order_id, note=note))
+
+
+async def _ic_active_terminal(db: AsyncSession, city_id: int) -> Terminal:
+    t = (await db.execute(select(Terminal).where(Terminal.city_id == city_id, Terminal.is_active == True))).scalars().first()
+    if not t:
+        raise HTTPException(status_code=400, detail="Bu shaharda terminal hali ochilmagan")
+    return t
+
+
+async def _ic_fare(db: AsyncSession, from_city_id: int, to_city_id: int, size: str) -> float:
+    f = (await db.execute(select(ExpressFare).where(ExpressFare.from_city_id == from_city_id, ExpressFare.to_city_id == to_city_id,
+                                                    ExpressFare.is_active == True))).scalars().first()
+    if not f:
+        raise HTTPException(status_code=400, detail="Bu yo'nalishda tumanlararo posilka hozircha yo'q")
+    return float({"small": f.price_small, "medium": f.price_medium, "large": f.price_large}.get(size) or f.price_small or 0)
+
+
+async def _ic_quote(db: AsyncSession, setting, cfg, from_city_id: int, to_city_id: int, size: str, pl, pg, dl, dg) -> dict:
+    if from_city_id == to_city_id:
+        raise HTTPException(status_code=400, detail="Boshqa shaharni tanlang")
+    ta, tb = await _ic_active_terminal(db, from_city_id), await _ic_active_terminal(db, to_city_id)
+    k1 = _road_km(setting, pl, pg, ta.latitude, ta.longitude)
+    k3 = _road_km(setting, tb.latitude, tb.longitude, dl, dg)
+    k1 = k1 if k1 is not None else 3.0
+    k3 = (k3 if k3 is not None else 3.0)
+    for k in (k1, k3):
+        if k > cfg["max_leg_km"]:
+            raise HTTPException(status_code=400, detail=f"Manzil terminaldan juda uzoq ({k:.0f} km). Eng uzog'i {cfg['max_leg_km']:.0f} km.")
+    fare = await _ic_fare(db, from_city_id, to_city_id, size)
+    l1, l3 = _ic_round(cfg["leg_base"] + cfg["leg_per_km"] * k1), _ic_round(cfg["leg_base"] + cfg["leg_per_km"] * k3)
+    sub = l1 + l3 + fare
+    pct = min(max(cfg["platform_percent"], 0.0), 60.0) / 100.0
+    total = _ic_round(sub / (1 - pct)) if pct > 0 else sub
+    return {"leg1_fee": l1, "leg3_fee": l3, "fare": fare, "platform_fee": total - sub, "total": total, "km1": round(k1, 1), "km3": round(k3, 1),
+            "ta": ta, "tb": tb}
+
+
+_IC_LOAD = (selectinload(IntercityOrder.client), selectinload(IntercityOrder.f1), selectinload(IntercityOrder.f2),
+            selectinload(IntercityOrder.trip).selectinload(LinehaulTrip.driver),
+            selectinload(IntercityOrder.from_terminal), selectinload(IntercityOrder.to_terminal))
+
+
+def _ic_public(o: IntercityOrder, cfg: dict, with_pin: bool) -> dict:
+    d, fee = _ic_storage(o, cfg)
+    r = {"id": o.id, "status": o.status, "status_label": IC_STATUS_UZ.get(o.status, o.status), "item": o.item_description, "size": o.size,
+         "pickup_address": o.pickup_address, "dropoff_address": o.dropoff_address, "receiver_name": o.receiver_name,
+         "receiver_phone": o.receiver_phone, "total": o.total, "payer": o.payer, "qr": o.qr_code,
+         "from_terminal": o.from_terminal.name if o.from_terminal else None, "to_terminal": o.to_terminal.name if o.to_terminal else None,
+         "stage": IC_STAGE.index(o.status) if o.status in IC_STAGE else -1, "stages": len(IC_STAGE),
+         "f1_name": o.f1.full_name if o.f1 else None, "f1_phone": o.f1.phone_number if o.f1 else None,
+         "f2_name": o.f2.full_name if o.f2 else None, "f2_phone": o.f2.phone_number if o.f2 else None,
+         "driver_name": None, "driver_phone": None, "storage_days": d, "storage_fee": fee, "track_url": _ic_track_url(o),
+         "created_at": o.created_at.isoformat() if o.created_at else None}
+    if o.trip is not None and o.status in ("in_transit", "at_b", "out_for_delivery", "failed", "delivered", "returning"):
+        r["driver_name"] = o.trip.driver.full_name if o.trip.driver else None
+        r["driver_phone"] = o.trip.driver.phone_number if o.trip.driver else None
+    if with_pin and o.status in IC_ACTIVE and not o.pin_sms_sent:
+        r["pin"] = o.delivery_pin
+    elif o.pin_sms_sent and o.status in IC_ACTIVE:
+        r["pin_in_sms"] = True
+    return r
+
+
+# ---------------- Mijoz ----------------
+express_router = APIRouter(tags=["Tumanlararo posilka: mijoz"])
+
+
+class IcConfigBody(BaseModel):
+    init_data: str
+
+
+class IcQuoteBody(BaseModel):
+    init_data: str
+    to_city_id: int
+    pickup_lat: float
+    pickup_lng: float
+    dropoff_lat: float
+    dropoff_lng: float
+    size: str = "small"
+
+
+class IcCreateBody(IcQuoteBody):
+    pickup_address: str
+    dropoff_address: str
+    receiver_name: str
+    receiver_phone: str
+    item_description: str
+    declared_value: float = 0.0
+    rules_ok: bool = False
+    comment: Optional[str] = None
+    payer: str = "sender"
+
+
+class IcIdBody(BaseModel):
+    init_data: str
+    id: int
+
+
+@express_router.post("/api/shop/express/config")
+async def express_config(body: IcConfigBody, db: AsyncSession = Depends(get_db)):
+    client = await _client_for_cancel(db, body.init_data)
+    setting = await _get_or_create_setting(db)
+    cfg = _ic_cfg(setting)
+    dests = []
+    if cfg["enabled"] and client.city_id is not None and (await db.execute(select(Terminal.id).where(Terminal.city_id == client.city_id, Terminal.is_active == True))).first():
+        rows = (await db.execute(select(City.id, City.name, Terminal.latitude, Terminal.longitude).join(ExpressFare, ExpressFare.to_city_id == City.id)
+                                 .join(Terminal, Terminal.city_id == City.id).where(ExpressFare.from_city_id == client.city_id, ExpressFare.is_active == True,
+                                                                                    City.is_active == True, Terminal.is_active == True).order_by(City.name))).all()
+        dests = [{"id": r[0], "name": r[1], "lat": r[2], "lng": r[3]} for r in rows]
+    return {"enabled": cfg["enabled"] and bool(dests), "destinations": dests, "max_value": cfg["max_value"], "free_days": cfg["free_days"],
+            "storage_fee_day": cfg["storage_fee_day"], "max_days": cfg["max_days"]}
+
+
+@express_router.post("/api/shop/express/quote")
+async def express_quote(body: IcQuoteBody, db: AsyncSession = Depends(get_db)):
+    client = await _client_for_cancel(db, body.init_data)
+    setting = await _get_or_create_setting(db)
+    cfg = _ic_cfg(setting)
+    if not cfg["enabled"]:
+        raise HTTPException(status_code=403, detail="Tumanlararo posilka hozircha ishlamayapti")
+    if client.city_id is None:
+        raise HTTPException(status_code=400, detail="Avval shaharingizni tanlang")
+    if body.size not in PARCEL_SIZES:
+        raise HTTPException(status_code=400, detail="Hajmni tanlang")
+    q = await _ic_quote(db, setting, cfg, client.city_id, body.to_city_id, body.size, body.pickup_lat, body.pickup_lng, body.dropoff_lat, body.dropoff_lng)
+    return {"total": q["total"], "leg1_fee": q["leg1_fee"], "leg3_fee": q["leg3_fee"], "fare": q["fare"], "platform_fee": q["platform_fee"],
+            "from_terminal": q["ta"].name, "to_terminal": q["tb"].name, "from_address": q["ta"].address, "to_address": q["tb"].address}
+
+
+@express_router.post("/api/shop/express/create")
+async def express_create(body: IcCreateBody, db: AsyncSession = Depends(get_db)):
+    client = await _client_for_cancel(db, body.init_data)
+    setting = await _get_or_create_setting(db)
+    cfg = _ic_cfg(setting)
+    if not cfg["enabled"]:
+        raise HTTPException(status_code=403, detail="Tumanlararo posilka hozircha ishlamayapti")
+    if client.city_id is None:
+        raise HTTPException(status_code=400, detail="Avval shaharingizni tanlang")
+    if body.size not in PARCEL_SIZES or body.payer not in ("sender", "receiver"):
+        raise HTTPException(status_code=400, detail="Ma'lumot noto'g'ri")
+    if not body.rules_ok:
+        raise HTTPException(status_code=400, detail="Ta'qiqlangan buyumlar yo'qligini va qiymat to'g'riligini tasdiqlang")
+    if body.declared_value < 0 or body.declared_value > cfg["max_value"]:
+        raise HTTPException(status_code=400, detail=f"Buyum qiymati {_fm(cfg['max_value'])} so'mdan oshmasligi kerak")
+    pa, da = (body.pickup_address or "").strip()[:300], (body.dropoff_address or "").strip()[:300]
+    rn, item = (body.receiver_name or "").strip()[:100], (body.item_description or "").strip()[:300]
+    if len(pa) < 3 or len(da) < 3 or len(rn) < 2 or len(item) < 2:
+        raise HTTPException(status_code=400, detail="Barcha maydonlarni to'ldiring")
+    rphone = _parcel_phone_ok(body.receiver_phone)
+    active = (await db.execute(select(func.count(IntercityOrder.id)).where(IntercityOrder.client_id == client.id, IntercityOrder.status.in_(IC_ACTIVE)))).scalar() or 0
+    if active >= 5:
+        raise HTTPException(status_code=400, detail="Bir vaqtda 5 tadan ortiq faol tumanlararo posilka yubora olmaysiz")
+    q = await _ic_quote(db, setting, cfg, client.city_id, body.to_city_id, body.size, body.pickup_lat, body.pickup_lng, body.dropoff_lat, body.dropoff_lng)
+    o = IntercityOrder(client_id=client.id, from_city_id=client.city_id, to_city_id=body.to_city_id, from_terminal_id=q["ta"].id, to_terminal_id=q["tb"].id,
+                       status="new", pickup_address=pa, pickup_lat=body.pickup_lat, pickup_lng=body.pickup_lng, dropoff_address=da,
+                       dropoff_lat=body.dropoff_lat, dropoff_lng=body.dropoff_lng, receiver_name=rn, receiver_phone=rphone, item_description=item,
+                       size=body.size, declared_value=body.declared_value, comment=(body.comment or "").strip()[:500] or None, payer=body.payer,
+                       leg1_fee=q["leg1_fee"], leg3_fee=q["leg3_fee"], fare=q["fare"], platform_fee=q["platform_fee"], total=q["total"],
+                       qr_code=await _ic_unique_qr(db), track_token=secrets.token_urlsafe(16), delivery_pin=_ic_pin())
+    db.add(o)
+    await db.flush()
+    await _ic_event(db, o, "new", client, "client", note="Buyurtma berildi")
+    await db.commit()
+    link = _ic_track_url(o)
+    sent = await send_sms(rphone, f"ZooMo: {client.full_name} sizga posilka yubordi. Kuzatish: {link}  Qabul PIN: {o.delivery_pin} (faqat qabul paytida kuryerga ayting)")
+    if sent:
+        o.pin_sms_sent = True
+        await db.commit()
+    try:
+        rows = (await db.execute(select(User).join(CourierProfile, CourierProfile.user_id == User.id).where(
+            User.city_id == client.city_id, CourierProfile.is_online == True, CourierProfile.is_blocked == False, User.telegram_id.isnot(None)).limit(40))).scalars().all()
+        for cu in rows:
+            await send_telegram_message(cu.telegram_id, f"📦 Tumanlararo posilka #{o.id}: {pa} → {q['tb'].name}\nSizga {_fm(q['leg1_fee'])} so'm. Kuryer kabinetini oching.")
+    except Exception as e:
+        print(f"Tumanlararo xabar yuborilmadi: {e}")
+    return {"ok": True, "id": o.id, "total": o.total, "qr": o.qr_code, "track_url": link, "pin": None if sent else o.delivery_pin, "pin_sms": sent}
+
+
+@express_router.post("/api/shop/express/my")
+async def express_my(body: IcConfigBody, db: AsyncSession = Depends(get_db)):
+    client = await _client_for_cancel(db, body.init_data)
+    cfg = _ic_cfg(await _get_or_create_setting(db))
+    rows = (await db.execute(select(IntercityOrder).options(*_IC_LOAD).where(IntercityOrder.client_id == client.id)
+                             .order_by(IntercityOrder.id.desc()).limit(30))).scalars().all()
+    return {"items": [_ic_public(o, cfg, True) for o in rows]}
+
+
+@express_router.post("/api/shop/express/cancel")
+async def express_cancel(body: IcIdBody, db: AsyncSession = Depends(get_db)):
+    client = await _client_for_cancel(db, body.init_data)
+    o = (await db.execute(select(IntercityOrder).where(IntercityOrder.id == body.id, IntercityOrder.client_id == client.id).with_for_update())).scalars().first()
+    if not o:
+        raise HTTPException(status_code=404, detail="Buyurtma topilmadi")
+    if o.status not in ("new", "f1_accepted"):
+        raise HTTPException(status_code=400, detail="Buyum olingandan keyin bekor qilib bo'lmaydi. Administratorga murojaat qiling.")
+    f1 = o.f1_id
+    o.status, o.cancelled_at, o.cancelled_by = "cancelled", datetime.utcnow(), "client"
+    await _ic_event(db, o, "cancelled", client, "client", note="Mijoz bekor qildi")
+    await db.commit()
+    await _ic_notify(db, f1, f"❌ Tumanlararo posilka #{o.id} mijoz tomonidan bekor qilindi.")
+    return {"ok": True}
+
+
+# ---------------- Ochiq kuzatuv (token bilan) ----------------
+track_router = APIRouter(tags=["Posilka kuzatuvi"])
+
+
+def _ic_holder(o: IntercityOrder, drv: Optional[ExpressDriver], f1cp, f2cp) -> dict:
+    if o.status in ("new", "f1_accepted"):
+        return {"label": "Buyurtma qabul qilindi", "lat": o.pickup_lat, "lng": o.pickup_lng, "live": False}
+    if o.status == "f1_picked":
+        return {"label": "Kuryer terminalga olib bormoqda", "lat": getattr(f1cp, "latitude", None), "lng": getattr(f1cp, "longitude", None), "live": True}
+    if o.status == "at_a":
+        return {"label": f"{o.from_terminal.name if o.from_terminal else 'A'}-terminalda", "lat": o.from_terminal.latitude if o.from_terminal else None,
+                "lng": o.from_terminal.longitude if o.from_terminal else None, "live": False}
+    if o.status in ("in_transit", "returning"):
+        return {"label": "Magistral yo'lda", "lat": getattr(drv, "latitude", None), "lng": getattr(drv, "longitude", None), "live": True}
+    if o.status in ("at_b", "failed"):
+        return {"label": f"{o.to_terminal.name if o.to_terminal else 'B'}-terminalda", "lat": o.to_terminal.latitude if o.to_terminal else None,
+                "lng": o.to_terminal.longitude if o.to_terminal else None, "live": False}
+    if o.status == "out_for_delivery":
+        return {"label": "Kuryer eshikka olib bormoqda", "lat": getattr(f2cp, "latitude", None), "lng": getattr(f2cp, "longitude", None), "live": True}
+    return {"label": IC_STATUS_UZ.get(o.status, o.status), "lat": None, "lng": None, "live": False}
+
+
+@track_router.get("/api/track/{token}")
+async def api_track(token: str, request: Request, db: AsyncSession = Depends(get_db)):
+    ip = request.client.host if request.client else "?"
+    if _rate_limited(f"tr:{ip}", limit=60, window=900):
+        raise HTTPException(status_code=429, detail="Juda ko'p so'rov. Keyinroq urinib ko'ring.")
+    _rate_hit(f"tr:{ip}")
+    o = (await db.execute(select(IntercityOrder).options(*_IC_LOAD).where(IntercityOrder.track_token == token))).scalars().first()
+    if not o:
+        raise HTTPException(status_code=404, detail="Posilka topilmadi")
+    drv = None
+    if o.trip is not None:
+        drv = (await db.execute(select(ExpressDriver).where(ExpressDriver.user_id == o.trip.driver_id))).scalars().first()
+    f1cp = (await db.execute(select(CourierProfile).where(CourierProfile.user_id == o.f1_id))).scalars().first() if o.f1_id else None
+    f2cp = (await db.execute(select(CourierProfile).where(CourierProfile.user_id == o.f2_id))).scalars().first() if o.f2_id else None
+    ev = (await db.execute(select(IntercityEvent).where(IntercityEvent.order_id == o.id).order_by(IntercityEvent.id))).scalars().all()
+    cfg = _ic_cfg(await _get_or_create_setting(db))
+    d, fee = _ic_storage(o, cfg)
+    return {"id": o.id, "status": o.status, "status_label": IC_STATUS_UZ.get(o.status, o.status), "item": o.item_description,
+            "from_city": o.from_terminal.name if o.from_terminal else "", "to_city": o.to_terminal.name if o.to_terminal else "",
+            "stage": IC_STAGE.index(o.status) if o.status in IC_STAGE else -1, "stages": len(IC_STAGE),
+            "holder": _ic_holder(o, drv, f1cp, f2cp),
+            "terminals": [{"name": t.name, "address": t.address, "lat": t.latitude, "lng": t.longitude, "hours": t.work_hours} for t in (o.from_terminal, o.to_terminal) if t],
+            "storage_days": d, "storage_fee": fee, "free_days": cfg["free_days"],
+            "events": [{"status": IC_STATUS_UZ.get(e.status, e.status), "at": e.created_at.isoformat() if e.created_at else None} for e in ev]}
+
+
+@track_router.get("/track/{token}", response_class=HTMLResponse)
+async def track_page(token: str, request: Request):
+    return templates.TemplateResponse(request=request, name="track.html", context={"token": token})
+
+
+# ---------------- Kuryer (Fider-1 / Fider-2) ----------------
+courier_express_router = APIRouter(prefix="/courier/express", tags=["Kuryer: tumanlararo posilka"])
+
+
+def _ic_for_courier(o: IntercityOrder, role: str, cfg: dict, km=None) -> dict:
+    d, fee = _ic_storage(o, cfg)
+    r = {"id": o.id, "role": role, "status": o.status, "status_label": IC_STATUS_UZ.get(o.status, o.status), "item": o.item_description,
+         "size": o.size, "size_label": PARCEL_SIZES.get(o.size, o.size), "payer": o.payer, "total": o.total, "qr": o.qr_code,
+         "earning": o.leg1_fee if role == "f1" else o.leg3_fee, "from_me_km": round(km, 1) if km is not None else None, "comment": o.comment,
+         "declared_value": o.declared_value}
+    if role == "f1":
+        r.update(pickup_address=o.pickup_address, pickup_lat=o.pickup_lat, pickup_lng=o.pickup_lng,
+                 sender_name=o.client.full_name if o.client else None, sender_phone=o.client.phone_number if o.client else None,
+                 terminal=o.from_terminal.name if o.from_terminal else None, terminal_address=o.from_terminal.address if o.from_terminal else None,
+                 terminal_lat=o.from_terminal.latitude if o.from_terminal else None, terminal_lng=o.from_terminal.longitude if o.from_terminal else None)
+    else:
+        r.update(dropoff_address=o.dropoff_address, dropoff_lat=o.dropoff_lat, dropoff_lng=o.dropoff_lng, receiver_name=o.receiver_name, receiver_phone=o.receiver_phone,
+                 terminal=o.to_terminal.name if o.to_terminal else None, terminal_address=o.to_terminal.address if o.to_terminal else None,
+                 terminal_lat=o.to_terminal.latitude if o.to_terminal else None, terminal_lng=o.to_terminal.longitude if o.to_terminal else None,
+                 storage_days=d, storage_fee=fee, collect=(o.total if o.payer == "receiver" else 0) + fee, reserved=(o.f2_id is not None))
+    return r
+
+
+async def _ic_my_order(db: AsyncSession, oid: int, user: User, role: str, statuses) -> IntercityOrder:
+    col = IntercityOrder.f1_id if role == "f1" else IntercityOrder.f2_id
+    o = (await db.execute(select(IntercityOrder).where(IntercityOrder.id == oid, col == user.id, IntercityOrder.status.in_(statuses)).with_for_update())).scalars().first()
+    if not o:
+        raise HTTPException(status_code=404, detail="Buyurtma topilmadi yoki holati mos emas")
+    return o
+
+
+@courier_express_router.get("/available")
+async def courier_ic_available(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_courier_user)):
+    setting = await _get_or_create_setting(db)
+    cfg = _ic_cfg(setting)
+    if not cfg["enabled"] or user.city_id is None:
+        return {"enabled": False, "pickups": [], "deliveries": []}
+    cp = (await db.execute(select(CourierProfile).where(CourierProfile.user_id == user.id))).scalars().first()
+    la, lg = (cp.latitude, cp.longitude) if cp else (None, None)
+    p = (await db.execute(select(IntercityOrder).options(*_IC_LOAD).where(IntercityOrder.status == "new", IntercityOrder.from_city_id == user.city_id)
+                          .order_by(IntercityOrder.id.desc()).limit(30))).scalars().all()
+    dv = (await db.execute(select(IntercityOrder).options(*_IC_LOAD).where(IntercityOrder.status == "at_b", IntercityOrder.to_city_id == user.city_id,
+                                                                           IntercityOrder.f2_id.is_(None)).order_by(IntercityOrder.id.desc()).limit(30))).scalars().all()
+    return {"enabled": True,
+            "pickups": [_ic_for_courier(o, "f1", cfg, _road_km(setting, la, lg, o.pickup_lat, o.pickup_lng)) for o in p],
+            "deliveries": [_ic_for_courier(o, "f2", cfg, _road_km(setting, la, lg, o.to_terminal.latitude if o.to_terminal else None, o.to_terminal.longitude if o.to_terminal else None)) for o in dv]}
+
+
+@courier_express_router.get("/mine")
+async def courier_ic_mine(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_courier_user)):
+    cfg = _ic_cfg(await _get_or_create_setting(db))
+    a1 = (await db.execute(select(IntercityOrder).options(*_IC_LOAD).where(IntercityOrder.f1_id == user.id, IntercityOrder.status.in_(["f1_accepted", "f1_picked"]))
+                           .order_by(IntercityOrder.id.desc()))).scalars().all()
+    a2 = (await db.execute(select(IntercityOrder).options(*_IC_LOAD).where(IntercityOrder.f2_id == user.id, IntercityOrder.status.in_(["at_b", "out_for_delivery", "failed"]))
+                           .order_by(IntercityOrder.id.desc()))).scalars().all()
+    h = (await db.execute(select(IntercityOrder).where(or_(IntercityOrder.f1_id == user.id, IntercityOrder.f2_id == user.id), IntercityOrder.status == "delivered")
+                          .order_by(IntercityOrder.delivered_at.desc()).limit(15))).scalars().all()
+    held = (await db.execute(select(func.coalesce(func.sum(IntercityOrder.cash_held_amount), 0.0)).where(IntercityOrder.cash_held_by_id == user.id))).scalar() or 0
+    return {"active": [_ic_for_courier(o, "f1", cfg) for o in a1] + [_ic_for_courier(o, "f2", cfg) for o in a2], "cash_held": float(held),
+            "history": [{"id": o.id, "earning": o.leg1_fee if o.f1_id == user.id else o.leg3_fee, "at": o.delivered_at.isoformat() if o.delivered_at else None} for o in h]}
+
+
+@courier_express_router.post("/{oid}/accept1")
+async def courier_ic_accept1(oid: int, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_courier_user)):
+    cp = await _parcel_courier_guard(db, user)
+    setting = await _get_or_create_setting(db)
+    if not _ic_cfg(setting)["enabled"]:
+        raise HTTPException(status_code=403, detail="Tumanlararo posilka hozircha ishlamayapti")
+    o = (await db.execute(select(IntercityOrder).where(IntercityOrder.id == oid).with_for_update())).scalars().first()
+    if not o or o.status != "new":
+        raise HTTPException(status_code=404, detail="Bu buyurtma allaqachon olingan yoki bekor qilingan")
+    if user.city_id != o.from_city_id:
+        raise HTTPException(status_code=403, detail="Bu buyurtma boshqa shahardan")
+    n = (await db.execute(select(func.count(IntercityOrder.id)).where(IntercityOrder.f1_id == user.id, IntercityOrder.status.in_(["f1_accepted", "f1_picked"])))).scalar() or 0
+    if n >= 3:
+        raise HTTPException(status_code=400, detail="Bir vaqtda 3 tadan ortiq posilka ola olmaysiz")
+    if o.payer == "sender":
+        await _parcel_balance_check(db, cp, user.id, float(o.total or 0), setting)
+    o.f1_id, o.status = user.id, "f1_accepted"
+    await _ic_event(db, o, "f1_accepted", user, "fider1", note=user.full_name)
+    await db.commit()
+    await _parcel_notify_client(db, o, f"📦 Tumanlararo posilka #{o.id}: kuryer {user.full_name} ({user.phone_number}) buyumni olgani ketmoqda.")
+    return {"ok": True}
+
+
+@courier_express_router.post("/{oid}/release1")
+async def courier_ic_release1(oid: int, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_courier_user)):
+    o = await _ic_my_order(db, oid, user, "f1", ["f1_accepted"])
+    o.f1_id, o.status = None, "new"
+    await _ic_event(db, o, "new", user, "fider1", note="Kuryer rad etdi")
+    await db.commit()
+    return {"ok": True}
+
+
+@courier_express_router.get("/{oid}/label", response_class=HTMLResponse)
+async def courier_ic_label(oid: int, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_courier_user)):
+    o = (await db.execute(select(IntercityOrder).options(*_IC_LOAD).where(IntercityOrder.id == oid, or_(IntercityOrder.f1_id == user.id, IntercityOrder.f2_id == user.id)))).scalars().first()
+    if not o:
+        raise HTTPException(status_code=404, detail="Buyurtma topilmadi")
+    return _ic_label_html(o)
+
+
+def _ic_label_html(o: IntercityOrder) -> HTMLResponse:
+    h = f"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Stiker {o.qr_code}</title>
+<style>body{{font-family:system-ui,sans-serif;margin:0;padding:12px;text-align:center}}.lbl{{border:2px solid #000;border-radius:8px;width:300px;margin:0 auto;padding:10px}}
+.code{{font-size:30px;font-weight:900;letter-spacing:3px}}.sm{{font-size:12px;margin:2px 0}}#qr svg,#qr img{{width:160px;height:160px}}@media print{{button{{display:none}}}}</style></head><body>
+<div class="lbl"><div class="sm"><b>ZooMo Express</b> #{o.id}</div><div id="qr"></div><div class="code">{o.qr_code}</div>
+<div class="sm">{(o.from_terminal.name if o.from_terminal else '')} → {(o.to_terminal.name if o.to_terminal else '')}</div>
+<div class="sm">Hajm: {PARCEL_SIZES.get(o.size, o.size)}</div></div>
+<p><button onclick="window.print()" style="padding:10px 18px;font-size:14px">🖨 Chop etish</button></p>
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
+<script>try{{var q=qrcode(0,'M');q.addData('{o.qr_code}');q.make();document.getElementById('qr').innerHTML=q.createSvgTag(5,0);}}catch(e){{}}</script></body></html>"""
+    return HTMLResponse(h)
+
+
+@courier_express_router.post("/{oid}/pickup1")
+async def courier_ic_pickup1(oid: int, qr: str = Form(...), photo: UploadFile = File(...), db: AsyncSession = Depends(get_db),
+                             user: User = Depends(get_current_courier_user)):
+    await _parcel_courier_guard(db, user)
+    o = await _ic_my_order(db, oid, user, "f1", ["f1_accepted"])
+    if not secrets.compare_digest((qr or "").strip().upper().encode(), o.qr_code.encode()):
+        raise HTTPException(status_code=400, detail="Stiker kodi noto'g'ri. Posilkaga yopishtirilgan stikerdagi kodni kiriting.")
+    data, mime = await process_uploaded_image(photo)
+    o.pickup_photo, o.pickup_photo_mime = data, mime
+    held = 0.0
+    if o.payer == "sender":
+        held = float(o.total or 0)
+        await _ic_debit(db, user.id, held, f"Tumanlararo #{o.id}: jo'natuvchidan olingan naqd pul (terminalga topshirilguncha band)")
+        o.cash_held_by_id, o.cash_held_amount, o.cash_held_terminal_id = user.id, held, o.from_terminal_id
+    o.status = "f1_picked"
+    await _ic_event(db, o, "f1_picked", user, "fider1", note="Rasmga olindi, stiker skanerlandi")
+    await db.commit()
+    await _parcel_notify_client(db, o, f"📦 Tumanlararo posilka #{o.id}: buyum kuryerda, A-terminalga olib borilmoqda.\nKuzatish: {_ic_track_url(o)}")
+    return {"ok": True, "collect": held}
+
+
+@courier_express_router.post("/{oid}/accept2")
+async def courier_ic_accept2(oid: int, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_courier_user)):
+    cp = await _parcel_courier_guard(db, user)
+    setting = await _get_or_create_setting(db)
+    cfg = _ic_cfg(setting)
+    o = (await db.execute(select(IntercityOrder).where(IntercityOrder.id == oid).with_for_update())).scalars().first()
+    if not o or o.status != "at_b" or o.f2_id is not None:
+        raise HTTPException(status_code=404, detail="Bu buyurtma allaqachon olingan")
+    if user.city_id != o.to_city_id:
+        raise HTTPException(status_code=403, detail="Bu buyurtma boshqa shaharga")
+    n = (await db.execute(select(func.count(IntercityOrder.id)).where(IntercityOrder.f2_id == user.id, IntercityOrder.status.in_(["at_b", "out_for_delivery", "failed"])))).scalar() or 0
+    if n >= 3:
+        raise HTTPException(status_code=400, detail="Bir vaqtda 3 tadan ortiq posilka ola olmaysiz")
+    if o.payer == "receiver":
+        await _parcel_balance_check(db, cp, user.id, float(o.total or 0) + _ic_storage(o, cfg)[1], setting)
+    o.f2_id = user.id
+    await _ic_event(db, o, "at_b", user, "fider2", terminal_id=o.to_terminal_id, note="Fider-2 biriktirildi: " + user.full_name)
+    await db.commit()
+    return {"ok": True}
+
+
+@courier_express_router.post("/{oid}/release2")
+async def courier_ic_release2(oid: int, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_courier_user)):
+    o = await _ic_my_order(db, oid, user, "f2", ["at_b"])
+    o.f2_id = None
+    await db.commit()
+    return {"ok": True}
+
+
+class IcPinBody(BaseModel):
+    pin: str
+
+
+class IcFailBody(BaseModel):
+    reason: Optional[str] = ""
+
+
+@courier_express_router.post("/{oid}/delivered")
+async def courier_ic_delivered(oid: int, body: IcPinBody, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_courier_user)):
+    await _parcel_courier_guard(db, user)
+    cfg = _ic_cfg(await _get_or_create_setting(db))
+    o = await _ic_my_order(db, oid, user, "f2", ["out_for_delivery"])
+    if not secrets.compare_digest((body.pin or "").strip().encode(), (o.delivery_pin or "x").encode()):
+        raise HTTPException(status_code=400, detail="PIN noto'g'ri. Qabul qiluvchidan 4 xonali PIN kodni so'rang.")
+    _, fee = _ic_storage(o, cfg)
+    x = (float(o.total or 0) if o.payer == "receiver" else 0.0) + fee
+    if x > 0:
+        await _ic_debit(db, user.id, x, f"Tumanlararo #{o.id}: qabul qiluvchidan olingan naqd pul (terminalga topshirilguncha band)")
+        o.cash_held_by_id, o.cash_held_amount, o.cash_held_terminal_id = user.id, x, o.to_terminal_id
+    o.storage_fee_paid = fee
+    if not o.f2_paid:
+        await _ic_credit(db, user.id, float(o.leg3_fee or 0), f"Tumanlararo #{o.id}: Fider-2 haqi")
+        o.f2_paid = True
+    o.status, o.delivered_at = "delivered", datetime.utcnow()
+    await _ic_event(db, o, "delivered", user, "fider2", note="PIN bilan topshirildi")
+    await db.commit()
+    await _parcel_notify_client(db, o, f"✅ Tumanlararo posilka #{o.id} topshirildi.")
+    return {"ok": True, "collect": x}
+
+
+@courier_express_router.post("/{oid}/failed")
+async def courier_ic_failed(oid: int, body: IcFailBody, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_courier_user)):
+    o = await _ic_my_order(db, oid, user, "f2", ["out_for_delivery"])
+    o.status, o.delivery_attempts = "failed", (o.delivery_attempts or 0) + 1
+    if not o.f2_paid:
+        await _ic_credit(db, user.id, float(o.leg3_fee or 0), f"Tumanlararo #{o.id}: Fider-2 haqi (topshirib bo'lmadi)")
+        o.f2_paid = True
+    await _ic_event(db, o, "failed", user, "fider2", note=(body.reason or "Qabul qiluvchi topilmadi"))
+    await db.commit()
+    await _parcel_notify_client(db, o, f"⚠️ Tumanlararo posilka #{o.id}: qabul qiluvchiga topshirib bo'lmadi, posilka terminalga qaytariladi. Terminalda 3 kun bepul saqlanadi.")
+    return {"ok": True}
+
+
+# ---------------- Magistral haydovchi ----------------
+driver_express_router = APIRouter(tags=["Magistral haydovchi"])
+
+
+async def get_current_express_driver(request: Request, db: AsyncSession = Depends(get_db)) -> User:
+    uid = request.session.get("user_id")
+    if not uid:
+        raise RedirectToLogin()
+    user = (await db.execute(select(User).where(User.id == uid))).scalars().first()
+    if not user or not user.is_active:
+        raise RedirectToLogin()
+    dr = (await db.execute(select(ExpressDriver).where(ExpressDriver.user_id == user.id, ExpressDriver.is_active == True))).scalars().first()
+    if not dr:
+        raise RedirectToLogin()
+    return user
+
+
+@driver_express_router.get("/driver", response_class=HTMLResponse)
+async def driver_page(request: Request, user: User = Depends(get_current_express_driver)):
+    return templates.TemplateResponse(request=request, name="driver.html", context={"user": user})
+
+
+async def _ic_trip_orders(db: AsyncSession, t: LinehaulTrip):
+    return (await db.execute(select(IntercityOrder).where(or_(IntercityOrder.trip_id == t.id, IntercityOrder.return_trip_id == t.id),
+                                                          IntercityOrder.status.in_(["in_transit", "returning"])).order_by(IntercityOrder.id))).scalars().all()
+
+
+@driver_express_router.get("/driver/express/state")
+async def driver_ic_state(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_express_driver)):
+    dr = (await db.execute(select(ExpressDriver).where(ExpressDriver.user_id == user.id))).scalars().first()
+    trips = (await db.execute(select(LinehaulTrip).options(selectinload(LinehaulTrip.from_terminal), selectinload(LinehaulTrip.to_terminal))
+                              .where(LinehaulTrip.driver_id == user.id, LinehaulTrip.status.in_(["waiting", "departed", "arrived"])).order_by(LinehaulTrip.id.desc()))).scalars().all()
+    out = []
+    for t in trips:
+        os_ = await _ic_trip_orders(db, t)
+        if t.status == "arrived" and not os_:
+            continue
+        out.append({"id": t.id, "status": t.status, "from": t.from_terminal.name, "from_address": t.from_terminal.address, "from_lat": t.from_terminal.latitude, "from_lng": t.from_terminal.longitude,
+                    "to": t.to_terminal.name, "to_address": t.to_terminal.address, "to_lat": t.to_terminal.latitude, "to_lng": t.to_terminal.longitude,
+                    "parcels": [{"id": o.id, "qr": o.qr_code, "size": PARCEL_SIZES.get(o.size, o.size), "ret": o.status == "returning"} for o in os_],
+                    "earn": sum((o.fare if o.status != "returning" else 0) for o in os_)})
+    terms = {t.city_id: t for t in (await db.execute(select(Terminal).options(selectinload(Terminal.city)).where(Terminal.is_active == True))).scalars().all()}
+    pairs = (await db.execute(select(ExpressFare.from_city_id, ExpressFare.to_city_id).where(ExpressFare.is_active == True))).all()
+    hist = (await db.execute(select(IntercityOrder).join(LinehaulTrip, LinehaulTrip.id == IntercityOrder.trip_id).where(
+        LinehaulTrip.driver_id == user.id, IntercityOrder.driver_paid == True).order_by(IntercityOrder.id.desc()).limit(15))).scalars().all()
+    return {"name": user.full_name, "car": f"{dr.car_model or ''} {dr.car_plate or ''}".strip(), "balance": dr.balance or 0, "trips": out,
+            "routes": [{"from": a, "to": b, "label": f"{terms[a].name} → {terms[b].name}"} for a, b in pairs if a in terms and b in terms],
+            "history": [{"id": o.id, "fare": o.fare, "at": o.at_b_at.isoformat() if o.at_b_at else None} for o in hist]}
+
+
+class IcTripCreate(BaseModel):
+    from_city_id: int
+    to_city_id: int
+
+
+@driver_express_router.post("/driver/express/trips")
+async def driver_ic_trip_create(body: IcTripCreate, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_express_driver)):
+    st = await _get_or_create_setting(db)
+    if not _ic_cfg(st)["enabled"]:
+        raise HTTPException(status_code=403, detail="Tumanlararo xizmat hozircha o'chirilgan")
+    if not (await db.execute(select(ExpressFare.id).where(ExpressFare.from_city_id == body.from_city_id, ExpressFare.to_city_id == body.to_city_id, ExpressFare.is_active == True))).first():
+        raise HTTPException(status_code=400, detail="Bu yo'nalishda xizmat yo'q")
+    ta, tb = await _ic_active_terminal(db, body.from_city_id), await _ic_active_terminal(db, body.to_city_id)
+    for t in (await db.execute(select(LinehaulTrip).where(LinehaulTrip.driver_id == user.id, LinehaulTrip.status.in_(["waiting", "departed", "arrived"])))).scalars().all():
+        if t.status != "arrived" or await _ic_trip_orders(db, t):
+            raise HTTPException(status_code=400, detail="Sizda tugallanmagan reys bor")
+    t = LinehaulTrip(driver_id=user.id, from_terminal_id=ta.id, to_terminal_id=tb.id, status="waiting")
+    db.add(t)
+    await db.commit()
+    return {"ok": True, "id": t.id}
+
+
+async def _ic_my_trip(db: AsyncSession, tid: int, user: User) -> LinehaulTrip:
+    t = (await db.execute(select(LinehaulTrip).where(LinehaulTrip.id == tid, LinehaulTrip.driver_id == user.id).with_for_update())).scalars().first()
+    if not t:
+        raise HTTPException(status_code=404, detail="Reys topilmadi")
+    return t
+
+
+async def _ic_depart(db: AsyncSession, t: LinehaulTrip, actor: User, role: str) -> int:
+    if t.status != "waiting":
+        raise HTTPException(status_code=400, detail="Reys holati mos emas")
+    os_ = await _ic_trip_orders(db, t)
+    if not os_:
+        raise HTTPException(status_code=400, detail="Reysga hali posilka yuklanmagan")
+    t.status, t.departed_at = "departed", datetime.utcnow()
+    for o in os_:
+        await _ic_event(db, o, o.status, actor, role, terminal_id=t.from_terminal_id, note="Reys jo'nadi")
+    await db.commit()
+    for o in os_:
+        await _parcel_notify_client(db, o, f"🚗 Tumanlararo posilka #{o.id}: magistral reysga yo'lga chiqdi.\nKuzatish: {_ic_track_url(o)}")
+    return len(os_)
+
+
+@driver_express_router.post("/driver/express/trips/{tid}/depart")
+async def driver_ic_depart(tid: int, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_express_driver)):
+    t = await _ic_my_trip(db, tid, user)
+    return {"ok": True, "count": await _ic_depart(db, t, user, "driver")}
+
+
+@driver_express_router.post("/driver/express/trips/{tid}/arrive")
+async def driver_ic_arrive(tid: int, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_express_driver)):
+    t = await _ic_my_trip(db, tid, user)
+    if t.status != "departed":
+        raise HTTPException(status_code=400, detail="Reys holati mos emas")
+    t.status, t.arrived_at = "arrived", datetime.utcnow()
+    await db.commit()
+    return {"ok": True}
+
+
+@driver_express_router.post("/driver/express/trips/{tid}/cancel")
+async def driver_ic_trip_cancel(tid: int, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_express_driver)):
+    t = await _ic_my_trip(db, tid, user)
+    if t.status != "waiting" or await _ic_trip_orders(db, t):
+        raise HTTPException(status_code=400, detail="Reysni bekor qilib bo'lmaydi (posilka yuklangan)")
+    t.status = "cancelled"
+    await db.commit()
+    return {"ok": True}
+
+
+class IcLocBody(BaseModel):
+    lat: float
+    lng: float
+
+
+@driver_express_router.post("/driver/express/location")
+async def driver_ic_location(body: IcLocBody, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_express_driver)):
+    if not (-90 <= body.lat <= 90 and -180 <= body.lng <= 180):
+        raise HTTPException(status_code=400, detail="Koordinata noto'g'ri")
+    dr = (await db.execute(select(ExpressDriver).where(ExpressDriver.user_id == user.id))).scalars().first()
+    dr.latitude, dr.longitude, dr.location_at = body.lat, body.lng, datetime.utcnow()
+    await db.commit()
+    return {"ok": True}
+
+
+# ---------------- Terminal operatori ----------------
+terminal_router = APIRouter(tags=["Terminal operatori"])
+
+
+async def get_current_terminal_op(request: Request, db: AsyncSession = Depends(get_db)):
+    uid = request.session.get("user_id")
+    if not uid:
+        raise RedirectToLogin()
+    user = (await db.execute(select(User).where(User.id == uid))).scalars().first()
+    if not user or not user.is_active:
+        raise RedirectToLogin()
+    op = (await db.execute(select(TerminalOperator).options(selectinload(TerminalOperator.terminal)).where(
+        TerminalOperator.user_id == user.id, TerminalOperator.is_active == True))).scalars().first()
+    if not op or not op.terminal or not op.terminal.is_active:
+        raise RedirectToLogin()
+    return user, op.terminal
+
+
+@terminal_router.get("/terminal", response_class=HTMLResponse)
+async def terminal_page(request: Request, ctx=Depends(get_current_terminal_op)):
+    return templates.TemplateResponse(request=request, name="terminal.html", context={"user": ctx[0], "terminal": ctx[1]})
+
+
+def _ic_term_row(o: IntercityOrder, cfg: dict) -> dict:
+    d, fee = _ic_storage(o, cfg)
+    return {"id": o.id, "qr": o.qr_code, "status": o.status, "status_label": IC_STATUS_UZ.get(o.status, o.status), "item": o.item_description,
+            "size": PARCEL_SIZES.get(o.size, o.size), "payer": o.payer, "total": o.total, "receiver_name": o.receiver_name, "receiver_phone": o.receiver_phone,
+            "sender": o.client.full_name if o.client else "", "sender_phone": o.client.phone_number if o.client else "",
+            "f1": o.f1.full_name if o.f1 else None, "f2": o.f2.full_name if o.f2 else None, "f2_phone": o.f2.phone_number if o.f2 else None,
+            "from": o.from_terminal.name if o.from_terminal else "", "to": o.to_terminal.name if o.to_terminal else "",
+            "days": d, "fee": fee, "can_return": d >= cfg["max_days"], "declared_value": o.declared_value,
+            "cash_held": o.cash_held_amount if o.cash_held_by_id else 0, "driver": o.trip.driver.full_name if o.trip and o.trip.driver else None}
+
+
+@terminal_router.get("/terminal/api/state")
+async def terminal_state(db: AsyncSession = Depends(get_db), ctx=Depends(get_current_terminal_op)):
+    user, T = ctx
+    cfg = _ic_cfg(await _get_or_create_setting(db))
+
+    async def q(*conds):
+        return [_ic_term_row(o, cfg) for o in (await db.execute(select(IntercityOrder).options(*_IC_LOAD).where(*conds).order_by(IntercityOrder.id))).scalars().all()]
+    trips = (await db.execute(select(LinehaulTrip).options(selectinload(LinehaulTrip.driver), selectinload(LinehaulTrip.from_terminal), selectinload(LinehaulTrip.to_terminal)).where(
+        or_(LinehaulTrip.from_terminal_id == T.id, LinehaulTrip.to_terminal_id == T.id), LinehaulTrip.status.in_(["waiting", "departed", "arrived"])).order_by(LinehaulTrip.id))).scalars().all()
+    tr = []
+    for t in trips:
+        n = len(await _ic_trip_orders(db, t))
+        if t.status == "arrived" and n == 0:
+            continue
+        tr.append({"id": t.id, "status": t.status, "driver": t.driver.full_name, "driver_phone": t.driver.phone_number, "from": t.from_terminal.name, "to": t.to_terminal.name,
+                   "outgoing": t.from_terminal_id == T.id, "parcels": n})
+    holders = {}
+    for o in (await db.execute(select(IntercityOrder).options(selectinload(IntercityOrder.client)).where(IntercityOrder.cash_held_terminal_id == T.id, IntercityOrder.cash_held_amount > 0,
+                                                                                            IntercityOrder.cash_held_by_id.isnot(None)))).scalars().all():
+        holders[o.cash_held_by_id] = holders.get(o.cash_held_by_id, 0.0) + float(o.cash_held_amount or 0)
+    cash_couriers = []
+    for cid, amt in holders.items():
+        u = (await db.execute(select(User).where(User.id == cid))).scalars().first()
+        if u:
+            cash_couriers.append({"id": cid, "name": u.full_name, "phone": u.phone_number, "amount": amt})
+    return {"terminal": {"id": T.id, "name": T.name, "address": T.address, "cash": T.cash_balance or 0}, "operator": user.full_name, "cfg": {"max_days": cfg["max_days"], "free_days": cfg["free_days"]},
+            "incoming_fider": await q(IntercityOrder.from_terminal_id == T.id, IntercityOrder.status == "f1_picked"),
+            "at_a": await q(IntercityOrder.from_terminal_id == T.id, IntercityOrder.status == "at_a"),
+            "incoming_driver": await q(IntercityOrder.to_terminal_id == T.id, IntercityOrder.status == "in_transit"),
+            "at_b": await q(IntercityOrder.to_terminal_id == T.id, IntercityOrder.status.in_(["at_b", "failed"])),
+            "out": await q(IntercityOrder.to_terminal_id == T.id, IntercityOrder.status == "out_for_delivery"),
+            "returning_in": await q(IntercityOrder.from_terminal_id == T.id, IntercityOrder.status == "returning"),
+            "returned": await q(IntercityOrder.from_terminal_id == T.id, IntercityOrder.status == "returned"),
+            "trips": tr, "cash_couriers": cash_couriers}
+
+
+class IcQrBody(BaseModel):
+    qr: str
+    trip_id: Optional[int] = None
+    note: Optional[str] = None
+    passport_ok: bool = False
+    pin: Optional[str] = None
+    cash_received: bool = False
+
+
+async def _ic_by_qr(db: AsyncSession, qr: str) -> IntercityOrder:
+    o = (await db.execute(select(IntercityOrder).where(IntercityOrder.qr_code == (qr or "").strip().upper()).with_for_update())).scalars().first()
+    if not o:
+        raise HTTPException(status_code=404, detail="Bunday QR/kod topilmadi")
+    return o
+
+
+@terminal_router.post("/terminal/api/receive-from-fider")
+async def terminal_recv_fider(body: IcQrBody, db: AsyncSession = Depends(get_db), ctx=Depends(get_current_terminal_op)):
+    user, T = ctx
+    o = await _ic_by_qr(db, body.qr)
+    if o.status != "f1_picked" or o.from_terminal_id != T.id:
+        raise HTTPException(status_code=400, detail=f"Bu posilka hozir shu terminalga kutilmayapti (holati: {IC_STATUS_UZ.get(o.status, o.status)})")
+    if o.cash_held_by_id and o.cash_held_amount and o.cash_held_terminal_id == T.id:
+        amt, cid = float(o.cash_held_amount), o.cash_held_by_id
+        await _ic_credit(db, cid, amt, f"Tumanlararo #{o.id}: naqd pul terminalga topshirildi (band qilingan summa qaytdi)", TransactionType.REFUND)
+        await _ic_terminal_cash(db, T.id, amt, user.id, "courier_cash", o.id, "Fider-1 dan naqd")
+        o.cash_held_by_id, o.cash_held_amount = None, 0.0
+    if not o.f1_paid and o.f1_id:
+        await _ic_credit(db, o.f1_id, float(o.leg1_fee or 0), f"Tumanlararo #{o.id}: Fider-1 haqi")
+        o.f1_paid = True
+    o.status, o.at_a_at = "at_a", datetime.utcnow()
+    await _ic_event(db, o, "at_a", user, "operator", T.id, "A-terminalda qabul qilindi")
+    await db.commit()
+    await _parcel_notify_client(db, o, f"📦 Posilka #{o.id} {T.name} terminaliga yetib keldi.\nKuzatish: {_ic_track_url(o)}")
+    return {"ok": True, "label": f"#{o.id} {o.item_description}"}
+
+
+@terminal_router.post("/terminal/api/load")
+async def terminal_load(body: IcQrBody, db: AsyncSession = Depends(get_db), ctx=Depends(get_current_terminal_op)):
+    user, T = ctx
+    o = await _ic_by_qr(db, body.qr)
+    if o.status != "at_a" or o.from_terminal_id != T.id:
+        raise HTTPException(status_code=400, detail="Posilka bu terminalda magistralga tayyor emas")
+    t = (await db.execute(select(LinehaulTrip).where(LinehaulTrip.id == (body.trip_id or 0)).with_for_update())).scalars().first()
+    if not t or t.status != "waiting" or t.from_terminal_id != T.id or t.to_terminal_id != o.to_terminal_id:
+        raise HTTPException(status_code=400, detail="Reys mos emas (kutayotgan, to'g'ri yo'nalishdagi reysni tanlang)")
+    o.trip_id, o.status = t.id, "in_transit"
+    await _ic_event(db, o, "in_transit", user, "operator", T.id, f"Magistral haydovchiga topshirildi: {t.driver_id}")
+    await db.commit()
+    await _ic_notify(db, t.driver_id, f"📦 Sizga posilka {o.qr_code} yuklandi ({PARCEL_SIZES.get(o.size, o.size)}).")
+    return {"ok": True}
+
+
+@terminal_router.post("/terminal/api/trips/{tid}/depart")
+async def terminal_depart(tid: int, db: AsyncSession = Depends(get_db), ctx=Depends(get_current_terminal_op)):
+    user, T = ctx
+    t = (await db.execute(select(LinehaulTrip).where(LinehaulTrip.id == tid, LinehaulTrip.from_terminal_id == T.id).with_for_update())).scalars().first()
+    if not t:
+        raise HTTPException(status_code=404, detail="Reys topilmadi")
+    return {"ok": True, "count": await _ic_depart(db, t, user, "operator")}
+
+
+@terminal_router.post("/terminal/api/receive-from-driver")
+async def terminal_recv_driver(body: IcQrBody, db: AsyncSession = Depends(get_db), ctx=Depends(get_current_terminal_op)):
+    user, T = ctx
+    cfg = _ic_cfg(await _get_or_create_setting(db))
+    o = await _ic_by_qr(db, body.qr)
+    if o.status != "in_transit" or o.to_terminal_id != T.id:
+        raise HTTPException(status_code=400, detail=f"Bu posilka shu terminalga yo'lda emas (holati: {IC_STATUS_UZ.get(o.status, o.status)})")
+    t = (await db.execute(select(LinehaulTrip).where(LinehaulTrip.id == o.trip_id).with_for_update())).scalars().first()
+    if not o.driver_paid and t:
+        await _ic_pay_driver(db, t.driver_id, float(o.fare or 0))
+        o.driver_paid = True
+    o.status, o.at_b_at = "at_b", datetime.utcnow()
+    if t and t.status == "departed":
+        t.status, t.arrived_at = "arrived", datetime.utcnow()
+    await _ic_event(db, o, "at_b", user, "operator", T.id, "B-terminalda qabul qilindi")
+    await db.commit()
+    link = _ic_track_url(o)
+    await send_sms(o.receiver_phone, f"ZooMo: sizga yuborilgan posilka {T.name} terminaliga yetib keldi. {T.address}. Kuzatish: {link}. {cfg['free_days']} kun bepul saqlanadi.")
+    await _parcel_notify_client(db, o, f"📦 Posilka #{o.id} {T.name} terminaliga yetib keldi, yetkazib berish tayinlanmoqda.\nKuzatish: {link}")
+    return {"ok": True, "label": f"#{o.id} {o.item_description}"}
+
+
+@terminal_router.post("/terminal/api/handover-fider2")
+async def terminal_handover_f2(body: IcQrBody, db: AsyncSession = Depends(get_db), ctx=Depends(get_current_terminal_op)):
+    user, T = ctx
+    o = await _ic_by_qr(db, body.qr)
+    if o.status != "at_b" or o.to_terminal_id != T.id:
+        raise HTTPException(status_code=400, detail="Posilka bu terminalda yetkazishga tayyor emas")
+    if not o.f2_id:
+        raise HTTPException(status_code=400, detail="Hali Fider-2 kuryer qabul qilmagan (kuryer ilovada «Qabul qilish» ni bosishi kerak)")
+    o.status = "out_for_delivery"
+    await _ic_event(db, o, "out_for_delivery", user, "operator", T.id, "Fider-2 ga topshirildi")
+    await db.commit()
+    await send_sms(o.receiver_phone, f"ZooMo: kuryer posilkangiz bilan yo'lga chiqdi. Kuzatish: {_ic_track_url(o)}. PIN kodni kuryerga ayting.")
+    await _parcel_notify_client(db, o, f"🛵 Posilka #{o.id}: kuryer eshikka olib bormoqda.")
+    return {"ok": True}
+
+
+@terminal_router.post("/terminal/api/receive-failed")
+async def terminal_recv_failed(body: IcQrBody, db: AsyncSession = Depends(get_db), ctx=Depends(get_current_terminal_op)):
+    user, T = ctx
+    o = await _ic_by_qr(db, body.qr)
+    if o.status != "failed" or o.to_terminal_id != T.id:
+        raise HTTPException(status_code=400, detail="Bu posilka qaytarilgan holatda emas")
+    o.status, o.f2_id = "at_b", None
+    await _ic_event(db, o, "at_b", user, "operator", T.id, "Topshirilmagan posilka terminalga qaytdi")
+    await db.commit()
+    return {"ok": True}
+
+
+@terminal_router.post("/terminal/api/claim")
+async def terminal_claim(body: IcQrBody, db: AsyncSession = Depends(get_db), ctx=Depends(get_current_terminal_op)):
+    """Qabul qiluvchi o'zi terminalga kelib oladi (PIN yoki pasport tasdig'i bilan)."""
+    user, T = ctx
+    cfg = _ic_cfg(await _get_or_create_setting(db))
+    o = await _ic_by_qr(db, body.qr)
+    if o.status != "at_b" or o.to_terminal_id != T.id:
+        raise HTTPException(status_code=400, detail="Posilka bu terminalda topshirishga tayyor emas")
+    pin_ok = bool(body.pin) and secrets.compare_digest(body.pin.strip().encode(), (o.delivery_pin or "x").encode())
+    if not (pin_ok or body.passport_ok):
+        raise HTTPException(status_code=400, detail="PIN kiriting yoki pasport tekshirilganini tasdiqlang")
+    _, fee = _ic_storage(o, cfg)
+    x = (float(o.total or 0) if o.payer == "receiver" else 0.0) + fee
+    if x > 0:
+        if not body.cash_received:
+            raise HTTPException(status_code=400, detail=f"Qabul qiluvchidan {_fm(x)} so'm naqd olinishi kerak — olgach «naqd oldim» ni belgilang")
+        await _ic_terminal_cash(db, T.id, x, user.id, "claim", o.id, "Terminalda olish: naqd")
+    # Fider-2 ishlatilmadi — uning haqi jo'natuvchiga keshbek sifatida qaytariladi (to'langan bo'lsa)
+    if not o.f2_paid and o.payer == "sender":
+        cl = (await db.execute(select(User).where(User.id == o.client_id))).scalars().first()
+        if cl:
+            cl.cashback_balance = (cl.cashback_balance or 0) + float(o.leg3_fee or 0)
+    o.f2_id, o.storage_fee_paid = None, fee
+    o.status, o.delivered_at, o.claimed_at_terminal = "delivered", datetime.utcnow(), True
+    await _ic_event(db, o, "delivered", user, "operator", T.id, ("PIN" if pin_ok else "Pasport tekshirildi") + " bilan terminalda topshirildi. " + (body.note or ""))
+    await db.commit()
+    await _parcel_notify_client(db, o, f"✅ Posilka #{o.id} qabul qiluvchiga terminalda topshirildi.")
+    return {"ok": True}
+
+
+@terminal_router.post("/terminal/api/return")
+async def terminal_return(body: IcQrBody, db: AsyncSession = Depends(get_db), ctx=Depends(get_current_terminal_op)):
+    """Saqlash muddati tugagan posilkani jo'natuvchiga qaytarish uchun teskari reysga yuklash."""
+    user, T = ctx
+    cfg = _ic_cfg(await _get_or_create_setting(db))
+    o = await _ic_by_qr(db, body.qr)
+    if o.status != "at_b" or o.to_terminal_id != T.id:
+        raise HTTPException(status_code=400, detail="Bu posilkani qaytarib bo'lmaydi")
+    if _ic_storage(o, cfg)[0] < cfg["max_days"]:
+        raise HTTPException(status_code=400, detail=f"Posilka {cfg['max_days']} kundan keyingina qaytariladi")
+    t = (await db.execute(select(LinehaulTrip).where(LinehaulTrip.id == (body.trip_id or 0)).with_for_update())).scalars().first()
+    if not t or t.status != "waiting" or t.from_terminal_id != T.id or t.to_terminal_id != o.from_terminal_id:
+        raise HTTPException(status_code=400, detail="Teskari yo'nalishdagi kutayotgan reysni tanlang")
+    o.return_trip_id, o.status, o.f2_id = t.id, "returning", None
+    await _ic_event(db, o, "returning", user, "operator", T.id, "Saqlash muddati tugadi, jo'natuvchiga qaytarilmoqda")
+    await db.commit()
+    await _parcel_notify_client(db, o, f"↩️ Posilka #{o.id} qabul qilinmadi va jo'natuvchiga qaytarilmoqda. Qaytarish narxini siz to'laysiz.")
+    return {"ok": True}
+
+
+@terminal_router.post("/terminal/api/receive-return")
+async def terminal_recv_return(body: IcQrBody, db: AsyncSession = Depends(get_db), ctx=Depends(get_current_terminal_op)):
+    user, T = ctx
+    o = await _ic_by_qr(db, body.qr)
+    if o.status != "returning" or o.from_terminal_id != T.id:
+        raise HTTPException(status_code=400, detail="Bu posilka shu terminalga qaytmayapti")
+    o.status = "returned"
+    t = (await db.execute(select(LinehaulTrip).where(LinehaulTrip.id == o.return_trip_id).with_for_update())).scalars().first()
+    if t and t.status == "departed":
+        t.status, t.arrived_at = "arrived", datetime.utcnow()
+    await _ic_event(db, o, "returned", user, "operator", T.id, "Qaytgan posilka A-terminalda")
+    await db.commit()
+    await _parcel_notify_client(db, o, f"↩️ Posilka #{o.id} {T.name} terminaliga qaytdi. Terminaldan olib keting (qaytarish haqini to'laysiz).")
+    return {"ok": True}
+
+
+@terminal_router.post("/terminal/api/claim-return")
+async def terminal_claim_return(body: IcQrBody, db: AsyncSession = Depends(get_db), ctx=Depends(get_current_terminal_op)):
+    user, T = ctx
+    o = await _ic_by_qr(db, body.qr)
+    if o.status != "returned" or o.from_terminal_id != T.id:
+        raise HTTPException(status_code=400, detail="Posilka qaytarib topshirishga tayyor emas")
+    pin_ok = bool(body.pin) and secrets.compare_digest(body.pin.strip().encode(), (o.delivery_pin or "x").encode())
+    if not (body.passport_ok or pin_ok):
+        raise HTTPException(status_code=400, detail="Jo'natuvchi shaxsini pasport bilan tasdiqlang")
+    rf = (await db.execute(select(ExpressFare).where(ExpressFare.from_city_id == o.to_city_id, ExpressFare.to_city_id == o.from_city_id))).scalars().first()
+    fee = float(({"small": rf.price_small, "medium": rf.price_medium, "large": rf.price_large}.get(o.size) if rf else o.fare) or o.fare or 0)
+    if not body.cash_received:
+        raise HTTPException(status_code=400, detail=f"Jo'natuvchidan qaytarish haqi {_fm(fee)} so'm naqd olinishi kerak — olgach «naqd oldim» ni belgilang")
+    await _ic_terminal_cash(db, T.id, fee, user.id, "return_fee", o.id, "Qaytarish haqi (faqat magistralga)")
+    t = (await db.execute(select(LinehaulTrip).where(LinehaulTrip.id == o.return_trip_id))).scalars().first()
+    if t and not o.return_paid:
+        await _ic_pay_driver(db, t.driver_id, fee)
+        o.return_paid = True
+    o.status = "returned_done"
+    await _ic_event(db, o, "returned_done", user, "operator", T.id, "Jo'natuvchiga qaytarib topshirildi")
+    await db.commit()
+    return {"ok": True}
+
+
+class IcCashBody(BaseModel):
+    courier_id: Optional[int] = None
+    amount: Optional[float] = None
+    note: Optional[str] = None
+
+
+@terminal_router.post("/terminal/api/cash/receive")
+async def terminal_cash_receive(body: IcCashBody, db: AsyncSession = Depends(get_db), ctx=Depends(get_current_terminal_op)):
+    """Fider-2 eshikdan olgan naqd pulni terminal operatoriga topshiradi."""
+    user, T = ctx
+    rows = (await db.execute(select(IntercityOrder).where(IntercityOrder.cash_held_by_id == body.courier_id, IntercityOrder.cash_held_terminal_id == T.id,
+                                                          IntercityOrder.cash_held_amount > 0).with_for_update())).scalars().all()
+    if not rows:
+        raise HTTPException(status_code=404, detail="Bu kuryerda topshirilmagan naqd yo'q")
+    tot = 0.0
+    for o in rows:
+        amt = float(o.cash_held_amount)
+        await _ic_credit(db, body.courier_id, amt, f"Tumanlararo #{o.id}: naqd terminalga topshirildi (band qilingan summa qaytdi)", TransactionType.REFUND)
+        await _ic_terminal_cash(db, T.id, amt, user.id, "courier_cash", o.id, "Fider-2 dan naqd")
+        o.cash_held_by_id, o.cash_held_amount = None, 0.0
+        tot += amt
+    await db.commit()
+    return {"ok": True, "total": tot}
+
+
+@terminal_router.post("/terminal/api/cash/deposit")
+async def terminal_cash_deposit(body: IcCashBody, db: AsyncSession = Depends(get_db), ctx=Depends(get_current_terminal_op)):
+    """Kassadagi naqdni seyfga (inkassatsiyaga) o'tkazish yozuvi."""
+    user, T = ctx
+    t = (await db.execute(select(Terminal).where(Terminal.id == T.id).with_for_update())).scalars().first()
+    amt = float(body.amount or 0)
+    if amt <= 0 or amt > (t.cash_balance or 0):
+        raise HTTPException(status_code=400, detail="Summa noto'g'ri yoki kassadagidan ko'p")
+    await _ic_terminal_cash(db, T.id, -amt, user.id, "deposit", None, (body.note or "Seyfga")[:100])
+    await db.commit()
+    return {"ok": True}
+
+
+@terminal_router.get("/terminal/api/label/{oid}", response_class=HTMLResponse)
+async def terminal_label(oid: int, db: AsyncSession = Depends(get_db), ctx=Depends(get_current_terminal_op)):
+    o = (await db.execute(select(IntercityOrder).options(*_IC_LOAD).where(IntercityOrder.id == oid))).scalars().first()
+    if not o:
+        raise HTTPException(status_code=404, detail="Topilmadi")
+    return _ic_label_html(o)
+
+
+@terminal_router.get("/terminal/api/photo/{oid}")
+async def terminal_photo(oid: int, db: AsyncSession = Depends(get_db), ctx=Depends(get_current_terminal_op)):
+    o = (await db.execute(select(IntercityOrder).where(IntercityOrder.id == oid))).scalars().first()
+    if not o or not o.pickup_photo:
+        raise HTTPException(status_code=404, detail="Rasm yo'q")
+    return Response(content=o.pickup_photo, media_type=o.pickup_photo_mime or "image/jpeg")
+
+
+# ---------------- Admin ----------------
+admin_express_router = APIRouter(prefix="/admin/express", tags=["Tumanlararo boshqaruv"])
+
+
+def _ic_scope_filter(q, scope):
+    return q if scope is None else q.where(or_(IntercityOrder.from_city_id == scope, IntercityOrder.to_city_id == scope))
+
+
+@admin_express_router.get("/overview")
+async def admin_ic_overview(db: AsyncSession = Depends(get_db), current_user: User = Depends(require_section("pochta"))):
+    st = await _get_or_create_setting(db)
+    cfg = _ic_cfg(st)
+    cities = (await db.execute(select(City).order_by(City.name))).scalars().all()
+    fares = (await db.execute(select(ExpressFare).order_by(ExpressFare.id))).scalars().all()
+    drivers = (await db.execute(select(ExpressDriver, User).join(User, User.id == ExpressDriver.user_id).order_by(User.full_name))).all()
+    terms = (await db.execute(select(Terminal).order_by(Terminal.id))).scalars().all()
+    ops = (await db.execute(select(TerminalOperator, User).join(User, User.id == TerminalOperator.user_id).order_by(TerminalOperator.id))).all()
+    return {"cfg": cfg, "is_owner": current_user.role == UserRole.OWNER, "sms": sms_configured(),
+            "cities": [{"id": c.id, "name": c.name} for c in cities],
+            "terminals": [{"id": t.id, "city_id": t.city_id, "name": t.name, "address": t.address, "lat": t.latitude, "lng": t.longitude, "hours": t.work_hours,
+                           "active": bool(t.is_active), "cash": t.cash_balance or 0} for t in terms],
+            "operators": [{"user_id": u.id, "name": u.full_name, "phone": u.phone_number, "terminal_id": o.terminal_id, "active": bool(o.is_active)} for o, u in ops],
+            "fares": [{"id": f.id, "from": f.from_city_id, "to": f.to_city_id, "small": f.price_small, "medium": f.price_medium, "large": f.price_large, "active": bool(f.is_active)} for f in fares],
+            "drivers": [{"user_id": u.id, "name": u.full_name, "phone": u.phone_number, "car": f"{d.car_model or ''} {d.car_plate or ''}".strip(),
+                         "active": bool(d.is_active), "balance": d.balance or 0} for d, u in drivers]}
+
+
+@admin_express_router.post("/settings")
+async def admin_ic_settings(express_enabled: Optional[str] = Form(None), courier_base: float = Form(..., allow_inf_nan=False),
+                            courier_per_km: float = Form(..., allow_inf_nan=False), platform_percent: float = Form(10.0, allow_inf_nan=False),
+                            max_leg_km: float = Form(20.0, allow_inf_nan=False), free_days: int = Form(3), storage_fee_day: float = Form(2000.0, allow_inf_nan=False),
+                            max_days: int = Form(8), max_value: float = Form(1000000.0, allow_inf_nan=False),
+                            db: AsyncSession = Depends(get_db), owner: User = Depends(require_owner)):
+    if not (0 <= platform_percent <= 60) or min(courier_base, courier_per_km, storage_fee_day, max_value) < 0 or not (1 <= max_leg_km <= 200) \
+            or not (0 <= free_days <= 30) or not (free_days <= max_days <= 60) or max(courier_base, courier_per_km, storage_fee_day) > 10_000_000:
+        raise HTTPException(status_code=400, detail="Qiymatlar noto'g'ri")
+    st = await _get_or_create_setting(db)
+    st.express_enabled = bool(express_enabled)
+    st.express_courier_base, st.express_courier_per_km, st.ic_platform_percent = courier_base, courier_per_km, platform_percent
+    st.express_max_leg_km, st.ic_free_days, st.ic_storage_fee_day, st.ic_max_days, st.ic_max_value = max_leg_km, free_days, storage_fee_day, max_days, max_value
+    await db.commit()
+    return {"ok": True}
+
+
+class IcTerminalBody(BaseModel):
+    city_id: int
+    name: str
+    address: str
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+    hours: Optional[str] = None
+    active: bool = True
+
+
+@admin_express_router.post("/terminal")
+async def admin_ic_terminal(body: IcTerminalBody, db: AsyncSession = Depends(get_db), owner: User = Depends(require_owner)):
+    if len(body.name.strip()) < 2 or len(body.address.strip()) < 3:
+        raise HTTPException(status_code=400, detail="Nom va manzilni kiriting")
+    if body.lat is not None and not (-90 <= body.lat <= 90 and -180 <= (body.lng or 0) <= 180):
+        raise HTTPException(status_code=400, detail="Koordinata noto'g'ri")
+    t = (await db.execute(select(Terminal).where(Terminal.city_id == body.city_id))).scalars().first()
+    if not t:
+        if not (await db.execute(select(City.id).where(City.id == body.city_id))).first():
+            raise HTTPException(status_code=404, detail="Shahar topilmadi")
+        t = Terminal(city_id=body.city_id, name=body.name.strip(), address=body.address.strip())
+        db.add(t)
+    t.name, t.address, t.latitude, t.longitude = body.name.strip()[:80], body.address.strip()[:200], body.lat, body.lng
+    t.work_hours, t.is_active = (body.hours or "").strip()[:80] or None, body.active
+    await db.commit()
+    return {"ok": True}
+
+
+@admin_express_router.post("/operators/create")
+async def admin_ic_operator_create(full_name: str = Form(...), phone_number: str = Form(...), password: str = Form(...), terminal_id: int = Form(...),
+                                   db: AsyncSession = Depends(get_db), owner: User = Depends(require_owner)):
+    if not (await db.execute(select(Terminal.id).where(Terminal.id == terminal_id))).first():
+        raise HTTPException(status_code=404, detail="Terminal topilmadi")
+    u = await find_or_create_login_user(db, phone_number, password, full_name, None)
+    if (await db.execute(select(TerminalOperator.id).where(TerminalOperator.user_id == u.id))).first():
+        raise HTTPException(status_code=400, detail="Bu foydalanuvchi allaqachon terminal operatori")
+    db.add(TerminalOperator(user_id=u.id, terminal_id=terminal_id, is_active=True))
+    await db.commit()
+    return {"ok": True}
+
+
+class IcToggle(BaseModel):
+    active: bool
+
+
+@admin_express_router.post("/operators/{uid}/active")
+async def admin_ic_operator_active(uid: int, body: IcToggle, db: AsyncSession = Depends(get_db), owner: User = Depends(require_owner)):
+    o = (await db.execute(select(TerminalOperator).where(TerminalOperator.user_id == uid))).scalars().first()
+    if not o:
+        raise HTTPException(status_code=404, detail="Operator topilmadi")
+    o.is_active = body.active
+    await db.commit()
+    return {"ok": True}
+
+
+class IcHubBody(BaseModel):
+    city_id: int
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+
+
+class IcFareBody(BaseModel):
+    from_city_id: int
+    to_city_id: int
+    price_small: float
+    price_medium: float = 0.0
+    price_large: float = 0.0
+    is_active: bool = True
+
+
+@admin_express_router.post("/fare")
+async def admin_ic_fare(body: IcFareBody, db: AsyncSession = Depends(get_db), owner: User = Depends(require_owner)):
+    if body.from_city_id == body.to_city_id or min(body.price_small, body.price_medium, body.price_large) < 0 or max(body.price_small, body.price_medium, body.price_large) > 100_000_000:
+        raise HTTPException(status_code=400, detail="Qiymatlar noto'g'ri")
+    f = (await db.execute(select(ExpressFare).where(ExpressFare.from_city_id == body.from_city_id, ExpressFare.to_city_id == body.to_city_id))).scalars().first()
+    if not f:
+        f = ExpressFare(from_city_id=body.from_city_id, to_city_id=body.to_city_id)
+        db.add(f)
+    f.price_small, f.price_medium, f.price_large = body.price_small, body.price_medium or body.price_small, body.price_large or body.price_medium or body.price_small
+    f.is_active = body.is_active
+    await db.commit()
+    return {"ok": True}
+
+
+@admin_express_router.post("/fare/{fid}/delete")
+async def admin_ic_fare_delete(fid: int, db: AsyncSession = Depends(get_db), owner: User = Depends(require_owner)):
+    await db.execute(delete(ExpressFare).where(ExpressFare.id == fid))
+    await db.commit()
+    return {"ok": True}
+
+
+@admin_express_router.post("/drivers/create")
+async def admin_ic_driver_create(full_name: str = Form(...), phone_number: str = Form(...), password: str = Form(...),
+                                 car_model: str = Form(""), car_plate: str = Form(""),
+                                 db: AsyncSession = Depends(get_db), owner: User = Depends(require_owner)):
+    u = await find_or_create_login_user(db, phone_number, password, full_name, None)
+    if (await db.execute(select(ExpressDriver.id).where(ExpressDriver.user_id == u.id))).first():
+        raise HTTPException(status_code=400, detail="Bu foydalanuvchi allaqachon magistral haydovchi")
+    db.add(ExpressDriver(user_id=u.id, car_model=car_model.strip()[:80] or None, car_plate=car_plate.strip()[:20] or None, is_active=True))
+    await db.commit()
+    return {"ok": True}
+
+
+@admin_express_router.post("/drivers/{uid}/active")
+async def admin_ic_driver_active(uid: int, body: IcToggle, db: AsyncSession = Depends(get_db), owner: User = Depends(require_owner)):
+    d = (await db.execute(select(ExpressDriver).where(ExpressDriver.user_id == uid))).scalars().first()
+    if not d:
+        raise HTTPException(status_code=404, detail="Haydovchi topilmadi")
+    d.is_active = body.active
+    await db.commit()
+    return {"ok": True}
+
+
+class IcPayout(BaseModel):
+    amount: float
+
+
+@admin_express_router.post("/drivers/{uid}/payout")
+async def admin_ic_driver_payout(uid: int, body: IcPayout, db: AsyncSession = Depends(get_db), owner: User = Depends(require_owner)):
+    d = (await db.execute(select(ExpressDriver).where(ExpressDriver.user_id == uid).with_for_update())).scalars().first()
+    if not d or body.amount <= 0 or body.amount > (d.balance or 0):
+        raise HTTPException(status_code=400, detail="Summa noto'g'ri yoki haydovchi balansidan ko'p")
+    d.balance = (d.balance or 0) - body.amount
+    db.add(Transaction(user_id=uid, type=TransactionType.WITHDRAWAL, amount=body.amount, note="Magistral haydovchiga to'langan", created_by_id=owner.id))
+    await db.commit()
+    return {"ok": True}
+
+
+@admin_express_router.get("/orders")
+async def admin_ic_orders(status_filter: Optional[str] = None, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_section("pochta"))):
+    scope = _parcel_scope(current_user)
+    cfg = _ic_cfg(await _get_or_create_setting(db))
+    q = _ic_scope_filter(select(IntercityOrder).options(*_IC_LOAD).order_by(IntercityOrder.id.desc()).limit(150), scope)
+    if status_filter in IC_STATUS_UZ:
+        q = q.where(IntercityOrder.status == status_filter)
+    rows = (await db.execute(q)).scalars().all()
+    cq = _ic_scope_filter(select(IntercityOrder.status, func.count(IntercityOrder.id)).group_by(IntercityOrder.status), scope)
+    items = []
+    for o in rows:
+        r = _ic_public(o, cfg, False)
+        r.update(client=o.client.full_name if o.client else "", client_phone=o.client.phone_number if o.client else "", leg1_fee=o.leg1_fee, leg3_fee=o.leg3_fee,
+                 fare=o.fare, platform_fee=o.platform_fee, declared_value=o.declared_value, cancel_reason=o.cancel_reason, cash_held=o.cash_held_amount if o.cash_held_by_id else 0,
+                 has_photo=bool(o.pickup_photo))
+        items.append(r)
+    return {"items": items, "counts": {k: v for k, v in (await db.execute(cq)).all()}}
+
+
+@admin_express_router.get("/orders/{oid}/events")
+async def admin_ic_events(oid: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_section("pochta"))):
+    o = (await db.execute(select(IntercityOrder).where(IntercityOrder.id == oid))).scalars().first()
+    scope = _parcel_scope(current_user)
+    if not o or (scope is not None and scope not in (o.from_city_id, o.to_city_id)):
+        raise HTTPException(status_code=404, detail="Buyurtma topilmadi")
+    ev = (await db.execute(select(IntercityEvent, User).outerjoin(User, User.id == IntercityEvent.actor_id).where(IntercityEvent.order_id == oid).order_by(IntercityEvent.id))).all()
+    return {"items": [{"status": IC_STATUS_UZ.get(e.status, e.status), "role": e.actor_role, "who": u.full_name if u else "", "note": e.note,
+                       "at": e.created_at.isoformat() if e.created_at else None} for e, u in ev]}
+
+
+@admin_express_router.get("/orders/{oid}/photo")
+async def admin_ic_photo(oid: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_section("pochta"))):
+    o = (await db.execute(select(IntercityOrder).where(IntercityOrder.id == oid))).scalars().first()
+    scope = _parcel_scope(current_user)
+    if not o or not o.pickup_photo or (scope is not None and scope not in (o.from_city_id, o.to_city_id)):
+        raise HTTPException(status_code=404, detail="Rasm yo'q")
+    return Response(content=o.pickup_photo, media_type=o.pickup_photo_mime or "image/jpeg")
+
+
+@admin_express_router.post("/orders/{oid}/cancel")
+async def admin_ic_cancel(oid: int, body: ParcelCancelBody, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_section("pochta"))):
+    scope = _parcel_scope(current_user)
+    o = (await db.execute(select(IntercityOrder).where(IntercityOrder.id == oid).with_for_update())).scalars().first()
+    if not o or (scope is not None and scope not in (o.from_city_id, o.to_city_id)):
+        raise HTTPException(status_code=404, detail="Buyurtma topilmadi")
+    if o.status in ("delivered", "cancelled", "returned_done"):
+        raise HTTPException(status_code=400, detail="Bu buyurtma allaqachon yakunlangan")
+    people = [o.f1_id, o.f2_id]
+    if o.cash_held_by_id and (o.cash_held_amount or 0) > 0:
+        await _ic_credit(db, o.cash_held_by_id, float(o.cash_held_amount), f"Tumanlararo #{o.id} bekor qilindi: band qilingan summa qaytarildi", TransactionType.REFUND)
+        o.cash_held_by_id, o.cash_held_amount = None, 0.0
+    drv = o.trip.driver_id if o.trip_id and o.trip else None
+    o.status, o.cancelled_at, o.cancelled_by = "cancelled", datetime.utcnow(), "admin"
+    o.cancel_reason = (body.reason or "").strip()[:200] or None
+    await _ic_event(db, o, "cancelled", current_user, "admin", note=o.cancel_reason or "Administrator bekor qildi")
+    await db.commit()
+    reason = f"\nSabab: {o.cancel_reason}" if o.cancel_reason else ""
+    await _parcel_notify_client(db, o, f"❌ Tumanlararo posilka #{o.id} bekor qilindi.{reason}")
+    for uid in people + ([drv] if drv else []):
+        await _ic_notify(db, uid, f"❌ Tumanlararo posilka #{o.id} administrator tomonidan bekor qilindi.{reason}\nBuyum sizda bo'lsa, jo'natuvchiga qaytaring.")
+    return {"ok": True}
+
+
+class IcServiceBody(BaseModel):
+    key: str
+    value: bool
+
+
+@admin_express_router.get("/services")
+async def admin_ic_services(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_admin_user)):
+    st = await _get_or_create_setting(db)
+    return {"is_owner": current_user.role == UserRole.OWNER, "services": {
+        "pochta_local": bool(getattr(st, "parcel_enabled", False)), "pochta_intercity": bool(getattr(st, "express_enabled", False)),
+        "taxi_local": bool(getattr(st, "taxi_local_enabled", False)), "taxi_magistral": bool(getattr(st, "taxi_magistral_enabled", False))}}
+
+
+@admin_express_router.post("/services")
+async def admin_ic_services_set(body: IcServiceBody, db: AsyncSession = Depends(get_db), owner: User = Depends(require_owner)):
+    col = {"pochta_local": "parcel_enabled", "pochta_intercity": "express_enabled", "taxi_local": "taxi_local_enabled", "taxi_magistral": "taxi_magistral_enabled"}.get(body.key)
+    if not col:
+        raise HTTPException(status_code=400, detail="Noma'lum xizmat")
+    st = await _get_or_create_setting(db)
+    setattr(st, col, bool(body.value))
+    await db.commit()
+    return {"ok": True}
+
+
+
+
 app.include_router(ai_admin_router)
 app.include_router(banner_req_admin_router)
 app.include_router(cancel_router)
 app.include_router(parcel_router)
 app.include_router(courier_parcel_router)
 app.include_router(admin_parcel_router)
+app.include_router(express_router)
+app.include_router(track_router)
+app.include_router(terminal_router)
+app.include_router(courier_express_router)
+app.include_router(driver_express_router)
+app.include_router(admin_express_router)
 app.include_router(support_admin_router)
 app.include_router(partner_router)
 app.include_router(shop_router)

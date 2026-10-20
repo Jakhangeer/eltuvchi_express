@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Posilka kuzatuvi</title>
+<link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css?v=1" />
+<script src="/static/vendor/leaflet/leaflet.js?v=1"></script>
+<style>
+ body{margin:0;background:#f1f5f9;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:#0f172a}
+ .w{max-width:520px;margin:0 auto;padding:14px}
+ .card{background:#fff;border-radius:16px;padding:14px;margin-bottom:12px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+ .bar{display:flex;gap:4px;margin:10px 0}.bar i{flex:1;height:6px;border-radius:3px;background:#e2e8f0}.bar i.on{background:#4f46e5}
+ #map{height:240px;border-radius:12px}.ev{font-size:13px;padding:6px 0;border-top:1px solid #e2e8f0}.ev small{color:#64748b}
+ @media(prefers-color-scheme:dark){body{background:#0f172a;color:#e2e8f0}.card{background:#1e293b}.bar i{background:#334155}.ev{border-color:#334155}}
+</style>
+</head>
+<body><div class="w">
+ <div class="card"><div style="font-size:12px;opacity:.7">ZooMo Express · kuzatuv</div><div id="t" style="font-size:20px;font-weight:800;margin-top:2px">Yuklanmoqda…</div>
+  <div id="r" style="font-size:13px;opacity:.8"></div><div class="bar" id="bar"></div><div id="h" style="font-size:13px"></div></div>
+ <div class="card" id="mapc" style="display:none"><div id="map"></div></div>
+ <div class="card" id="st" style="display:none;font-size:13px"></div>
+ <div class="card"><b style="font-size:14px">Tarix</b><div id="ev"></div></div>
+ <div class="card" id="tm" style="font-size:13px"></div>
+</div>
+<script>
+var TOKEN={{ token|tojson }};var map,mk;
+function e(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+async function load(){
+ var r=await fetch('/api/track/'+encodeURIComponent(TOKEN));
+ if(!r.ok){document.getElementById('t').textContent=r.status===429?'Juda ko\'p so\'rov, keyinroq urinib ko\'ring':'Posilka topilmadi';return;}
+ var d=await r.json();
+ document.getElementById('t').textContent=d.status_label;
+ document.getElementById('r').textContent='📦 '+d.item+' · '+d.from_city+' → '+d.to_city;
+ var b='';for(var i=0;i<d.stages;i++)b+='<i class="'+(i<=d.stage?'on':'')+'"></i>';document.getElementById('bar').innerHTML=b;
+ var hd=d.holder;document.getElementById('h').innerHTML='📍 '+e(hd.label)+(hd.live?' <small>(jonli)</small>':'');
+ if(hd.lat!=null&&hd.lng!=null&&window.L){document.getElementById('mapc').style.display='';
+  if(!map){map=L.map('map').setView([hd.lat,hd.lng],12);L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:18,attribution:'© OSM'}).addTo(map);}
+  if(mk)mk.setLatLng([hd.lat,hd.lng]);else mk=L.marker([hd.lat,hd.lng]).addTo(map);map.setView([hd.lat,hd.lng]);}
+ if(d.storage_days>0||d.status==='at_b'){var s=document.getElementById('st');s.style.display='';s.innerHTML='🏢 Terminalda saqlanmoqda: '+d.storage_days+' kun ('+d.free_days+' kun bepul). '+(d.storage_fee>0?'Saqlash haqi: <b>'+Math.round(d.storage_fee).toLocaleString('ru-RU')+'</b> so\'m.':'')}
+ document.getElementById('ev').innerHTML=d.events.slice().reverse().map(function(x){return '<div class="ev">'+e(x.status)+'<br><small>'+(x.at?new Date(x.at+'Z').toLocaleString('uz-UZ'):'')+'</small></div>';}).join('');
+ document.getElementById('tm').innerHTML=d.terminals.map(function(t){return '🏢 <b>'+e(t.name)+'</b><br>'+e(t.address||'')+(t.hours?' · '+e(t.hours):'');}).join('<hr style="border:0;border-top:1px solid #e2e8f0">');
+}
+load();setInterval(load,20000);
+</script></body></html>

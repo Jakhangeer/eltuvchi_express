@@ -434,6 +434,13 @@
             <div id="pc-active" class="space-y-2 mb-3"></div>
             <div id="pc-avail" class="space-y-2"></div>
         </div>
+        <!-- EXPRESS (shaharlararo pochta) -->
+        <div id="ex-wrap" class="glass fade-up stagger-3 p-5 rounded-2xl hidden" data-cptab="dashboard">
+            <h2 class="text-sm font-extrabold mb-1">🚀 Express pochta</h2>
+            <p class="text-[11px] text-slate-500 mb-3">Shaharlararo: eshikdan olib terminalga topshirasiz yoki terminaldan olib eshikka (PIN bilan) yetkazasiz.</p>
+            <div id="ex-active" class="space-y-2 mb-3"></div>
+            <div id="ex-avail" class="space-y-2"></div>
+        </div>
         <div id="pc-hist-wrap" class="glass fade-up stagger-4 p-5 rounded-2xl hidden" data-cptab="history">
             <h2 class="text-sm font-extrabold mb-2">📮 Pochta tarixi</h2>
             <div id="pc-hist" class="space-y-1.5 text-xs"></div>
@@ -807,6 +814,66 @@
             if(k==='release'&&!confirm('Pochtani rad etasizmi? U boshqa kuryerga qaytadi.'))return;
             b.disabled=true;
             call('/courier/parcels/'+id+'/'+k,body).then(function(){load();}).catch(function(x){alert(x.message);b.disabled=false;});
+        });
+        document.addEventListener('DOMContentLoaded',function(){load();setInterval(function(){if(!document.hidden)load();},9000);});
+    })();
+    </script>
+    <script>
+    (function(){
+        function e(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+        function n(v){return Number(v||0).toLocaleString('ru-RU');}
+        function call(url,body){return fetch(url,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})}).then(function(r){return r.json().catch(function(){return {};}).then(function(d){if(!r.ok){var m=d.detail;throw new Error(typeof m==='string'?m:(m&&m.message)||'Xatolik');}return d;});});}
+        function get(url){return fetch(url,{credentials:'same-origin'}).then(function(r){if(!r.ok)throw new Error('x');return r.json();});}
+        function nav(lat,lng){return (lat!=null&&lng!=null)?' <a class="text-sky-500 font-bold" target="_blank" href="https://www.google.com/maps/dir/?api=1&destination='+lat+','+lng+'">🧭 Yo\'l</a>':'';}
+        function tel(p){return p?'<a class="text-sky-500" href="tel:'+e(p)+'">'+e(p)+'</a>':'';}
+        var B='px-3 py-2 rounded-xl text-white text-xs font-bold ';
+        function act(o){
+            var h='<div class="rounded-xl p-3 border" style="border-color:rgba(245,158,11,.5)"><div class="flex justify-between gap-2"><b>#'+o.id+' · '+e(o.item)+' <span class="text-[10px] text-slate-500">('+e(o.size_label)+')</span></b><span class="text-[10px] font-bold text-amber-600">'+(o.role==='f1'?'1-qism':'2-qism')+' · '+e(o.status_label)+'</span></div>';
+            h+='<div class="text-[11px] mt-1">Sizga: <b>'+n(o.earning)+'</b> so\'m · Stiker: <b>'+e(o.qr)+'</b></div>';
+            if(o.role==='f1'){
+                h+='<div class="text-[11px] mt-1">📍 Olish: '+e(o.pickup_address)+nav(o.pickup_lat,o.pickup_lng)+'</div><div class="text-[11px]">🏢 Terminal: '+e(o.terminal)+' — '+e(o.terminal_address||'')+nav(o.terminal_lat,o.terminal_lng)+'</div>'
+                  +'<div class="text-[11px] text-slate-500">Yuboruvchi: '+e(o.sender_name||'')+' '+tel(o.sender_phone)+'</div>';
+                if(o.status==='f1_accepted'){
+                    if(o.payer==='sender')h+='<div class="text-[11px] mt-1 text-amber-600 font-bold">💵 Jo\'natuvchidan '+n(o.total)+' so\'m naqd olasiz va terminalga topshirasiz</div>';
+                    h+='<div class="text-[11px] mt-2">1) Buyumni rasmga oling 2) Stikerni yopishtiring (kod: <b>'+e(o.qr)+'</b>) 3) Kodni kiriting</div><div class="flex flex-wrap items-center gap-2 mt-1"><input id="exq-'+o.id+'" placeholder="Stiker kodi" class="w-28 p-2 rounded-xl border text-center font-bold text-xs uppercase text-slate-800"><input id="exf-'+o.id+'" type="file" accept="image/*" capture="environment" class="text-[11px] w-44"><button data-ex="pickup1" data-id="'+o.id+'" class="'+B+'bg-indigo-600">📦 Oldim</button><a class="'+B+'bg-slate-500" target="_blank" href="/courier/express/'+o.id+'/label">🖨 Stiker</a><button data-ex="release1" data-id="'+o.id+'" class="'+B+'bg-slate-400">Rad etish</button></div>';
+                } else h+='<div class="text-[11px] mt-2 font-bold text-indigo-600">➡️ Buyumni '+e(o.terminal)+' terminaliga olib boring va operatorga topshiring (QR skanerlanadi).</div>';
+            } else {
+                h+='<div class="text-[11px] mt-1">🏢 Olish: '+e(o.terminal)+' — '+e(o.terminal_address||'')+nav(o.terminal_lat,o.terminal_lng)+'</div><div class="text-[11px]">🏁 Manzil: '+e(o.dropoff_address)+nav(o.dropoff_lat,o.dropoff_lng)+'</div>'
+                  +'<div class="text-[11px] text-slate-500">Qabul qiluvchi: '+e(o.receiver_name)+' '+tel(o.receiver_phone)+'</div>';
+                if(o.collect>0)h+='<div class="text-[11px] mt-1 text-amber-600 font-bold">💵 Qabul qiluvchidan '+n(o.collect)+' so\'m naqd olasiz'+(o.storage_fee>0?' (saqlash haqi '+n(o.storage_fee)+' kiritilgan)':'')+', keyin terminalga topshirasiz</div>';
+                if(o.status==='at_b')h+='<div class="text-[11px] mt-2 font-bold text-indigo-600">➡️ Terminalga boring, operator posilkani sizga topshiradi.</div><button data-ex="release2" data-id="'+o.id+'" class="mt-1 '+B+'bg-slate-400">Rad etish</button>';
+                else if(o.status==='out_for_delivery')h+='<div class="flex flex-wrap items-center gap-2 mt-2"><input id="exp-'+o.id+'" inputmode="numeric" maxlength="4" placeholder="PIN" class="w-20 p-2 rounded-xl border text-center font-bold text-sm text-slate-800"><button data-ex="delivered" data-id="'+o.id+'" class="'+B+'bg-emerald-600">✅ Topshirildi</button><button data-ex="failed" data-id="'+o.id+'" class="'+B+'bg-rose-600">Topshirib bo\'lmadi</button></div>';
+                else if(o.status==='failed')h+='<div class="text-[11px] mt-2 font-bold text-rose-600">↩️ Posilkani terminalga qaytaring (haqingiz hisobingizga yozilgan).</div>';
+            }
+            return h+'</div>';
+        }
+        function load(){
+            Promise.all([get('/courier/express/available'),get('/courier/express/mine')]).then(function(r){
+                var a=r[0],m=r[1],w=document.getElementById('ex-wrap');if(!w)return;
+                w.classList.toggle('hidden',!(a.enabled&&(a.pickups.length||a.deliveries.length||m.active.length||m.cash_held>0)));
+                var el=document.getElementById('ex-active');
+                var busy=document.activeElement&&(document.activeElement.tagName==='INPUT')&&el.contains(document.activeElement);
+                if(!busy)el.innerHTML=(m.cash_held>0?'<div class="text-[11px] p-2 rounded-xl bg-amber-100 text-amber-800 font-bold">💵 Terminalga topshirilmagan naqd: '+n(m.cash_held)+' so\'m</div>':'')+m.active.map(act).join('');
+                function card(o){return '<div class="rounded-xl p-3 border border-slate-300/40"><div class="flex justify-between"><b class="text-xs">#'+e(o.id)+' · '+e(o.item)+' ('+e(o.size_label)+')</b><span class="text-[10px]">'+(o.from_me_km!=null?o.from_me_km+' km':'')+'</span></div><div class="text-[11px] mt-1">'+(o.role==='f1'?'📍 '+e(o.pickup_address)+' → 🏢 '+e(o.terminal):'🏢 '+e(o.terminal)+' → 🏁 '+e(o.dropoff_address))+'</div><div class="text-[11px]">Sizga: <b>'+n(o.earning)+'</b> so\'m'+(o.role==='f1'&&o.payer==='sender'?' · naqd '+n(o.total)+' olasiz':'')+(o.role==='f2'&&o.collect>0?' · naqd '+n(o.collect)+' olasiz':'')+'</div><button data-ex="'+(o.role==='f1'?'accept1':'accept2')+'" data-id="'+o.id+'" class="mt-2 '+B+'bg-indigo-600">Qabul qilish</button></div>';}
+                document.getElementById('ex-avail').innerHTML=a.pickups.map(card).join('')+a.deliveries.map(card).join('');
+            }).catch(function(){});
+        }
+        document.addEventListener('click',function(ev){
+            var b=ev.target.closest('[data-ex]');if(!b)return;var id=b.dataset.id,k=b.dataset.ex;
+            if(k==='release1'||k==='release2'){if(!confirm('Rad etasizmi? Buyurtma boshqa kuryerga qaytadi.'))return;}
+            function done(d){if(k==='pickup1'&&d.collect)alert('Jo\'natuvchidan '+n(d.collect)+' so\'m naqd oling va terminalga topshiring.');if(k==='delivered'&&d.collect)alert('Qabul qiluvchidan '+n(d.collect)+' so\'m naqd olishingiz kerak edi — terminalga topshiring.');load();}
+            function fail(x){alert(x.message);b.disabled=false;}
+            b.disabled=true;
+            if(k==='pickup1'){
+                var q=(document.getElementById('exq-'+id)||{}).value||'',f=document.getElementById('exf-'+id);
+                if(!q||!f||!f.files.length){alert('Stiker kodini kiriting va buyum rasmini oling');b.disabled=false;return;}
+                var fd=new FormData();fd.append('qr',q);fd.append('photo',f.files[0]);
+                fetch('/courier/express/'+id+'/pickup1',{method:'POST',credentials:'same-origin',body:fd}).then(function(r){return r.json().catch(function(){return {};}).then(function(d){if(!r.ok)throw new Error(typeof d.detail==='string'?d.detail:'Xatolik');return d;});}).then(done).catch(fail);return;
+            }
+            var body={};
+            if(k==='delivered'){var c=(document.getElementById('exp-'+id)||{}).value||'';if(c.length<4){alert('4 xonali PIN ni kiriting');b.disabled=false;return;}body={pin:c};}
+            if(k==='failed'){var rs=prompt('Sabab (masalan: telefon o\'chiq):');if(rs===null){b.disabled=false;return;}body={reason:rs};}
+            call('/courier/express/'+id+'/'+k,body).then(done).catch(fail);
         });
         document.addEventListener('DOMContentLoaded',function(){load();setInterval(function(){if(!document.hidden)load();},9000);});
     })();

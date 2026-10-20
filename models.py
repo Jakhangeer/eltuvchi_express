@@ -51,6 +51,9 @@ class City(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=False, unique=True)  # masalan: "Uchquduq", "Zarafshon"
     is_active = Column(Boolean, default=True)
+    # Express pochta: shaharning "markaziy nuqtasi" (narxni taxminiy hisoblash uchun) — owner belgilaydi
+    express_hub_lat = Column(Float, nullable=True)
+    express_hub_lng = Column(Float, nullable=True)
 
     partners = relationship("PartnerProfile", back_populates="city")
     operators = relationship("User", back_populates="city")
@@ -453,6 +456,22 @@ class SystemSetting(Base):
     parcel_large_fee = Column(Float, nullable=True, default=8000.0)      # katta hajm uchun qo'shimcha
     parcel_courier_percent = Column(Float, nullable=True, default=80.0)  # narxdan kuryer ulushi (%)
     parcel_max_km = Column(Float, nullable=True, default=30.0)           # eng uzoq masofa
+    # Express pochta (shaharlararo)
+    express_enabled = Column(Boolean, nullable=True, default=False)
+    express_courier_base = Column(Float, nullable=True, default=6000.0)  # kuryer qismi boshlang'ich narx
+    express_courier_per_km = Column(Float, nullable=True, default=2000.0)
+    express_courier_percent = Column(Float, nullable=True, default=80.0) # kuryer qismidan kuryerga
+    express_default_leg_km = Column(Float, nullable=True, default=4.0)   # shahar markazi belgilanmagan bo'lsa
+    express_max_leg_km = Column(Float, nullable=True, default=20.0)      # eshikdan markazgacha eng uzoq
+    # Xizmatlarni bosqichma-bosqich yoqish kalitlari (owner)
+    taxi_local_enabled = Column(Boolean, nullable=True, default=False)
+    taxi_magistral_enabled = Column(Boolean, nullable=True, default=False)
+    # Tumanlararo posilka (terminalli zanjir)
+    ic_platform_percent = Column(Float, nullable=True, default=10.0)      # jami summadan platforma ulushi (%)
+    ic_free_days = Column(Integer, nullable=True, default=3)              # terminalda bepul saqlash (kun)
+    ic_storage_fee_day = Column(Float, nullable=True, default=2000.0)     # 4-kundan har kuniga (so'm)
+    ic_max_days = Column(Integer, nullable=True, default=8)               # shundan keyin ortga qaytariladi
+    ic_max_value = Column(Float, nullable=True, default=1000000.0)        # e'lon qilinadigan eng katta qiymat
 
     # Har bir rol uchun alohida shartlar — odam shu rolni tanlaganda
     # birinchi bo'lib shu matn ko'rsatiladi, "Roziman" bosmasa davom etolmaydi.
@@ -919,3 +938,184 @@ class ParcelOrder(Base):
 
     client = relationship("User", foreign_keys=[client_id])
     courier = relationship("User", foreign_keys=[courier_id])
+
+
+class ExpressDriver(Base):
+    """Express pochta: shaharlararo qatnovchi ro'yxatdan o'tgan haydovchi (taksi/mashina)."""
+    __tablename__ = "express_drivers"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False, index=True)
+    car_model = Column(String, nullable=True)
+    car_plate = Column(String, nullable=True)
+    is_active = Column(Boolean, default=True)
+    balance = Column(Float, default=0.0)          # topshirilgan pochtalar uchun hisoblangan haq
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
+    location_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User", foreign_keys=[user_id])
+
+
+class ExpressFare(Base):
+    """Shaharlar juftligi bo'yicha taksi (haydovchi) qat'iy narxi — owner belgilaydi."""
+    __tablename__ = "express_fares"
+
+    id = Column(Integer, primary_key=True, index=True)
+    from_city_id = Column(Integer, ForeignKey("cities.id", ondelete="CASCADE"), nullable=False, index=True)
+    to_city_id = Column(Integer, ForeignKey("cities.id", ondelete="CASCADE"), nullable=False, index=True)
+    price_small = Column(Float, nullable=False, default=0.0)
+    price_medium = Column(Float, nullable=False, default=0.0)
+    price_large = Column(Float, nullable=False, default=0.0)
+    is_active = Column(Boolean, default=True)
+
+
+class Terminal(Base):
+    """Tumanlararo posilka terminali — har shaharda bitta."""
+    __tablename__ = "terminals"
+
+    id = Column(Integer, primary_key=True, index=True)
+    city_id = Column(Integer, ForeignKey("cities.id", ondelete="CASCADE"), unique=True, nullable=False, index=True)
+    name = Column(String, nullable=False)
+    address = Column(String, nullable=False)
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
+    work_hours = Column(String, nullable=True)
+    is_active = Column(Boolean, default=True)
+    cash_balance = Column(Float, default=0.0)     # terminal kassasidagi naqd (seyfga o'tkazilgunga qadar)
+
+    city = relationship("City", foreign_keys=[city_id])
+
+
+class TerminalOperator(Base):
+    __tablename__ = "terminal_operators"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False, index=True)
+    terminal_id = Column(Integer, ForeignKey("terminals.id", ondelete="CASCADE"), nullable=False, index=True)
+    is_active = Column(Boolean, default=True)
+
+    user = relationship("User", foreign_keys=[user_id])
+    terminal = relationship("Terminal", foreign_keys=[terminal_id])
+
+
+class LinehaulTrip(Base):
+    """Magistral haydovchining reysi: A-terminal -> B-terminal."""
+    __tablename__ = "linehaul_trips"
+
+    id = Column(Integer, primary_key=True, index=True)
+    driver_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    from_terminal_id = Column(Integer, ForeignKey("terminals.id"), nullable=False, index=True)
+    to_terminal_id = Column(Integer, ForeignKey("terminals.id"), nullable=False, index=True)
+    status = Column(String, default="waiting", index=True)    # waiting | departed | arrived | cancelled
+    created_at = Column(DateTime, default=datetime.utcnow)
+    departed_at = Column(DateTime, nullable=True)
+    arrived_at = Column(DateTime, nullable=True)
+
+    driver = relationship("User", foreign_keys=[driver_id])
+    from_terminal = relationship("Terminal", foreign_keys=[from_terminal_id])
+    to_terminal = relationship("Terminal", foreign_keys=[to_terminal_id])
+
+
+class IntercityOrder(Base):
+    """Tumanlararo posilka: eshik -> Fider-1 -> A-terminal -> magistral -> B-terminal -> Fider-2 -> eshik."""
+    __tablename__ = "intercity_orders"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    from_city_id = Column(Integer, ForeignKey("cities.id"), nullable=False, index=True)
+    to_city_id = Column(Integer, ForeignKey("cities.id"), nullable=False, index=True)
+    from_terminal_id = Column(Integer, ForeignKey("terminals.id"), nullable=False, index=True)
+    to_terminal_id = Column(Integer, ForeignKey("terminals.id"), nullable=False, index=True)
+    # new | f1_accepted | f1_picked | at_a | in_transit | at_b | out_for_delivery | failed | delivered | returning | returned | returned_done | cancelled
+    status = Column(String, nullable=False, default="new", index=True)
+
+    pickup_address = Column(String, nullable=False)
+    pickup_lat = Column(Float, nullable=True)
+    pickup_lng = Column(Float, nullable=True)
+    dropoff_address = Column(String, nullable=False)
+    dropoff_lat = Column(Float, nullable=True)
+    dropoff_lng = Column(Float, nullable=True)
+    receiver_name = Column(String, nullable=False)
+    receiver_phone = Column(String, nullable=False)
+    item_description = Column(String, nullable=False)
+    size = Column(String, nullable=False, default="small")
+    declared_value = Column(Float, default=0.0)
+    comment = Column(Text, nullable=True)
+    payer = Column(String, nullable=False, default="sender")        # sender | receiver (naqd)
+
+    leg1_fee = Column(Float, default=0.0)       # Fider-1 haqi (masofaga)
+    leg3_fee = Column(Float, default=0.0)       # Fider-2 haqi (masofaga)
+    fare = Column(Float, default=0.0)           # magistral haydovchi (qat'iy)
+    platform_fee = Column(Float, default=0.0)
+    total = Column(Float, default=0.0)
+
+    qr_code = Column(String, unique=True, index=True, nullable=False)       # posilka stikeridagi kod
+    track_token = Column(String, unique=True, index=True, nullable=False)   # kuzatuv havolasi (uzun)
+    delivery_pin = Column(String, nullable=False)                           # qabul qiluvchi PIN (4 xonali)
+    pin_sms_sent = Column(Boolean, default=False)                           # PIN qabul qiluvchiga SMS bilan yuborilgan
+
+    f1_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    f2_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    trip_id = Column(Integer, ForeignKey("linehaul_trips.id"), nullable=True, index=True)
+    return_trip_id = Column(Integer, ForeignKey("linehaul_trips.id"), nullable=True)
+
+    pickup_photo = Column(LargeBinary, nullable=True)
+    pickup_photo_mime = Column(String, nullable=True)
+
+    cash_held_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)   # naqd pul hozir kimda
+    cash_held_amount = Column(Float, default=0.0)
+    cash_held_terminal_id = Column(Integer, nullable=True)
+    f1_paid = Column(Boolean, default=False)
+    driver_paid = Column(Boolean, default=False)
+    f2_paid = Column(Boolean, default=False)
+    return_paid = Column(Boolean, default=False)
+    storage_fee_paid = Column(Float, default=0.0)
+    delivery_attempts = Column(Integer, default=0)
+    claimed_at_terminal = Column(Boolean, default=False)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    at_a_at = Column(DateTime, nullable=True)
+    at_b_at = Column(DateTime, nullable=True)
+    delivered_at = Column(DateTime, nullable=True)
+    cancelled_at = Column(DateTime, nullable=True)
+    cancelled_by = Column(String, nullable=True)
+    cancel_reason = Column(String, nullable=True)
+
+    client = relationship("User", foreign_keys=[client_id])
+    f1 = relationship("User", foreign_keys=[f1_id])
+    f2 = relationship("User", foreign_keys=[f2_id])
+    trip = relationship("LinehaulTrip", foreign_keys=[trip_id])
+    from_terminal = relationship("Terminal", foreign_keys=[from_terminal_id])
+    to_terminal = relationship("Terminal", foreign_keys=[to_terminal_id])
+
+
+class IntercityEvent(Base):
+    """Chain of Custody: posilka kimning qo'lida qachon bo'lgan."""
+    __tablename__ = "intercity_events"
+
+    id = Column(Integer, primary_key=True, index=True)
+    order_id = Column(Integer, ForeignKey("intercity_orders.id", ondelete="CASCADE"), nullable=False, index=True)
+    status = Column(String, nullable=False)
+    actor_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    actor_role = Column(String, nullable=True)
+    terminal_id = Column(Integer, nullable=True)
+    note = Column(String, nullable=True)
+    lat = Column(Float, nullable=True)
+    lng = Column(Float, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class TerminalCashLog(Base):
+    """Terminal kassasi harakati (naqd kirim / seyfga chiqim)."""
+    __tablename__ = "terminal_cash_log"
+
+    id = Column(Integer, primary_key=True, index=True)
+    terminal_id = Column(Integer, ForeignKey("terminals.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    amount = Column(Float, nullable=False)          # + kirim, - seyfga/inkassatsiyaga
+    kind = Column(String, nullable=False)           # courier_cash | claim | storage_fee | return_fee | deposit
+    order_id = Column(Integer, nullable=True)
+    note = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)

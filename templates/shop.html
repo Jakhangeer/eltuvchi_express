@@ -749,7 +749,7 @@
 
 
         // ==================== POCHTA (shaxsiy buyum yuborish) ====================
-        let PC = { cfg: null, form: { size: 'small', payer: 'sender', pickup: null, dropoff: null } };
+        let PC = { cfg: null, ex: { enabled: false, destinations: [] }, form: { mode: 'local', to_city: null, size: 'small', payer: 'sender', pickup: null, dropoff: null } };
         const pcE = (v) => String(v == null ? '' : v).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
         const pcN = (v) => Number(v || 0).toLocaleString('ru-RU');
         async function pochtaSlot() {
@@ -770,7 +770,11 @@
             ov.style.cssText = 'position:fixed;inset:0;z-index:99999;background:#000;display:flex;flex-direction:column';
             ov.innerHTML = `<div style="padding:10px;background:#fff;display:flex;gap:8px;align-items:center"><b style="flex:1;font-size:13px">${which === 'pickup' ? '📍 Olish joyini' : '🏁 Topshirish joyini'} xaritada bosing</b><button id="pcm-ok" style="background:#4f46e5;color:#fff;border-radius:10px;padding:8px 14px;font-weight:800;font-size:12px;opacity:.5" disabled>Tasdiqlash</button><button id="pcm-x" style="background:#eee;border-radius:10px;padding:8px 12px;font-size:12px">✕</button></div><div id="pcm-map" style="flex:1"></div>`;
             document.body.appendChild(ov);
-            const cur = PC.form[which] || userLocation;
+            let cur = PC.form[which] || userLocation;
+            if (which === 'dropoff' && PC.form.mode === 'express' && !PC.form.dropoff) {
+                const dd = (PC.ex.destinations || []).find(d => String(d.id) === String(PC.form.to_city));
+                if (dd && dd.lat != null) cur = { lat: dd.lat, lng: dd.lng };
+            }
             const c = cur ? [cur.lat, cur.lng] : [41.5504, 60.6318];
             pcMapObj = L.map('pcm-map').setView(c, 14);
             L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(pcMapObj);
@@ -797,6 +801,12 @@
             if (!f.pickup || !f.dropoff) { box.textContent = "Narxni bilish uchun ikkala joyni belgilang"; return; }
             box.textContent = 'Hisoblanmoqda…';
             try {
+                if (f.mode === 'express') {
+                    if (!f.to_city) { box.textContent = 'Qaysi shaharga yuborilishini tanlang'; return; }
+                    const r = await api('/express/quote', { to_city_id: +f.to_city, pickup_lat: f.pickup.lat, pickup_lng: f.pickup.lng, dropoff_lat: f.dropoff.lat, dropoff_lng: f.dropoff.lng, size: f.size });
+                    box.innerHTML = `🚀 ${pcE(r.from_terminal)} → ${pcE(r.to_terminal)} · Jami: <b class="text-indigo-600">${pcN(r.total)} so'm</b><div class="text-[10px] text-sub mt-1">Eshikdan terminalgacha ${pcN(r.leg1_fee)} + shaharlararo ${pcN(r.fare)} + terminaldan eshikkacha ${pcN(r.leg3_fee)}${r.platform_fee ? ' + xizmat ' + pcN(r.platform_fee) : ''}</div><div class="text-[10px] text-sub">🏢 Olib ketish: ${pcE(r.to_terminal)} terminali — ${pcE(r.to_address || '')}</div>`;
+                    return;
+                }
                 const r = await api('/parcel/quote', { pickup_lat: f.pickup.lat, pickup_lng: f.pickup.lng, dropoff_lat: f.dropoff.lat, dropoff_lng: f.dropoff.lng, size: f.size });
                 box.innerHTML = `Masofa ≈ <b>${r.km} km</b> · Narx: <b class="text-indigo-600">${pcN(r.fee)} so'm</b>`;
             } catch (e) { box.innerHTML = `<span style="color:#dc2626">${pcE(e.message)}</span>`; }
@@ -816,6 +826,7 @@
             const inp = 'class="w-full mt-1 p-2.5 border rounded-xl text-sm card-bg text-title"';
             app.innerHTML = `<div class="space-y-3 pb-24">
               <div class="flex items-center gap-2"><button onclick="goHome()" class="w-9 h-9 rounded-xl card-bg border"><i class="fa-solid fa-arrow-left"></i></button><h1 class="text-lg font-black text-title">📮 Pochta</h1></div>
+              <div id="pc-modebox"></div>
               <div class="card-bg p-3 rounded-2xl border space-y-2">
                 <b class="text-xs">📍 Qayerdan olamiz</b>
                 <input id="pc-pa" ${inp} placeholder="Manzil (ko'cha, uy, mo'ljal)">
@@ -838,21 +849,42 @@
                 <div class="flex gap-1.5">${pcSeg('payer', [['sender', 'Men'], ['receiver', 'Qabul qiluvchi']])}</div>
                 <textarea id="pc-cm" ${inp} rows="2" placeholder="Izoh (ixtiyoriy)"></textarea>
               </div>
+              <div id="pc-exextra" class="card-bg p-3 rounded-2xl border space-y-2" style="display:none">
+                <b class="text-xs">🛡 Shaharlararo yuborish</b>
+                <input id="pc-dv" type="number" min="0" ${inp} placeholder="Buyum qiymati, so'm (ixtiyoriy)">
+                <label class="flex gap-2 text-[11px] items-start"><input type="checkbox" id="pc-rules" class="mt-0.5"> <span>Posilkada ta'qiqlangan buyum (yonuvchi, portlovchi, dori-darmon, giyohvand, qurol, hujjatsiz pul) yo'qligini va ko'rsatilgan qiymat to'g'riligini tasdiqlayman. Posilka terminalda 3 kundan ortiq qolsa saqlash haqi olinadi, 8 kundan keyin qaytariladi.</span></label>
+              </div>
               <div id="pc-quote" class="card-bg p-3 rounded-2xl border text-xs text-sub">Narxni bilish uchun ikkala joyni belgilang</div>
-              <p class="text-[10px] text-sub px-1">Buyum qabul qiluvchiga faqat 4 xonali kod aytilgandagina topshiriladi. Kodni yuborganingizdan so'ng ko'rasiz va qabul qiluvchiga o'zingiz aytasiz.</p>
+              <p class="text-[10px] text-sub px-1">Buyum qabul qiluvchiga faqat 4 xonali PIN kod aytilgandagina topshiriladi.</p>
               <button onclick="pcCreate(this)" class="w-full py-3 rounded-2xl bg-indigo-600 text-white font-black text-sm">Pochta yuborish</button>
               <button onclick="openMyPochta()" class="w-full py-2.5 rounded-2xl bg-gray-100 text-gray-700 font-bold text-xs">📋 Mening pochtalarim</button>
             </div>`;
             window.scrollTo(0, 0);
+            pcLoadExpress();
         }
+        async function pcLoadExpress() {
+            try { PC.ex = await api('/express/config', {}); } catch (e) { PC.ex = { enabled: false, destinations: [] }; }
+            const box = document.getElementById('pc-modebox'); if (!box || !PC.ex.enabled) return;
+            const seg = (m, t) => `<button type="button" onclick="pcMode('${m}')" style="flex:1;padding:9px 4px;border-radius:12px;font-size:12px;font-weight:800;background:${PC.form.mode === m ? '#4f46e5' : '#f3f4f6'};color:${PC.form.mode === m ? '#fff' : '#374151'}">${t}</button>`;
+            box.innerHTML = `<div class="flex gap-1.5">${seg('local', '📮 Shahar ichida')}${seg('express', '🚀 Express (boshqa shaharga)')}</div>` +
+                (PC.form.mode === 'express' ? `<div class="card-bg p-3 rounded-2xl border mt-2"><b class="text-xs">🏙 Qaysi shaharga yuboramiz</b><select id="pc-city" onchange="PC.form.to_city=this.value;pcQuote()" class="w-full mt-1 p-2.5 border rounded-xl text-sm card-bg text-title"><option value="">Shaharni tanlang…</option>${PC.ex.destinations.map(d => `<option value="${d.id}" ${String(PC.form.to_city) === String(d.id) ? 'selected' : ''}>${pcE(d.name)}</option>`).join('')}</select><p class="text-[10px] text-sub mt-1">Kuryer eshikdan oladi → shaharlararo mashina → u shahar kuryeri eshikka yetkazadi. Qabul qiluvchi manzili — <b>boshqa shahardagi</b> manzil (xaritadan shu shahardan belgilang).</p></div>` : '');
+        }
+        function pcMode(m) { PC.form.mode = m; const x = document.getElementById('pc-exextra'); if (x) x.style.display = m === 'express' ? '' : 'none'; pcLoadExpress(); pcQuote(); }
         async function pcCreate(btn) {
             const f = PC.form, v = (id) => (document.getElementById(id) || {}).value || '';
             if (!f.pickup || !f.dropoff) { alert("Olish va topshirish joyini xaritada belgilang."); return; }
             btn.disabled = true;
             try {
-                const r = await api('/parcel/create', { pickup_lat: f.pickup.lat, pickup_lng: f.pickup.lng, dropoff_lat: f.dropoff.lat, dropoff_lng: f.dropoff.lng, size: f.size, payer: f.payer,
-                    pickup_address: v('pc-pa'), dropoff_address: v('pc-da'), receiver_name: v('pc-rn'), receiver_phone: v('pc-rp'), item_description: v('pc-item'), comment: v('pc-cm') });
-                alert('✅ Pochta qabul qilindi!\n\nTopshirish kodi: ' + (r.code || (r.order && r.order.code) || '—') + '\nKodni qabul qiluvchiga ayting — kuryerga faqat shu kodni aytganda buyum topshiriladi.');
+                const common = { pickup_lat: f.pickup.lat, pickup_lng: f.pickup.lng, dropoff_lat: f.dropoff.lat, dropoff_lng: f.dropoff.lng, size: f.size, payer: f.payer,
+                    pickup_address: v('pc-pa'), dropoff_address: v('pc-da'), receiver_name: v('pc-rn'), receiver_phone: v('pc-rp'), item_description: v('pc-item'), comment: v('pc-cm') };
+                let r;
+                if (f.mode === 'express') {
+                    if (!f.to_city) { alert('Qaysi shaharga yuborilishini tanlang.'); btn.disabled = false; return; }
+                    if (!(document.getElementById('pc-rules') || {}).checked) { alert("Ta'qiqlangan buyumlar yo'qligini tasdiqlang."); btn.disabled = false; return; }
+                    r = await api('/express/create', { ...common, to_city_id: +f.to_city, declared_value: +v('pc-dv') || 0, rules_ok: true });
+                } else r = await api('/parcel/create', common);
+                if (PC.form.mode === 'express') alert('✅ Tumanlararo pochta qabul qilindi!\n\nStiker kodi: ' + r.qr + '\n' + (r.pin_sms ? "PIN qabul qiluvchiga SMS bilan yuborildi." : 'Qabul PIN: ' + r.pin + "\nPINni qabul qiluvchiga ayting — kuryerga faqat shu PIN aytilganda buyum topshiriladi.") + '\nKuzatish: ' + (location.origin + r.track_url));
+                else alert('✅ Pochta qabul qilindi!\n\nTopshirish kodi: ' + (r.code || (r.order && r.order.code) || '—') + '\nKodni qabul qiluvchiga ayting — kuryerga faqat shu kodni aytganda buyum topshiriladi.');
                 openMyPochta();
             } catch (e) { alert(e.message); btn.disabled = false; }
         }
@@ -864,18 +896,35 @@
                 const el = document.getElementById('pc-my'); if (!el) { clearInterval(pcTimer); return; }
                 try {
                     const d = await api('/parcel/my', {});
+                    let ex = { items: [] }; try { ex = await api('/express/my', {}); } catch (e) { }
+                    const stepsOrder = ['new', 'f1_accepted', 'f1_picked', 'at_a', 'in_transit', 'at_b', 'out_for_delivery', 'delivered'];
+                    const exHtml = ex.items.map(o => `<div class="card-bg p-3 rounded-2xl border text-xs space-y-1" style="border-color:#c7d2fe">
+                        <div class="flex justify-between gap-2"><b class="text-title">🚀 Express #${o.id} · ${pcE(o.item)}</b><b style="color:${o.status === 'cancelled' ? '#be123c' : o.status === 'delivered' ? '#047857' : '#4338ca'}">${pcE(o.status_label)}</b></div>
+                        ${o.status !== 'cancelled' ? `<div style="height:5px;background:#e5e7eb;border-radius:9px;overflow:hidden"><div style="height:5px;background:#4f46e5;width:${Math.max(5, Math.round((stepsOrder.indexOf(o.status) + 1) / stepsOrder.length * 100))}%"></div></div>` : ''}
+                        <div class="text-sub">📍 ${pcE(o.pickup_address)} → 🏁 ${pcE(o.dropoff_address)}</div>
+                        <div class="text-sub">Qabul qiluvchi: ${pcE(o.receiver_name)} ${pcE(o.receiver_phone)} · ${pcN(o.total)} so'm (${o.payer === 'receiver' ? 'qabul qiluvchi' : 'siz'} to'laydi)</div>
+                        ${o.f1_name ? `<div class="text-sub">🛵 1-kuryer: <b>${pcE(o.f1_name)}</b> <a href="tel:${pcE(o.f1_phone)}" class="text-indigo-600">${pcE(o.f1_phone || '')}</a></div>` : ''}
+                        ${o.driver_name ? `<div class="text-sub">🚗 Haydovchi: <b>${pcE(o.driver_name)}</b> <a href="tel:${pcE(o.driver_phone)}" class="text-indigo-600">${pcE(o.driver_phone || '')}</a></div>` : ''}
+                        ${o.f2_name ? `<div class="text-sub">🛵 2-kuryer: <b>${pcE(o.f2_name)}</b> <a href="tel:${pcE(o.f2_phone)}" class="text-indigo-600">${pcE(o.f2_phone || '')}</a></div>` : ''}
+                        <div class="text-sub">🏷 Stiker: <b>${pcE(o.qr)}</b> · 🏢 ${pcE(o.from_terminal || '')} → ${pcE(o.to_terminal || '')}${o.storage_fee > 0 ? ` · saqlash haqi ${pcN(o.storage_fee)} so'm (${o.storage_days} kun)` : ''}</div>${o.pin ? `<div class="mt-1 inline-block px-3 py-1 rounded-lg bg-indigo-50 text-indigo-700 font-black tracking-widest">Qabul PIN: ${pcE(o.pin)}</div>` : (o.pin_in_sms ? '<div class="text-sub">🔐 PIN qabul qiluvchiga SMS bilan yuborilgan</div>' : '')}<div><a href="${pcE(o.track_url)}" target="_blank" class="text-indigo-600 font-bold">📍 Kuzatish</a></div>
+                        ${(o.status === 'new' || o.status === 'f1_accepted') ? `<div><button onclick="pcExCancel(${o.id})" class="mt-1 px-3 py-1.5 rounded-lg bg-rose-50 text-rose-700 font-bold">Bekor qilish</button></div>` : ''}
+                    </div>`).join('');
                     const col = { new: '#b45309', accepted: '#1d4ed8', picked_up: '#4338ca', delivered: '#047857', cancelled: '#be123c' };
-                    el.innerHTML = d.items.map(o => `<div class="card-bg p-3 rounded-2xl border text-xs space-y-1">
+                    el.innerHTML = exHtml + d.items.map(o => `<div class="card-bg p-3 rounded-2xl border text-xs space-y-1">
                         <div class="flex justify-between gap-2"><b class="text-title">#${o.id} · ${pcE(o.item)}</b><b style="color:${col[o.status] || '#555'}">${pcE(o.status_label)}</b></div>
                         <div class="text-sub">📍 ${pcE(o.pickup_address)} → 🏁 ${pcE(o.dropoff_address)}</div>
                         <div class="text-sub">Qabul qiluvchi: ${pcE(o.receiver_name)} ${pcE(o.receiver_phone)} · ${pcN(o.fee)} so'm (${o.payer === 'receiver' ? 'qabul qiluvchi' : 'siz'} to'laydi)</div>
                         ${o.courier_name ? `<div class="text-sub">🛵 Kuryer: <b>${pcE(o.courier_name)}</b> <a href="tel:${pcE(o.courier_phone)}" class="text-indigo-600">${pcE(o.courier_phone || '')}</a></div>` : ''}
                         ${o.code ? `<div class="mt-1 inline-block px-3 py-1 rounded-lg bg-indigo-50 text-indigo-700 font-black tracking-widest">Kod: ${pcE(o.code)}</div>` : ''}
                         ${(o.status === 'new' || o.status === 'accepted') ? `<div><button onclick="pcCancel(${o.id})" class="mt-1 px-3 py-1.5 rounded-lg bg-rose-50 text-rose-700 font-bold">Bekor qilish</button></div>` : ''}
-                    </div>`).join('') || '<p class="text-center text-xs text-sub py-8">Hozircha pochta yo\'q.</p>';
+                    </div>`).join('') || (exHtml ? '' : '<p class="text-center text-xs text-sub py-8">Hozircha pochta yo\'q.</p>');
                 } catch (e) { el.innerHTML = `<p class="text-xs text-red-500">${pcE(e.message)}</p>`; }
             };
             await draw(); clearInterval(pcTimer); pcTimer = setInterval(draw, 8000);
+        }
+        async function pcExCancel(id) {
+            if (!confirm('Express pochtani bekor qilasizmi?')) return;
+            try { await api('/express/cancel', { id }); openMyPochta(); } catch (e) { alert(e.message); }
         }
         async function pcCancel(id) {
             if (!confirm('Pochtani bekor qilasizmi?')) return;

@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Terminal operatori</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+ body{background:#f1f5f9;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+ .card{background:#fff;border-radius:16px;padding:14px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+ .btn{padding:8px 12px;border-radius:12px;font-weight:700;font-size:13px;background:#4f46e5;color:#fff}
+ .btn2{padding:8px 12px;border-radius:12px;font-weight:700;font-size:13px;background:#e5e7eb;color:#374151}
+ .btng{padding:8px 12px;border-radius:12px;font-weight:700;font-size:13px;background:#059669;color:#fff}
+ input,select{border:1px solid #d1d5db;border-radius:12px;padding:8px;font-size:14px;background:#fff;color:#111}
+ .row{border-top:1px solid #e2e8f0;padding:8px 0;font-size:13px}.hl{background:#fef9c3}
+ @media(prefers-color-scheme:dark){body{background:#0f172a;color:#e2e8f0}.card{background:#1e293b}.row{border-color:#334155}.btn2{background:#334155;color:#e2e8f0}.hl{background:#713f12}}
+</style>
+</head>
+<body class="pb-16">
+<div class="max-w-2xl mx-auto p-3 space-y-3">
+ <div class="card flex items-center justify-between">
+  <div><div class="font-black">🏢 {{ terminal.name }}</div><div class="text-xs opacity-70">{{ terminal.address }} · {{ user.full_name }}</div></div>
+  <div class="text-right"><div class="text-[11px] opacity-70">Kassa (naqd)</div><div class="font-black text-emerald-600" id="cash">0</div><a href="/logout" class="text-[11px] text-indigo-500">Chiqish</a></div>
+ </div>
+ <div class="card">
+  <b class="text-sm">🔍 QR / kod</b>
+  <div class="flex gap-2 mt-2"><input id="q" class="flex-1 uppercase" placeholder="ZMXXXXXX" autocapitalize="characters" oninput="render()"><button class="btn" onclick="scan()">📷 Skanerlash</button></div>
+  <div id="cam" class="hidden mt-2"><video id="vid" playsinline class="w-full rounded-xl"></video><button class="btn2 mt-2" onclick="stopScan()">Yopish</button></div>
+  <div class="text-[11px] opacity-70 mt-1">Skaner ishlamasa, stikerdagi kodni qo'lda kiriting — ro'yxat filtrlanadi.</div>
+ </div>
+ <div id="sec" class="space-y-3"></div>
+</div>
+<script>
+function n(v){return Math.round(v||0).toLocaleString('ru-RU').replace(/ /g,' ');}
+function e(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+async function api(path,body){var o=body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)};var r=await fetch(path,o);var d={};try{d=await r.json();}catch(x){}if(!r.ok)throw new Error(d.detail||'Xatolik');return d;}
+var S=null;
+async function load(){S=await api('/terminal/api/state');document.getElementById('cash').textContent=n(S.terminal.cash)+' so\'m';render();}
+function waitingTrips(toId,out){return S.trips.filter(function(t){return t.status==='waiting'&&t.outgoing;});}
+function match(o){var q=document.getElementById('q').value.trim().toUpperCase();return !q||o.qr.indexOf(q)>=0;}
+function info(o){return '<b>'+e(o.qr)+'</b> #'+o.id+' · '+e(o.item)+' · '+e(o.size)+'<br><span class="opacity-70">'+e(o.from)+' → '+e(o.to)+' · '+(o.payer==='receiver'?'qabul qiluvchi to\'laydi':'jo\'natuvchi to\'ladi')+' · '+n(o.total)+' so\'m</span>';}
+function sec(title,list,fn,hint){list=list.filter(match);if(!list.length)return '';return '<div class="card"><b class="text-sm">'+title+' ('+list.length+')</b>'+(hint?'<div class="text-[11px] opacity-70">'+hint+'</div>':'')+list.map(function(o){return '<div class="row '+(document.getElementById('q').value&&o.qr===document.getElementById('q').value.trim().toUpperCase()?'hl':'')+'">'+info(o)+fn(o)+'</div>';}).join('')+'</div>';}
+function btn(a,o,t,c){return '<button class="'+(c||'btn')+'" data-a="'+a+'" data-qr="'+o.qr+'">'+t+'</button>';}
+function render(){
+ if(!S)return;var h='';
+ h+=sec('⬇️ Fider-1 olib keldi (qabul qiling)',S.incoming_fider,function(o){return '<div class="mt-1">Kuryer: '+e(o.f1||'')+(o.cash_held?' · naqd: <b>'+n(o.cash_held)+'</b> so\'m':'')+'</div><div class="flex gap-2 mt-1"><button class="btng" data-a="receive-from-fider" data-qr="'+o.qr+'">✅ Qabul qildim'+(o.cash_held?' + naqd oldim':'')+'</button><a class="btn2" target="_blank" href="/terminal/api/photo/'+o.id+'">📷 Rasm</a></div>';});
+ h+=sec('📦 Magistralga tayyor (A-terminal)',S.at_a,function(o){var tr=waitingTrips();var opts=tr.filter(function(t){return t.to===o.to;}).map(function(t){return '<option value="'+t.id+'">Reys #'+t.id+' · '+e(t.driver)+'</option>';}).join('');return '<div class="flex gap-2 mt-1 items-center">'+(opts?'<select id="tr'+o.id+'">'+opts+'</select><button class="btn" data-a="load" data-qr="'+o.qr+'" data-sel="tr'+o.id+'">Haydovchiga yukladim</button>':'<span class="text-xs text-amber-600">'+e(o.to)+' yo\'nalishida kutayotgan reys yo\'q</span>')+'<a class="btn2" target="_blank" href="/terminal/api/label/'+o.id+'">🖨</a></div>';});
+ var tr='';S.trips.forEach(function(t){tr+='<div class="row">Reys #'+t.id+' · '+e(t.driver)+' ('+e(t.driver_phone)+') · '+e(t.from)+' → '+e(t.to)+' · <b>'+t.parcels+'</b> posilka · '+({waiting:'kutmoqda',departed:'yo\'lda',arrived:'yetib kelgan'})[t.status]+(t.outgoing&&t.status==='waiting'&&t.parcels?' <button class="btn" data-a="depart" data-id="'+t.id+'">🚗 Jo\'natish</button>':'')+'</div>';});
+ if(tr)h+='<div class="card"><b class="text-sm">🚗 Magistral reyslar</b>'+tr+'</div>';
+ h+=sec('🚗 Haydovchi olib keldi (qabul qiling)',S.incoming_driver,function(o){return '<div class="mt-1">Haydovchi: '+e(o.driver||'')+'</div><div class="mt-1"><button class="btng" data-a="receive-from-driver" data-qr="'+o.qr+'">✅ Qabul qildim</button></div>';});
+ h+=sec('🏢 Terminalda (yetkazish / olib ketish)',S.at_b,function(o){
+  var s='<div class="text-xs mt-1">Qabul qiluvchi: '+e(o.receiver_name)+' '+e(o.receiver_phone)+' · saqlash '+o.days+' kun'+(o.fee?' · <b>haq '+n(o.fee)+'</b>':'')+'</div>';
+  if(o.status==='failed')return s+'<div class="mt-1"><button class="btng" data-a="receive-failed" data-qr="'+o.qr+'">↩️ Kuryer qaytardi — qabul</button></div>';
+  s+='<div class="text-xs">Fider-2: '+(o.f2?e(o.f2)+' '+e(o.f2_phone||''):'<i>hali yo\'q</i>')+'</div><div class="flex flex-wrap gap-2 mt-1">';
+  if(o.f2)s+='<button class="btn" data-a="handover-fider2" data-qr="'+o.qr+'">🛵 Kuryerga topshirdim</button>';
+  s+='<button class="btn2" data-a="claim" data-qr="'+o.qr+'" data-fee="'+(((o.payer==='receiver')?o.total:0)+o.fee)+'">🙋 Egasi o\'zi oldi</button>';
+  if(o.can_return)s+='<button class="btn2" data-a="return" data-qr="'+o.qr+'">↩️ Jo\'natuvchiga qaytarish</button>';
+  return s+'</div>';});
+ h+=sec('🛵 Eshikka olib ketilgan',S.out,function(){return '';});
+ h+=sec('↩️ Qaytib kelmoqda',S.returning_in,function(o){return '<div class="mt-1"><button class="btng" data-a="receive-return" data-qr="'+o.qr+'">✅ Qaytgan posilkani qabul qildim</button></div>';});
+ h+=sec('↩️ Qaytgan — jo\'natuvchi olib ketadi',S.returned,function(o){return '<div class="text-xs mt-1">Jo\'natuvchi: '+e(o.sender)+' '+e(o.sender_phone)+'</div><div class="mt-1"><button class="btn" data-a="claim-return" data-qr="'+o.qr+'">Jo\'natuvchiga topshirish</button></div>';});
+ if(S.cash_couriers.length)h+='<div class="card"><b class="text-sm">💵 Kuryerlardan naqd qabul qilish</b>'+S.cash_couriers.map(function(c){return '<div class="row">'+e(c.name)+' '+e(c.phone)+' · <b>'+n(c.amount)+'</b> so\'m <button class="btng" data-a="cash" data-id="'+c.id+'">Naqd oldim</button></div>';}).join('')+'</div>';
+ h+='<div class="card"><b class="text-sm">🏦 Kassa</b><div class="flex gap-2 mt-2"><input id="dep" type="number" placeholder="Seyfga topshirilgan summa" class="flex-1"><button class="btn2" data-a="deposit">Yozish</button></div></div>';
+ document.getElementById('sec').innerHTML=h||'<div class="card text-sm opacity-70">Hozircha posilka yo\'q</div>';
+}
+document.getElementById('sec').addEventListener('click',async function(ev){
+ var b=ev.target.closest('button[data-a]');if(!b)return;var a=b.dataset.a,qr=b.dataset.qr,body={qr:qr},url='/terminal/api/'+a;
+ try{
+  if(a==='load'){body.trip_id=+document.getElementById(b.dataset.sel).value;}
+  else if(a==='depart'){url='/terminal/api/trips/'+b.dataset.id+'/depart';body={};}
+  else if(a==='cash'){url='/terminal/api/cash/receive';body={courier_id:+b.dataset.id};}
+  else if(a==='deposit'){url='/terminal/api/cash/deposit';body={amount:+document.getElementById('dep').value};}
+  else if(a==='claim'){var m=prompt('Qabul qiluvchi PIN kodi (bo\'sh qoldirsangiz — pasport tekshirildi deb belgilanadi):');if(m===null)return;if(m)body.pin=m;else body.passport_ok=true;var f=+b.dataset.fee;if(f>0){if(!confirm('Qabul qiluvchidan '+n(f)+' so\'m naqd oldingizmi?'))return;body.cash_received=true;}}
+  else if(a==='claim-return'){body.passport_ok=confirm('Jo\'natuvchi pasporti tekshirildimi?');if(!body.passport_ok)return;body.cash_received=confirm('Qaytarish haqi jo\'natuvchidan naqd olindimi?');}
+  else if(a==='return'){var t=S.trips.filter(function(t){return t.status==='waiting'&&t.outgoing;});if(!t.length)return alert('Teskari yo\'nalishdagi kutayotgan reys yo\'q');var id=prompt('Reys raqami: '+t.map(function(x){return '#'+x.id+' ('+x.to+')';}).join(', '));if(!id)return;body.trip_id=+id.replace('#','');}
+  else if(a==='receive-from-fider'){}
+  b.disabled=true;await api(url,body);document.getElementById('q').value='';await load();
+ }catch(x){alert(x.message);b.disabled=false;}
+});
+var stream=null,timer=null;
+function loadJs(src){return new Promise(function(r,j){var s=document.createElement('script');s.src=src;s.onload=r;s.onerror=j;document.head.appendChild(s);});}
+async function scan(){
+ try{
+  stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});var v=document.getElementById('vid');v.srcObject=stream;await v.play();document.getElementById('cam').classList.remove('hidden');
+  var det=null;if('BarcodeDetector' in window){det=new BarcodeDetector({formats:['qr_code']});}else{await loadJs('https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js');}
+  var cv=document.createElement('canvas'),cx=cv.getContext('2d');
+  timer=setInterval(async function(){var code=null;
+   try{if(det){var r=await det.detect(v);if(r.length)code=r[0].rawValue;}else if(v.videoWidth){cv.width=v.videoWidth;cv.height=v.videoHeight;cx.drawImage(v,0,0);var im=cx.getImageData(0,0,cv.width,cv.height);var q=jsQR(im.data,cv.width,cv.height);if(q)code=q.data;}}catch(x){}
+   if(code){document.getElementById('q').value=String(code).trim().toUpperCase();stopScan();render();}},400);
+ }catch(x){alert('Kamera ochilmadi. Kodni qo\'lda kiriting.');}
+}
+function stopScan(){clearInterval(timer);if(stream)stream.getTracks().forEach(function(t){t.stop();});stream=null;document.getElementById('cam').classList.add('hidden');}
+load().catch(function(x){alert(x.message);});setInterval(function(){if(!document.activeElement||document.activeElement.tagName!=='INPUT')load().catch(function(){});},20000);
+</script>
+</body>
+</html>
