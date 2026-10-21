@@ -67,7 +67,7 @@ from models import (
     OperatorPermission,
     PaymentReceipt,
     ParcelOrder,
-    ExpressDriver, ExpressFare, Terminal, TerminalOperator, LinehaulTrip, IntercityOrder, IntercityEvent, TerminalCashLog, MagRoute, MagQueueEntry, MagBooking,
+    ExpressDriver, ExpressFare, Terminal, TerminalOperator, LinehaulTrip, IntercityOrder, IntercityEvent, TerminalCashLog, MagRoute, MagQueueEntry, MagBooking, TaxiDriver, TaxiRide, TaxiBid,
     LedAd,
     AIMessage,
     AIMessageLog,
@@ -682,8 +682,9 @@ async def telegram_login(body: TelegramLoginBody, request: Request, db: AsyncSes
 
     can_driver = (await db.execute(select(ExpressDriver.id).where(ExpressDriver.user_id == user.id, ExpressDriver.is_active == True))).first() is not None
     can_terminal = (await db.execute(select(TerminalOperator.id).where(TerminalOperator.user_id == user.id, TerminalOperator.is_active == True))).first() is not None
+    can_taxi = (await db.execute(select(TaxiDriver.id).where(TaxiDriver.user_id == user.id, TaxiDriver.is_active == True))).first() is not None
 
-    if not (can_admin or can_partner or can_courier or can_driver or can_terminal):
+    if not (can_admin or can_partner or can_courier or can_driver or can_terminal or can_taxi):
         if (user.partner_profile and user.partner_profile.application_status == "pending") or (
             user.courier_profile and user.courier_profile.application_status == "pending"
         ):
@@ -709,6 +710,8 @@ async def telegram_login(body: TelegramLoginBody, request: Request, db: AsyncSes
         redirect_to = "/driver"
     elif can_terminal:
         redirect_to = "/terminal"
+    elif can_taxi:
+        redirect_to = "/taxi"
 
     return {"ok": True, "redirect": redirect_to}
 
@@ -757,7 +760,8 @@ async def login_submit(
     can_courier = user.courier_profile is not None and user.courier_profile.application_status != "pending"
     can_driver = (await db.execute(select(ExpressDriver.id).where(ExpressDriver.user_id == user.id, ExpressDriver.is_active == True))).first() is not None
     can_terminal = (await db.execute(select(TerminalOperator.id).where(TerminalOperator.user_id == user.id, TerminalOperator.is_active == True))).first() is not None
-    available = [can_admin, can_partner, can_courier, can_driver, can_terminal].count(True)
+    can_taxi = (await db.execute(select(TaxiDriver.id).where(TaxiDriver.user_id == user.id, TaxiDriver.is_active == True))).first() is not None
+    available = [can_admin, can_partner, can_courier, can_driver, can_terminal, can_taxi].count(True)
 
     if available == 0 and (
         (user.partner_profile and user.partner_profile.application_status == "pending")
@@ -783,6 +787,8 @@ async def login_submit(
         return RedirectResponse(url="/driver", status_code=status.HTTP_303_SEE_OTHER)
     if can_terminal:
         return RedirectResponse(url="/terminal", status_code=status.HTTP_303_SEE_OTHER)
+    if can_taxi:
+        return RedirectResponse(url="/taxi", status_code=status.HTTP_303_SEE_OTHER)
 
     # Hech qanday panelga ruxsati yo'q (masalan oddiy CLIENT parol bilan
     # kirishga urinsa — clientlar odatda parolga ega bo'lmaydi, lekin
@@ -819,6 +825,8 @@ async def choose_panel(request: Request, db: AsyncSession = Depends(get_db)):
         panels.append({"url": "/driver", "label": "🚗 Magistral haydovchi"})
     if (await db.execute(select(TerminalOperator.id).where(TerminalOperator.user_id == user.id, TerminalOperator.is_active == True))).first():
         panels.append({"url": "/terminal", "label": "🏢 Terminal operatori"})
+    if (await db.execute(select(TaxiDriver.id).where(TaxiDriver.user_id == user.id, TaxiDriver.is_active == True))).first():
+        panels.append({"url": "/taxi", "label": "🚕 Taksi haydovchisi"})
 
     return templates.TemplateResponse(request=request, name="choose_panel.html", context={"panels": panels})
 
@@ -10541,6 +10549,8 @@ async def admin_ic_driver_create(full_name: str = Form(...), phone_number: str =
     u = await find_or_create_login_user(db, phone_number, password, full_name, None)
     if (await db.execute(select(ExpressDriver.id).where(ExpressDriver.user_id == u.id))).first():
         raise HTTPException(status_code=400, detail="Bu foydalanuvchi allaqachon magistral haydovchi")
+    if (await db.execute(select(TaxiDriver.id).where(TaxiDriver.user_id == u.id, TaxiDriver.is_active == True))).first():
+        raise HTTPException(status_code=400, detail="Bu foydalanuvchi ichki taksi haydovchisi — ikkalasi bir vaqtda bo'la olmaydi")
     db.add(ExpressDriver(user_id=u.id, car_model=car_model.strip()[:80] or None, car_plate=car_plate.strip()[:20] or None, is_active=True))
     await db.commit()
     return {"ok": True}
@@ -10844,6 +10854,8 @@ async def driver_mag_apply(body: MagApplyBody, db: AsyncSession = Depends(get_db
     drv = (await db.execute(select(ExpressDriver).where(ExpressDriver.user_id == user.id).with_for_update())).scalars().first()
     if drv.blacklisted:
         raise HTTPException(status_code=403, detail="Siz qora ro'yxatdasiz" + (f": {drv.blacklist_reason}" if drv.blacklist_reason else ""))
+    if (await db.execute(select(TaxiDriver.id).where(TaxiDriver.user_id == user.id, TaxiDriver.is_online == True))).first():
+        raise HTTPException(status_code=400, detail="Siz ichki taksida onlaynsiz. Avval oflayn bo'ling.")
     if (drv.deposit or 0) < cfg["min_deposit"]:
         raise HTTPException(status_code=400, detail=f"Depozit yetarli emas (kerak: {_fm(cfg['min_deposit'])} so'm, sizda: {_fm(drv.deposit or 0)})")
     route = await _mag_route(db, body.from_city_id, body.to_city_id)
@@ -11170,6 +11182,488 @@ async def admin_mag_remove(eid: int, db: AsyncSession = Depends(get_db), owner: 
 
 
 
+# ==================== ICHKI TAKSI (C bosqich): 40 soniyalik takliflar ====================
+def _tx_cfg(setting) -> dict:
+    def g(n, d):
+        v = getattr(setting, n, None)
+        return d if v is None else v
+    return {"enabled": bool(g("taxi_local_enabled", False)), "commission": float(g("taxi_commission_percent", 10.0)), "bid_seconds": int(g("taxi_bid_seconds", 40)),
+            "max_bids": int(g("taxi_max_bids", 3)), "radius_km": float(g("taxi_radius_km", 5.0)), "base_fare": float(g("taxi_base_fare", 5000.0)),
+            "per_km": float(g("taxi_per_km", 2500.0)), "min_balance": float(g("taxi_min_balance", 0.0)), "stale_min": int(g("taxi_stale_min", 5))}
+
+
+TX_ACTIVE = ("assigned", "arrived", "started")
+TX_STATUS_UZ = {"bidding": "Haydovchilar taklif bermoqda", "assigned": "Haydovchi kelmoqda", "arrived": "Haydovchi yetib keldi", "started": "Yo'lda",
+                "completed": "Yakunlandi", "cancelled": "Bekor qilindi", "expired": "Taklif kelmadi"}
+
+
+def _tx_price(cfg: dict, km: float) -> float:
+    return float(math.ceil((cfg["base_fare"] + cfg["per_km"] * km) / 500.0) * 500)
+
+
+def _tx_comm(cfg: dict, price: float) -> float:
+    return float(round(price * cfg["commission"] / 100.0))
+
+
+def _tx_fresh(td: TaxiDriver, cfg: dict) -> bool:
+    return td.location_at is not None and (datetime.utcnow() - td.location_at).total_seconds() <= cfg["stale_min"] * 60
+
+
+async def _tx_expire(db: AsyncSession) -> None:
+    now = datetime.utcnow()
+    rows = (await db.execute(select(TaxiRide).where(TaxiRide.status == "bidding", TaxiRide.bid_deadline < now))).scalars().all()
+    ch = False
+    for r in rows:
+        n = (await db.execute(select(func.count(TaxiBid.id)).where(TaxiBid.ride_id == r.id, TaxiBid.status == "offered"))).scalar() or 0
+        if n == 0 or now > r.bid_deadline + timedelta(seconds=60):
+            r.status = "expired"
+            ch = True
+    if ch:
+        await db.commit()
+
+
+async def _tx_driver_busy(db: AsyncSession, uid: int) -> bool:
+    return bool((await db.execute(select(TaxiRide.id).where(TaxiRide.driver_id == uid, TaxiRide.status.in_(TX_ACTIVE)))).first())
+
+
+# ---------------- Mijoz ----------------
+taxi_client_router = APIRouter(prefix="/api/shop/taxi", tags=["Ichki taksi: mijoz"])
+
+
+class TxQuoteBody(BaseModel):
+    init_data: str
+    pickup_lat: float
+    pickup_lng: float
+    dropoff_lat: float
+    dropoff_lng: float
+
+
+class TxCreateBody(TxQuoteBody):
+    pickup_address: str
+    dropoff_address: str
+    price: float
+    comment: Optional[str] = None
+
+
+class TxChooseBody(BaseModel):
+    init_data: str
+    ride_id: int
+    bid_id: int
+
+
+@taxi_client_router.post("/config")
+async def taxi_config(body: IcConfigBody, db: AsyncSession = Depends(get_db)):
+    client = await _client_for_cancel(db, body.init_data)
+    cfg = _tx_cfg(await _get_or_create_setting(db))
+    ok = cfg["enabled"] and client.city_id is not None
+    return {"enabled": ok, "base_fare": cfg["base_fare"], "per_km": cfg["per_km"], "bid_seconds": cfg["bid_seconds"]}
+
+
+@taxi_client_router.post("/quote")
+async def taxi_quote(body: TxQuoteBody, db: AsyncSession = Depends(get_db)):
+    await _client_for_cancel(db, body.init_data)
+    st = await _get_or_create_setting(db)
+    cfg = _tx_cfg(st)
+    km = _road_km(st, body.pickup_lat, body.pickup_lng, body.dropoff_lat, body.dropoff_lng)
+    if km is None:
+        raise HTTPException(status_code=400, detail="Joylarni xaritada belgilang")
+    return {"km": round(km, 1), "price": _tx_price(cfg, km)}
+
+
+async def _tx_ride_dict(db: AsyncSession, r: TaxiRide, cfg: dict, for_client: bool = True) -> dict:
+    now = datetime.utcnow()
+    d = {"id": r.id, "status": r.status, "status_label": TX_STATUS_UZ.get(r.status, r.status), "pickup_address": r.pickup_address, "dropoff_address": r.dropoff_address,
+         "km": r.km, "start_price": r.start_price, "price": r.price, "seconds_left": max(int((r.bid_deadline - now).total_seconds()), 0) if r.status == "bidding" else 0,
+         "total_seconds": cfg["bid_seconds"]}
+    if r.status == "bidding":
+        bids = (await db.execute(select(TaxiBid).options(selectinload(TaxiBid.driver)).where(TaxiBid.ride_id == r.id, TaxiBid.status == "offered").order_by(TaxiBid.id))).scalars().all()
+        items = []
+        for b in bids:
+            td = (await db.execute(select(TaxiDriver).where(TaxiDriver.user_id == b.driver_id))).scalars().first()
+            items.append({"id": b.id, "price": b.price, "driver": b.driver.full_name.split(" ")[0] if b.driver else "", "car": f"{td.car_model or ''} {td.car_plate or ''}".strip() if td else ""})
+        d["bids"] = items
+    if r.driver_id and r.status in TX_ACTIVE + ("completed",):
+        dr = (await db.execute(select(User).where(User.id == r.driver_id))).scalars().first()
+        td = (await db.execute(select(TaxiDriver).where(TaxiDriver.user_id == r.driver_id))).scalars().first()
+        d.update(driver=dr.full_name if dr else "", driver_phone=dr.phone_number if dr else "", car=f"{td.car_model or ''} {td.car_plate or ''}".strip() if td else "",
+                 driver_lat=td.latitude if td and r.status in TX_ACTIVE else None, driver_lng=td.longitude if td and r.status in TX_ACTIVE else None,
+                 pickup_lat=r.pickup_lat, pickup_lng=r.pickup_lng, dropoff_lat=r.dropoff_lat, dropoff_lng=r.dropoff_lng)
+    return d
+
+
+@taxi_client_router.post("/create")
+async def taxi_create(body: TxCreateBody, db: AsyncSession = Depends(get_db)):
+    client = await _client_for_cancel(db, body.init_data)
+    st = await _get_or_create_setting(db)
+    cfg = _tx_cfg(st)
+    if not cfg["enabled"]:
+        raise HTTPException(status_code=403, detail="Taksi hozircha ishlamayapti")
+    if client.city_id is None:
+        raise HTTPException(status_code=400, detail="Avval shaharingizni tanlang")
+    await _tx_expire(db)
+    if (await db.execute(select(TaxiRide.id).where(TaxiRide.client_id == client.id, TaxiRide.status.in_(("bidding",) + TX_ACTIVE)))).first():
+        raise HTTPException(status_code=400, detail="Sizda faol taksi buyurtmasi bor")
+    pa, da = (body.pickup_address or "").strip()[:200], (body.dropoff_address or "").strip()[:200]
+    if len(pa) < 2 or len(da) < 2:
+        raise HTTPException(status_code=400, detail="Manzillarni kiriting")
+    km = _road_km(st, body.pickup_lat, body.pickup_lng, body.dropoff_lat, body.dropoff_lng)
+    if km is None or km < 0.2:
+        raise HTTPException(status_code=400, detail="Joylarni xaritada to'g'ri belgilang")
+    sug = _tx_price(cfg, km)
+    if not (sug * 0.5 <= body.price <= sug * 3):
+        raise HTTPException(status_code=400, detail=f"Narx {_fm(sug * 0.5)} – {_fm(sug * 3)} so'm oralig'ida bo'lsin")
+    r = TaxiRide(client_id=client.id, city_id=client.city_id, status="bidding", pickup_address=pa, pickup_lat=body.pickup_lat, pickup_lng=body.pickup_lng,
+                 dropoff_address=da, dropoff_lat=body.dropoff_lat, dropoff_lng=body.dropoff_lng, km=round(km, 1), start_price=float(round(body.price)),
+                 comment=(body.comment or "").strip()[:200] or None, bid_deadline=datetime.utcnow() + timedelta(seconds=cfg["bid_seconds"]))
+    db.add(r)
+    await db.commit()
+    try:
+        ds = (await db.execute(select(TaxiDriver, User).join(User, User.id == TaxiDriver.user_id).where(
+            TaxiDriver.city_id == client.city_id, TaxiDriver.is_online == True, TaxiDriver.is_active == True, TaxiDriver.blacklisted == False, User.telegram_id.isnot(None)).limit(50))).all()
+        for td, u in ds:
+            if _tx_fresh(td, cfg) and _haversine_km(td.latitude, td.longitude, r.pickup_lat, r.pickup_lng) <= cfg["radius_km"]:
+                await send_telegram_message(u.telegram_id, f"🚕 Yangi buyurtma: {r.km} km, mijoz taklifi {_fm(r.start_price)} so'm. {cfg['bid_seconds']} soniya ichida taklif bering.")
+    except Exception as e:
+        print(f"Taksi xabari yuborilmadi: {e}")
+    return {"ok": True, "id": r.id}
+
+
+@taxi_client_router.post("/status")
+async def taxi_status(body: IcConfigBody, db: AsyncSession = Depends(get_db)):
+    client = await _client_for_cancel(db, body.init_data)
+    cfg = _tx_cfg(await _get_or_create_setting(db))
+    await _tx_expire(db)
+    r = (await db.execute(select(TaxiRide).where(TaxiRide.client_id == client.id).order_by(TaxiRide.id.desc()))).scalars().first()
+    if not r or (r.status in ("completed", "cancelled", "expired") and r.created_at < datetime.utcnow() - timedelta(minutes=30)):
+        return {"ride": None}
+    return {"ride": await _tx_ride_dict(db, r, cfg)}
+
+
+@taxi_client_router.post("/choose")
+async def taxi_choose(body: TxChooseBody, db: AsyncSession = Depends(get_db)):
+    client = await _client_for_cancel(db, body.init_data)
+    cfg = _tx_cfg(await _get_or_create_setting(db))
+    r = (await db.execute(select(TaxiRide).where(TaxiRide.id == body.ride_id, TaxiRide.client_id == client.id).with_for_update())).scalars().first()
+    if not r or r.status != "bidding":
+        raise HTTPException(status_code=400, detail="Buyurtma holati mos emas")
+    b = (await db.execute(select(TaxiBid).where(TaxiBid.id == body.bid_id, TaxiBid.ride_id == r.id, TaxiBid.status == "offered").with_for_update())).scalars().first()
+    if not b:
+        raise HTTPException(status_code=404, detail="Taklif topilmadi")
+    td = (await db.execute(select(TaxiDriver).where(TaxiDriver.user_id == b.driver_id).with_for_update())).scalars().first()
+    if not td or not td.is_online or not td.is_active or td.blacklisted or await _tx_driver_busy(db, b.driver_id):
+        b.status = "rejected"
+        await db.commit()
+        raise HTTPException(status_code=409, detail="Bu haydovchi band bo'lib qoldi, boshqasini tanlang")
+    if (td.balance or 0) - _tx_comm(cfg, b.price) < cfg["min_balance"]:
+        b.status = "rejected"
+        await db.commit()
+        raise HTTPException(status_code=409, detail="Bu haydovchi hozir buyurtma ola olmaydi, boshqasini tanlang")
+    b.status = "accepted"
+    for o in (await db.execute(select(TaxiBid).where(TaxiBid.ride_id == r.id, TaxiBid.id != b.id, TaxiBid.status == "offered"))).scalars().all():
+        o.status = "rejected"
+    r.status, r.driver_id, r.price, r.commission, r.assigned_at = "assigned", b.driver_id, b.price, _tx_comm(cfg, b.price), datetime.utcnow()
+    await db.commit()
+    await _ic_notify(db, b.driver_id, f"✅ Mijoz sizni tanladi! {r.pickup_address} → {r.dropoff_address}, {_fm(r.price)} so'm. Mijoz: {client.full_name} {client.phone_number}")
+    return {"ok": True}
+
+
+@taxi_client_router.post("/cancel")
+async def taxi_cancel(body: IcIdBody, db: AsyncSession = Depends(get_db)):
+    client = await _client_for_cancel(db, body.init_data)
+    r = (await db.execute(select(TaxiRide).where(TaxiRide.id == body.id, TaxiRide.client_id == client.id).with_for_update())).scalars().first()
+    if not r or r.status not in ("bidding", "assigned", "arrived"):
+        raise HTTPException(status_code=400, detail="Bekor qilib bo'lmaydi")
+    drv = r.driver_id
+    r.status, r.cancelled_by = "cancelled", "client"
+    await db.commit()
+    if drv:
+        await _ic_notify(db, drv, f"❌ Mijoz taksi buyurtmasini bekor qildi (#{r.id}).")
+    return {"ok": True}
+
+
+# ---------------- Haydovchi ----------------
+taxi_driver_router = APIRouter(tags=["Ichki taksi: haydovchi"])
+
+
+async def get_current_taxi_driver(request: Request, db: AsyncSession = Depends(get_db)) -> User:
+    uid = request.session.get("user_id")
+    if not uid:
+        raise RedirectToLogin()
+    user = (await db.execute(select(User).where(User.id == uid))).scalars().first()
+    if not user or not user.is_active:
+        raise RedirectToLogin()
+    if not (await db.execute(select(TaxiDriver.id).where(TaxiDriver.user_id == user.id, TaxiDriver.is_active == True))).first():
+        raise RedirectToLogin()
+    return user
+
+
+@taxi_driver_router.get("/taxi", response_class=HTMLResponse)
+async def taxi_page(request: Request, user: User = Depends(get_current_taxi_driver)):
+    return templates.TemplateResponse(request=request, name="taxi.html", context={"user": user})
+
+
+async def _tx_td(db: AsyncSession, user: User, lock=False) -> TaxiDriver:
+    q = select(TaxiDriver).where(TaxiDriver.user_id == user.id)
+    return (await db.execute(q.with_for_update() if lock else q)).scalars().first()
+
+
+def _tx_ride_for_driver(r: TaxiRide, reveal: bool) -> dict:
+    d = {"id": r.id, "status": r.status, "price": r.price or r.start_price, "start_price": r.start_price, "km": r.km}
+    if reveal:
+        d.update(pickup_address=r.pickup_address, dropoff_address=r.dropoff_address, pickup_lat=r.pickup_lat, pickup_lng=r.pickup_lng, dropoff_lat=r.dropoff_lat,
+                 dropoff_lng=r.dropoff_lng, client=r.client.full_name if r.client else "", client_phone=r.client.phone_number if r.client else "", comment=r.comment,
+                 commission=r.commission)
+    return d
+
+
+@taxi_driver_router.get("/taxi/api/state")
+async def taxi_state(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_taxi_driver)):
+    st = await _get_or_create_setting(db)
+    cfg = _tx_cfg(st)
+    await _tx_expire(db)
+    td = await _tx_td(db, user)
+    active = (await db.execute(select(TaxiRide).options(selectinload(TaxiRide.client)).where(TaxiRide.driver_id == user.id, TaxiRide.status.in_(TX_ACTIVE)).order_by(TaxiRide.id.desc()))).scalars().first()
+    requests = []
+    if td.is_online and not active and cfg["enabled"] and _tx_fresh(td, cfg) and not td.blacklisted:
+        now = datetime.utcnow()
+        rs = (await db.execute(select(TaxiRide).where(TaxiRide.status == "bidding", TaxiRide.city_id == td.city_id, TaxiRide.bid_deadline >= now).order_by(TaxiRide.id.desc()).limit(20))).scalars().all()
+        for r in rs:
+            d = _haversine_km(td.latitude, td.longitude, r.pickup_lat, r.pickup_lng)
+            if d > cfg["radius_km"]:
+                continue
+            bids = (await db.execute(select(TaxiBid).where(TaxiBid.ride_id == r.id, TaxiBid.status.in_(["offered", "accepted"])))).scalars().all()
+            mine = next((b for b in bids if b.driver_id == user.id), None)
+            if len(bids) >= cfg["max_bids"] and not mine:
+                continue
+            requests.append({"id": r.id, "km": r.km, "to_you_km": round(d, 1), "start_price": r.start_price, "seconds_left": max(int((r.bid_deadline - now).total_seconds()), 0),
+                             "my_bid": mine.price if mine else None, "bids": len(bids)})
+    hist = (await db.execute(select(TaxiRide).where(TaxiRide.driver_id == user.id, TaxiRide.status == "completed").order_by(TaxiRide.id.desc()).limit(10))).scalars().all()
+    return {"name": user.full_name, "car": f"{td.car_model or ''} {td.car_plate or ''}".strip(), "online": bool(td.is_online), "balance": td.balance or 0, "enabled": cfg["enabled"],
+            "blacklisted": bool(td.blacklisted), "commission": cfg["commission"], "min_balance": cfg["min_balance"], "max_bids": cfg["max_bids"],
+            "ride": _tx_ride_for_driver(active, True) if active else None, "requests": requests,
+            "history": [{"id": h.id, "price": h.price, "commission": h.commission, "at": h.completed_at.isoformat() if h.completed_at else None} for h in hist]}
+
+
+class TxOnlineBody(BaseModel):
+    value: bool
+
+
+@taxi_driver_router.post("/taxi/api/online")
+async def taxi_online(body: TxOnlineBody, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_taxi_driver)):
+    cfg = _tx_cfg(await _get_or_create_setting(db))
+    td = await _tx_td(db, user, True)
+    if body.value:
+        if not cfg["enabled"]:
+            raise HTTPException(status_code=403, detail="Taksi hozircha yoqilmagan")
+        if td.blacklisted:
+            raise HTTPException(status_code=403, detail="Siz qora ro'yxatdasiz" + (f": {td.blacklist_reason}" if td.blacklist_reason else ""))
+        if (td.balance or 0) < max(cfg["min_balance"], 0):
+            raise HTTPException(status_code=400, detail=f"Balans yetarli emas (kerak: {_fm(cfg['min_balance'])} so'm)")
+        if (await db.execute(select(MagQueueEntry.id).where(MagQueueEntry.driver_id == user.id, MagQueueEntry.status.in_(["waiting", "departed"])))).first():
+            raise HTTPException(status_code=400, detail="Siz magistral navbatdasiz. Avval undan chiqing.")
+        if not _tx_fresh(td, cfg):
+            raise HTTPException(status_code=400, detail="Joylashuv aniqlanmadi. Geolokatsiyani yoqing.")
+    elif await _tx_driver_busy(db, user.id):
+        raise HTTPException(status_code=400, detail="Faol buyurtma bor")
+    td.is_online = body.value
+    await db.commit()
+    return {"ok": True}
+
+
+@taxi_driver_router.post("/taxi/api/location")
+async def taxi_location(body: IcLocBody, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_taxi_driver)):
+    if not (-90 <= body.lat <= 90 and -180 <= body.lng <= 180):
+        raise HTTPException(status_code=400, detail="Koordinata noto'g'ri")
+    td = await _tx_td(db, user)
+    td.latitude, td.longitude, td.location_at = body.lat, body.lng, datetime.utcnow()
+    await db.commit()
+    return {"ok": True}
+
+
+class TxBidBody(BaseModel):
+    ride_id: int
+    price: float
+
+
+@taxi_driver_router.post("/taxi/api/bid")
+async def taxi_bid(body: TxBidBody, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_taxi_driver)):
+    cfg = _tx_cfg(await _get_or_create_setting(db))
+    td = await _tx_td(db, user, True)
+    if not cfg["enabled"] or not td.is_online or td.blacklisted or not _tx_fresh(td, cfg):
+        raise HTTPException(status_code=400, detail="Avval onlayn bo'ling (joylashuv yoqilgan bo'lsin)")
+    if await _tx_driver_busy(db, user.id):
+        raise HTTPException(status_code=400, detail="Sizda faol buyurtma bor")
+    r = (await db.execute(select(TaxiRide).where(TaxiRide.id == body.ride_id).with_for_update())).scalars().first()
+    now = datetime.utcnow()
+    if not r or r.status != "bidding" or r.bid_deadline < now or r.city_id != td.city_id:
+        raise HTTPException(status_code=400, detail="Vaqt tugadi yoki buyurtma mavjud emas")
+    if _haversine_km(td.latitude, td.longitude, r.pickup_lat, r.pickup_lng) > cfg["radius_km"]:
+        raise HTTPException(status_code=400, detail="Buyurtma sizdan uzoqda")
+    if not (r.start_price * 0.5 <= body.price <= r.start_price * 3):
+        raise HTTPException(status_code=400, detail=f"Narx {_fm(r.start_price * 0.5)} – {_fm(r.start_price * 3)} so'm oralig'ida bo'lsin")
+    if (td.balance or 0) - _tx_comm(cfg, body.price) < cfg["min_balance"]:
+        raise HTTPException(status_code=400, detail="Balansingiz bu narxdagi komissiya uchun yetarli emas")
+    bids = (await db.execute(select(TaxiBid).where(TaxiBid.ride_id == r.id, TaxiBid.status == "offered"))).scalars().all()
+    if any(b.driver_id == user.id for b in bids):
+        raise HTTPException(status_code=400, detail="Siz allaqachon taklif berdingiz")
+    if len(bids) >= cfg["max_bids"]:
+        raise HTTPException(status_code=409, detail=f"Bu buyurtmaga {cfg['max_bids']} ta taklif berilib bo'lgan")
+    db.add(TaxiBid(ride_id=r.id, driver_id=user.id, price=float(round(body.price))))
+    await db.commit()
+    return {"ok": True}
+
+
+async def _tx_my_ride(db: AsyncSession, rid: int, user: User, statuses) -> TaxiRide:
+    r = (await db.execute(select(TaxiRide).options(selectinload(TaxiRide.client)).where(TaxiRide.id == rid, TaxiRide.driver_id == user.id, TaxiRide.status.in_(statuses)).with_for_update())).scalars().first()
+    if not r:
+        raise HTTPException(status_code=404, detail="Buyurtma topilmadi yoki holati mos emas")
+    return r
+
+
+@taxi_driver_router.post("/taxi/api/rides/{rid}/arrive")
+async def taxi_arrive(rid: int, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_taxi_driver)):
+    r = await _tx_my_ride(db, rid, user, ["assigned"])
+    r.status = "arrived"
+    await db.commit()
+    await _ic_notify(db, r.client_id, f"🚕 Haydovchi {user.full_name} yetib keldi.")
+    return {"ok": True}
+
+
+@taxi_driver_router.post("/taxi/api/rides/{rid}/start")
+async def taxi_start(rid: int, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_taxi_driver)):
+    r = await _tx_my_ride(db, rid, user, ["assigned", "arrived"])
+    r.status = "started"
+    await db.commit()
+    return {"ok": True}
+
+
+@taxi_driver_router.post("/taxi/api/rides/{rid}/complete")
+async def taxi_complete(rid: int, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_taxi_driver)):
+    r = await _tx_my_ride(db, rid, user, ["started"])
+    td = await _tx_td(db, user, True)
+    td.balance = (td.balance or 0) - (r.commission or 0)
+    if r.commission:
+        db.add(Transaction(user_id=user.id, type=TransactionType.WITHDRAWAL, amount=r.commission, note=f"Taksi #{r.id} komissiyasi"))
+    r.status, r.completed_at = "completed", datetime.utcnow()
+    await db.commit()
+    await _ic_notify(db, r.client_id, f"✅ Safar yakunlandi. Narx: {_fm(r.price)} so'm (naqd). Rahmat!")
+    return {"ok": True}
+
+
+@taxi_driver_router.post("/taxi/api/rides/{rid}/cancel")
+async def taxi_driver_cancel(rid: int, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_taxi_driver)):
+    r = await _tx_my_ride(db, rid, user, ["assigned", "arrived"])
+    r.status, r.cancelled_by = "cancelled", "driver"
+    await db.commit()
+    await _ic_notify(db, r.client_id, "⚠️ Haydovchi buyurtmani bekor qildi. Iltimos, qayta buyurtma bering.")
+    return {"ok": True}
+
+
+# ---------------- Admin ----------------
+admin_taxi_router = APIRouter(prefix="/admin/taxi", tags=["Ichki taksi boshqaruvi"])
+
+
+@admin_taxi_router.get("/overview")
+async def admin_taxi_overview(db: AsyncSession = Depends(get_db), current_user: User = Depends(require_section("taksi"))):
+    await _tx_expire(db)
+    cfg = _tx_cfg(await _get_or_create_setting(db))
+    cities = (await db.execute(select(City).order_by(City.name))).scalars().all()
+    ds = (await db.execute(select(TaxiDriver, User).join(User, User.id == TaxiDriver.user_id).order_by(User.full_name))).all()
+    rides = (await db.execute(select(TaxiRide).options(selectinload(TaxiRide.client), selectinload(TaxiRide.driver)).order_by(TaxiRide.id.desc()).limit(60))).scalars().all()
+    return {"cfg": cfg, "is_owner": current_user.role == UserRole.OWNER, "cities": [{"id": c.id, "name": c.name} for c in cities],
+            "drivers": [{"user_id": u.id, "name": u.full_name, "phone": u.phone_number, "city_id": d.city_id, "car": f"{d.car_model or ''} {d.car_plate or ''}".strip(), "balance": d.balance or 0,
+                         "online": bool(d.is_online), "active": bool(d.is_active), "blacklisted": bool(d.blacklisted), "reason": d.blacklist_reason} for d, u in ds],
+            "rides": [{"id": r.id, "status": r.status, "label": TX_STATUS_UZ.get(r.status, r.status), "client": r.client.full_name if r.client else "", "client_phone": r.client.phone_number if r.client else "",
+                       "driver": r.driver.full_name if r.driver else "", "from": r.pickup_address, "to": r.dropoff_address, "km": r.km, "price": r.price or r.start_price, "commission": r.commission,
+                       "at": r.created_at.isoformat() if r.created_at else None} for r in rides]}
+
+
+@admin_taxi_router.post("/settings")
+async def admin_taxi_settings(commission: float = Form(10.0, allow_inf_nan=False), bid_seconds: int = Form(40), max_bids: int = Form(3), radius_km: float = Form(5.0, allow_inf_nan=False),
+                              base_fare: float = Form(5000.0, allow_inf_nan=False), per_km: float = Form(2500.0, allow_inf_nan=False),
+                              min_balance: float = Form(0.0, allow_inf_nan=False), db: AsyncSession = Depends(get_db), owner: User = Depends(require_owner)):
+    if not (0 <= commission <= 60) or not (10 <= bid_seconds <= 300) or not (1 <= max_bids <= 10) or not (0.5 <= radius_km <= 100) \
+            or not (0 <= base_fare <= 1_000_000) or not (0 <= per_km <= 100_000) or not (-1_000_000_000 <= min_balance <= 1_000_000_000):
+        raise HTTPException(status_code=400, detail="Qiymatlar noto'g'ri")
+    st = await _get_or_create_setting(db)
+    st.taxi_commission_percent, st.taxi_bid_seconds, st.taxi_max_bids, st.taxi_radius_km = commission, bid_seconds, max_bids, radius_km
+    st.taxi_base_fare, st.taxi_per_km, st.taxi_min_balance = base_fare, per_km, min_balance
+    await db.commit()
+    return {"ok": True}
+
+
+@admin_taxi_router.post("/drivers/create")
+async def admin_taxi_driver_create(full_name: str = Form(...), phone_number: str = Form(...), password: str = Form(...), city_id: int = Form(...),
+                                   car_model: str = Form(""), car_plate: str = Form(""), db: AsyncSession = Depends(get_db), owner: User = Depends(require_owner)):
+    if not (await db.execute(select(City.id).where(City.id == city_id))).first():
+        raise HTTPException(status_code=404, detail="Shahar topilmadi")
+    u = await find_or_create_login_user(db, phone_number, password, full_name, city_id)
+    if (await db.execute(select(TaxiDriver.id).where(TaxiDriver.user_id == u.id))).first():
+        raise HTTPException(status_code=400, detail="Bu foydalanuvchi allaqachon taksi haydovchisi")
+    if (await db.execute(select(ExpressDriver.id).where(ExpressDriver.user_id == u.id, ExpressDriver.is_active == True))).first():
+        raise HTTPException(status_code=400, detail="Bu foydalanuvchi magistral haydovchi — ikkalasi bir vaqtda bo'la olmaydi")
+    db.add(TaxiDriver(user_id=u.id, city_id=city_id, car_model=car_model.strip()[:80] or None, car_plate=car_plate.strip()[:20] or None, is_active=True))
+    await db.commit()
+    return {"ok": True}
+
+
+class TxDrvToggle(BaseModel):
+    active: bool
+
+
+@admin_taxi_router.post("/drivers/{uid}/active")
+async def admin_taxi_driver_active(uid: int, body: TxDrvToggle, db: AsyncSession = Depends(get_db), owner: User = Depends(require_owner)):
+    td = (await db.execute(select(TaxiDriver).where(TaxiDriver.user_id == uid))).scalars().first()
+    if not td:
+        raise HTTPException(status_code=404, detail="Haydovchi topilmadi")
+    if body.active and (await db.execute(select(ExpressDriver.id).where(ExpressDriver.user_id == uid, ExpressDriver.is_active == True))).first():
+        raise HTTPException(status_code=400, detail="Bu foydalanuvchi magistral haydovchi sifatida faol")
+    td.is_active = body.active
+    if not body.active:
+        td.is_online = False
+    await db.commit()
+    return {"ok": True}
+
+
+@admin_taxi_router.post("/drivers/{uid}/blacklist")
+async def admin_taxi_blacklist(uid: int, body: MagBlackBody, db: AsyncSession = Depends(get_db), owner: User = Depends(require_owner)):
+    td = (await db.execute(select(TaxiDriver).where(TaxiDriver.user_id == uid))).scalars().first()
+    if not td:
+        raise HTTPException(status_code=404, detail="Haydovchi topilmadi")
+    td.blacklisted = body.value
+    td.blacklist_reason = ((body.reason or "").strip()[:200] or None) if body.value else None
+    if body.value:
+        td.is_online = False
+    await db.commit()
+    return {"ok": True}
+
+
+@admin_taxi_router.post("/drivers/{uid}/balance")
+async def admin_taxi_balance(uid: int, body: MagDepositBody, db: AsyncSession = Depends(get_db), owner: User = Depends(require_owner)):
+    td = (await db.execute(select(TaxiDriver).where(TaxiDriver.user_id == uid).with_for_update())).scalars().first()
+    if not td or body.amount == 0 or abs(body.amount) > 1_000_000_000:
+        raise HTTPException(status_code=400, detail="Summa noto'g'ri")
+    td.balance = (td.balance or 0) + body.amount
+    db.add(Transaction(user_id=uid, type=TransactionType.DEPOSIT if body.amount > 0 else TransactionType.WITHDRAWAL, amount=abs(body.amount),
+                       note="Taksi balansi " + ("to'ldirildi" if body.amount > 0 else "kamaytirildi"), created_by_id=owner.id))
+    await db.commit()
+    return {"ok": True}
+
+
+@admin_taxi_router.post("/rides/{rid}/cancel")
+async def admin_taxi_cancel(rid: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_section("taksi"))):
+    r = (await db.execute(select(TaxiRide).where(TaxiRide.id == rid).with_for_update())).scalars().first()
+    if not r or r.status not in ("bidding",) + TX_ACTIVE:
+        raise HTTPException(status_code=400, detail="Bekor qilib bo'lmaydi")
+    r.status, r.cancelled_by = "cancelled", "admin"
+    await db.commit()
+    await _ic_notify(db, r.client_id, "❌ Taksi buyurtmangiz administrator tomonidan bekor qilindi.")
+    if r.driver_id:
+        await _ic_notify(db, r.driver_id, f"❌ Taksi buyurtma #{r.id} administrator tomonidan bekor qilindi.")
+    return {"ok": True}
+
+
+
 app.include_router(ai_admin_router)
 app.include_router(banner_req_admin_router)
 app.include_router(cancel_router)
@@ -11182,6 +11676,9 @@ app.include_router(terminal_router)
 app.include_router(driver_mag_router)
 app.include_router(mag_client_router)
 app.include_router(admin_mag_router)
+app.include_router(taxi_client_router)
+app.include_router(taxi_driver_router)
+app.include_router(admin_taxi_router)
 app.include_router(courier_express_router)
 app.include_router(driver_express_router)
 app.include_router(admin_express_router)

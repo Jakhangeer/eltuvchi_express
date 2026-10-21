@@ -1895,7 +1895,7 @@
                 function num(l,nm,v,st){return '<div><label class="text-xs">'+l+'</label><input '+INP+' type="number" step="'+(st||1)+'" min="0" name="'+nm+'" value="'+v+'"></div>';}
                 function ownerHtml(){
                     var c=O.cfg,h='';
-                    h+='<div><b class="text-xs">🔌 Xizmatlar (ketma-ket yoqib boriladi)</b><div class="grid grid-cols-2 gap-2 mt-1">'+[['pochta_local','📮 Shahar ichida pochta'],['pochta_intercity','🚀 Tumanlararo posilka'],['taxi_local','🚕 Ichki taksi'],['taxi_magistral','🚐 Magistral taksi']].map(function(x){var on=SV&&SV.services[x[0]];return '<label class="flex items-center gap-2 p-2 border rounded-lg text-xs font-bold"><input type="checkbox" data-svc="'+x[0]+'" '+(on?'checked':'')+'> '+x[1]+'</label>';}).join('')+'</div><p class="text-[11px] text-gray-500 mt-1">Ichki va magistral taksi hozircha faqat belgi sifatida saqlanadi (keyingi bosqichlarda ishga tushadi).</p></div>';
+                    h+='<div><b class="text-xs">🔌 Xizmatlar (ketma-ket yoqib boriladi)</b><div class="grid grid-cols-2 gap-2 mt-1">'+[['pochta_local','📮 Shahar ichida pochta'],['pochta_intercity','🚀 Tumanlararo posilka'],['taxi_local','🚕 Ichki taksi'],['taxi_magistral','🚐 Magistral taksi']].map(function(x){var on=SV&&SV.services[x[0]];return '<label class="flex items-center gap-2 p-2 border rounded-lg text-xs font-bold"><input type="checkbox" data-svc="'+x[0]+'" '+(on?'checked':'')+'> '+x[1]+'</label>';}).join('')+'</div><p class="text-[11px] text-gray-500 mt-1">Ichki va magistral taksi sozlamalari «Taksi» bo\'limida.</p></div>';
                     h+='<form id="ex-set" class="space-y-2"><b class="text-xs">⚙️ Sozlamalar</b><input type="hidden" name="express_enabled" value="'+(c.enabled?'1':'')+'"><div class="grid grid-cols-2 md:grid-cols-4 gap-2">'
                       +num('Fider boshlang\'ich (so\'m)','courier_base',c.leg_base,500)+num('Fider har km (so\'m)','courier_per_km',c.leg_per_km,100)+num('Platforma ulushi (%)','platform_percent',c.platform_percent,0.5)
                       +num('Eshikdan terminalgacha eng uzoq (km)','max_leg_km',c.max_leg_km)+num('Bepul saqlash (kun)','free_days',c.free_days)+num('Saqlash haqi (so\'m/kun)','storage_fee_day',c.storage_fee_day,500)
@@ -2036,6 +2036,49 @@
         <section class="app-page" data-page="taksi" style="display:none;">
             <div class="card-bg bg-white p-6 rounded-xl shadow-md">
                 <h2 class="theme-title text-lg font-bold mb-2 text-indigo-700">🚕 Taksi</h2>
+                <div class="rounded-xl border p-4 mb-6" id="tx-box">
+                    <div class="flex items-center justify-between flex-wrap gap-2 mb-1"><h3 class="font-bold text-sm text-indigo-700">🚕 Ichki taksi (shahar ichida)</h3><span id="tx-badge" class="text-[11px] font-bold px-2 py-0.5 rounded-full bg-gray-200 text-gray-600">…</span></div>
+                    <p class="text-xs text-gray-500 mb-3">Mijoz buyurtma beradi, haydovchilar 40 soniya ichida (eng ko'pi 3 ta) narx taklif qiladi, mijoz tanlaydi. Tanlangandan keyingina ma'lumotlar ochiladi. Naqd to'lov, ulush haydovchi balansidan yechiladi. Yoqish: Pochta → Xizmatlar → Ichki taksi.</p>
+                    <div id="tx-owner" class="space-y-4"></div>
+                    <h4 class="font-bold text-xs mt-4 mb-2">🚗 Taksi haydovchilari</h4><div id="tx-drivers" class="space-y-1.5 text-xs"></div>
+                    <h4 class="font-bold text-xs mt-4 mb-2">📋 Oxirgi buyurtmalar</h4><div id="tx-rides" class="space-y-1.5 text-xs"></div>
+                </div>
+                <script>
+                (function(){
+                    function e(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+                    function n(v){return Number(v||0).toLocaleString('ru-RU');}
+                    function j(url,opt){return fetch(url,Object.assign({credentials:'same-origin'},opt||{})).then(function(r){return r.json().catch(function(){return {};}).then(function(d){if(!r.ok)throw new Error(typeof d.detail==='string'?d.detail:'Xatolik');return d;});});}
+                    function post(url,body){return j(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})});}
+                    var X=null,INP='class="block w-full mt-1 p-2 border rounded-lg text-sm dark:bg-gray-800"',CN={};
+                    function num(l,nm,v,st){return '<div><label class="text-xs">'+l+'</label><input '+INP+' type="number" step="'+(st||1)+'" name="'+nm+'" value="'+v+'"></div>';}
+                    function owner(){var c=X.cfg;
+                        return '<form id="tx-set" class="space-y-2"><div class="grid grid-cols-2 md:grid-cols-4 gap-2">'+num('Platforma ulushi (%)','commission',c.commission,0.5)+num('Taklif vaqti (soniya)','bid_seconds',c.bid_seconds)+num('Eng ko\'p taklif','max_bids',c.max_bids)+num('Qidiruv radiusi (km)','radius_km',c.radius_km,0.5)+num('Boshlang\'ich narx','base_fare',c.base_fare,500)+num('Har km (so\'m)','per_km',c.per_km,100)+num('Minimal balans','min_balance',c.min_balance,1000)+'</div><button class="bg-indigo-600 text-white py-2 px-4 rounded-lg font-bold text-sm">Saqlash</button> <span id="tx-msg" class="text-xs text-emerald-600"></span></form>'
+                        +'<form id="tx-drv" class="flex flex-wrap items-end gap-2"><b class="text-xs w-full">➕ Taksi haydovchisi qo\'shish</b><input name="full_name" placeholder="Ismi" class="p-1.5 border rounded text-xs dark:bg-gray-800" required><input name="phone_number" placeholder="+998..." class="p-1.5 border rounded text-xs dark:bg-gray-800" required><input name="password" placeholder="Parol" class="p-1.5 border rounded text-xs dark:bg-gray-800" required><select name="city_id" class="p-1.5 border rounded text-xs dark:bg-gray-800">'+X.cities.map(function(c){return '<option value="'+c.id+'">'+e(c.name)+'</option>';}).join('')+'</select><input name="car_model" placeholder="Mashina" class="p-1.5 border rounded text-xs dark:bg-gray-800"><input name="car_plate" placeholder="Raqami" class="p-1.5 border rounded text-xs dark:bg-gray-800"><button class="bg-indigo-600 text-white py-1.5 px-3 rounded text-xs font-bold">Qo\'shish</button></form>';}
+                    function render(){
+                        document.getElementById('tx-drivers').innerHTML=X.drivers.map(function(d){return '<div class="flex flex-wrap items-center gap-2 p-2 border rounded-lg"><b>'+e(d.name)+'</b> '+e(d.phone)+' · '+e(CN[d.city_id]||'')+' · '+e(d.car)+' · balans <b>'+n(d.balance)+'</b> '+(d.online?'🟢':'⚪')+(d.blacklisted?' <span class="text-rose-600 font-bold">⛔'+(d.reason?' '+e(d.reason):'')+'</span>':'')+(X.is_owner?' <button data-txb="'+d.user_id+'" class="px-2 py-0.5 rounded bg-emerald-100 text-emerald-700">Balans ±</button><button data-txbl="'+d.user_id+'" data-v="'+(d.blacklisted?'0':'1')+'" class="px-2 py-0.5 rounded '+(d.blacklisted?'bg-gray-100':'bg-rose-100 text-rose-700')+'">'+(d.blacklisted?'Qora ro\'yxatdan chiqarish':'Qora ro\'yxatga')+'</button><button data-txa="'+d.user_id+'" data-v="'+(d.active?'0':'1')+'" class="px-2 py-0.5 rounded bg-gray-100">'+(d.active?'O\'chirish':'Yoqish')+'</button>':'')+'</div>';}).join('')||'<p class="text-gray-500">Haydovchi yo\'q</p>';
+                        document.getElementById('tx-rides').innerHTML=X.rides.map(function(r){return '<div class="p-2 border rounded-lg"><b>#'+r.id+'</b> '+e(r.label)+' · '+e(r.from)+' → '+e(r.to)+' · '+r.km+' km · <b>'+n(r.price)+'</b> · '+e(r.client)+' '+e(r.client_phone)+(r.driver?' · 🚕 '+e(r.driver):'')+((['bidding','assigned','arrived','started'].indexOf(r.status)>=0)?' <button data-txc="'+r.id+'" class="px-2 py-0.5 rounded bg-rose-100 text-rose-700">Bekor qilish</button>':'')+'</div>';}).join('')||'<p class="text-gray-500">Hali yo\'q</p>';
+                    }
+                    function wire(){
+                        var f=document.getElementById('tx-set');f.onsubmit=function(ev){ev.preventDefault();j('/admin/taxi/settings',{method:'POST',body:new FormData(f)}).then(function(){document.getElementById('tx-msg').textContent='✓ Saqlandi';load();}).catch(function(x){alert(x.message);});};
+                        var d=document.getElementById('tx-drv');d.onsubmit=function(ev){ev.preventDefault();j('/admin/taxi/drivers/create',{method:'POST',body:new FormData(d)}).then(function(){d.reset();load();}).catch(function(x){alert(x.message);});};
+                    }
+                    function load(){j('/admin/taxi/overview').then(function(d){X=d;CN={};X.cities.forEach(function(c){CN[c.id]=c.name;});
+                        var b=document.getElementById('tx-badge');b.textContent=X.cfg.enabled?'🟢 Yoqilgan':'⚪ O\'chirilgan';b.className='text-[11px] font-bold px-2 py-0.5 rounded-full '+(X.cfg.enabled?'bg-emerald-100 text-emerald-700':'bg-gray-200 text-gray-600');
+                        var ow=document.getElementById('tx-owner');
+                        if(X.is_owner&&!(document.activeElement&&ow.contains(document.activeElement)&&document.activeElement.matches('input,select'))){ow.innerHTML=owner();wire();}else if(!X.is_owner)ow.innerHTML='<p class="text-xs text-gray-500">Sozlamalarni faqat egasi o\'zgartiradi.</p>';
+                        render();}).catch(function(x){var q=document.getElementById('tx-rides');if(q)q.innerHTML='<p class="text-red-500">'+e(x.message)+'</p>';});}
+                    document.addEventListener('DOMContentLoaded',function(){
+                        document.addEventListener('click',function(ev){
+                            if(ev.target.closest('[data-page-btn="taksi"]'))setTimeout(load,80);
+                            var b=ev.target.closest('[data-txb]');if(b){var a=prompt('Balans o\'zgarishi (so\'m; kamaytirish uchun minus):','');if(a&&+a!==0)post('/admin/taxi/drivers/'+b.dataset.txb+'/balance',{amount:+a}).then(load).catch(function(x){alert(x.message);});}
+                            b=ev.target.closest('[data-txbl]');if(b){var on=b.dataset.v==='1',r=on?prompt('Sabab:',''):'';if(r!==null)post('/admin/taxi/drivers/'+b.dataset.txbl+'/blacklist',{value:on,reason:r}).then(load).catch(function(x){alert(x.message);});}
+                            b=ev.target.closest('[data-txa]');if(b)post('/admin/taxi/drivers/'+b.dataset.txa+'/active',{active:b.dataset.v==='1'}).then(load).catch(function(x){alert(x.message);});
+                            b=ev.target.closest('[data-txc]');if(b&&confirm('Buyurtmani bekor qilasizmi?'))post('/admin/taxi/rides/'+b.dataset.txc+'/cancel').then(load).catch(function(x){alert(x.message);});
+                        });
+                        setInterval(function(){var pg=document.querySelector('.app-page[data-page="taksi"]');if(pg&&pg.style.display!=='none'&&!document.hidden&&!document.activeElement.matches('input,select,textarea'))load();},15000);
+                    });
+                })();
+                </script>
                 <p class="text-xs text-gray-500 mb-3">🚐 Magistral taksi (shaharlararo): haydovchilar terminal yaqinida navbatga yoziladi, yo'lovchilar o'rindiq bron qiladi, posilkalar ham shu mashinada ketadi. Ichki taksi keyingi bosqichda.</p>
                 <div id="mag-owner" class="space-y-4"></div>
                 <h4 class="font-bold text-xs mt-4 mb-2">🚦 Hozirgi navbat va reyslar</h4>

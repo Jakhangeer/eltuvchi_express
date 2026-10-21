@@ -480,6 +480,15 @@ class SystemSetting(Base):
     mag_seat_small = Column(Float, nullable=True, default=0.25)             # kichik posilka = o'rindiq
     mag_seat_medium = Column(Float, nullable=True, default=0.5)
     mag_seat_large = Column(Float, nullable=True, default=1.0)
+    # Ichki taksi (C bosqich)
+    taxi_commission_percent = Column(Float, nullable=True, default=10.0)
+    taxi_bid_seconds = Column(Integer, nullable=True, default=40)
+    taxi_max_bids = Column(Integer, nullable=True, default=3)
+    taxi_radius_km = Column(Float, nullable=True, default=5.0)
+    taxi_base_fare = Column(Float, nullable=True, default=5000.0)
+    taxi_per_km = Column(Float, nullable=True, default=2500.0)
+    taxi_min_balance = Column(Float, nullable=True, default=0.0)
+    taxi_stale_min = Column(Integer, nullable=True, default=5)
 
     # Har bir rol uchun alohida shartlar — odam shu rolni tanlaganda
     # birinchi bo'lib shu matn ko'rsatiladi, "Roziman" bosmasa davom etolmaydi.
@@ -1180,3 +1189,67 @@ class MagBooking(Base):
 
     entry = relationship("MagQueueEntry", foreign_keys=[entry_id])
     client = relationship("User", foreign_keys=[client_id])
+
+
+class TaxiDriver(Base):
+    """Ichki taksi haydovchisi (magistral haydovchidan alohida; ikkalasi bir vaqtda ishlamaydi)."""
+    __tablename__ = "taxi_drivers"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False, index=True)
+    city_id = Column(Integer, ForeignKey("cities.id"), nullable=True, index=True)
+    car_model = Column(String, nullable=True)
+    car_plate = Column(String, nullable=True)
+    is_active = Column(Boolean, default=True)
+    blacklisted = Column(Boolean, default=False)
+    blacklist_reason = Column(String, nullable=True)
+    is_online = Column(Boolean, default=False)
+    balance = Column(Float, default=0.0)               # oldindan to'langan balans, komissiya shundan yechiladi
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
+    location_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User", foreign_keys=[user_id])
+
+
+class TaxiRide(Base):
+    __tablename__ = "taxi_rides"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    city_id = Column(Integer, ForeignKey("cities.id"), nullable=True, index=True)
+    driver_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    status = Column(String, default="bidding", index=True)   # bidding | assigned | arrived | started | completed | cancelled | expired
+    pickup_address = Column(String, nullable=False)
+    pickup_lat = Column(Float, nullable=False)
+    pickup_lng = Column(Float, nullable=False)
+    dropoff_address = Column(String, nullable=False)
+    dropoff_lat = Column(Float, nullable=False)
+    dropoff_lng = Column(Float, nullable=False)
+    km = Column(Float, default=0.0)
+    start_price = Column(Float, default=0.0)           # mijoz taklif qilgan narx
+    price = Column(Float, default=0.0)                 # kelishilgan narx
+    commission = Column(Float, default=0.0)
+    comment = Column(String, nullable=True)
+    bid_deadline = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    assigned_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    cancelled_by = Column(String, nullable=True)
+
+    client = relationship("User", foreign_keys=[client_id])
+    driver = relationship("User", foreign_keys=[driver_id])
+
+
+class TaxiBid(Base):
+    __tablename__ = "taxi_bids"
+
+    id = Column(Integer, primary_key=True, index=True)
+    ride_id = Column(Integer, ForeignKey("taxi_rides.id", ondelete="CASCADE"), nullable=False, index=True)
+    driver_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    price = Column(Float, nullable=False)
+    status = Column(String, default="offered")         # offered | accepted | rejected
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    driver = relationship("User", foreign_keys=[driver_id])

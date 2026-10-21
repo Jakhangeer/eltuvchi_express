@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Taksi haydovchisi</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+ body{background:#f1f5f9;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+ .card{background:#fff;border-radius:16px;padding:14px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+ .btn{padding:10px 14px;border-radius:12px;font-weight:700;font-size:13px;background:#4f46e5;color:#fff}
+ .btng{padding:10px 14px;border-radius:12px;font-weight:700;font-size:13px;background:#059669;color:#fff}
+ .btn2{padding:10px 14px;border-radius:12px;font-weight:700;font-size:13px;background:#e5e7eb;color:#374151}
+ input{border:1px solid #d1d5db;border-radius:12px;padding:9px;font-size:14px;background:#fff;color:#111}
+ @media(prefers-color-scheme:dark){body{background:#0f172a;color:#e2e8f0}.card{background:#1e293b}.btn2{background:#334155;color:#e2e8f0}}
+</style>
+</head>
+<body class="pb-16">
+<div class="max-w-xl mx-auto p-3 space-y-3">
+ <div class="card flex items-center justify-between">
+  <div><div class="font-black" id="nm">🚕 Taksi</div><div class="text-xs opacity-70" id="car"></div></div>
+  <div class="text-right"><div class="text-[11px] opacity-70">Balans</div><div class="font-black text-emerald-600" id="bal">0</div><a href="/logout" class="text-[11px] text-indigo-500">Chiqish</a></div>
+ </div>
+ <div class="card flex items-center justify-between"><div><b id="onl">⚪ Oflayn</b><div class="text-[11px] opacity-70" id="info"></div></div><button class="btn" id="onbtn" onclick="toggle()">Onlayn bo'lish</button></div>
+ <div id="ride"></div>
+ <div id="reqs" class="space-y-2"></div>
+ <div class="card"><b class="text-sm">✅ Oxirgi safarlar</b><div id="hist" class="text-xs mt-2 space-y-1"></div></div>
+</div>
+<script>
+function n(v){return Math.round(v||0).toLocaleString('ru-RU').replace(/ /g,' ');}
+function e(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+async function api(path,body){var o=body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)};var r=await fetch(path,o);var d={};try{d=await r.json();}catch(x){}if(!r.ok)throw new Error(d.detail||'Xatolik');return d;}
+function nav(la,lg){return la!=null?' <a class="text-indigo-500" target="_blank" href="https://www.google.com/maps/dir/?api=1&destination='+la+','+lg+'">🧭 Yo\'l</a>':'';}
+var S=null,busy=false;
+async function load(){
+ if(busy)return;
+ try{S=await api('/taxi/api/state');}catch(x){return;}
+ document.getElementById('nm').textContent='🚕 '+S.name;document.getElementById('car').textContent=S.car;document.getElementById('bal').textContent=n(S.balance)+' so\'m';
+ document.getElementById('onl').textContent=S.online?'🟢 Onlayn':'⚪ Oflayn';document.getElementById('onbtn').textContent=S.online?'Oflayn bo\'lish':'Onlayn bo\'lish';
+ document.getElementById('info').textContent=S.blacklisted?'⛔ Qora ro\'yxat':(!S.enabled?'Taksi hozircha yoqilmagan':'Platforma ulushi '+S.commission+'% · minimal balans '+n(S.min_balance));
+ var r=S.ride,h='';
+ if(r){
+  h='<div class="card" style="border:2px solid #4f46e5"><div class="flex justify-between"><b>🚕 Buyurtma #'+r.id+'</b><b>'+n(r.price)+' so\'m</b></div>'
+   +'<div class="text-sm mt-1">📍 '+e(r.pickup_address)+nav(r.pickup_lat,r.pickup_lng)+'</div><div class="text-sm">🏁 '+e(r.dropoff_address)+nav(r.dropoff_lat,r.dropoff_lng)+'</div>'
+   +'<div class="text-xs mt-1">👤 '+e(r.client)+' <a class="text-indigo-500" href="tel:'+e(r.client_phone)+'">'+e(r.client_phone)+'</a> · '+r.km+' km · naqd · ulush '+n(r.commission)+'</div>'+(r.comment?'<div class="text-xs">💬 '+e(r.comment)+'</div>':'')
+   +'<div class="flex flex-wrap gap-2 mt-2">'
+   +(r.status==='assigned'?'<button class="btn" data-a="arrive">📍 Yetib keldim</button>':'')
+   +((r.status==='assigned'||r.status==='arrived')?'<button class="btng" data-a="start">▶️ Yo\'lga chiqdik</button><button class="btn2" data-a="cancel">Bekor qilish</button>':'')
+   +(r.status==='started'?'<button class="btng" data-a="complete">✅ Yakunlash</button>':'')+'</div></div>';
+ }
+ document.getElementById('ride').innerHTML=h;document.getElementById('ride').dataset.id=r?r.id:'';
+ var rq=document.getElementById('reqs');
+ if(!document.activeElement||document.activeElement.tagName!=='INPUT')rq.innerHTML=(S.requests.length?'<div class="text-xs opacity-70 px-1">Yaqin atrofdagi buyurtmalar</div>':(S.online&&!r?'<div class="text-center text-xs opacity-60 py-6">Buyurtma kutilmoqda…</div>':''))+S.requests.map(function(q){
+  return '<div class="card"><div class="flex justify-between"><b>🚕 '+q.km+' km safar</b><span class="text-xs">⏱ <span data-t="'+q.seconds_left+'">'+q.seconds_left+'</span> s</span></div><div class="text-xs opacity-70">Sizdan '+q.to_you_km+' km · takliflar '+q.bids+'/'+S.max_bids+'</div>'
+  +(q.my_bid!=null?'<div class="mt-2 text-sm font-bold text-emerald-600">Sizning taklifingiz: '+n(q.my_bid)+' so\'m — mijoz tanlashini kuting</div>'
+   :'<div class="flex gap-2 mt-2"><input id="p'+q.id+'" type="number" step="500" value="'+q.start_price+'" class="flex-1"><button class="btng" data-bid="'+q.id+'">Taklif berish</button></div><div class="text-[11px] opacity-60">Mijoz narxi: '+n(q.start_price)+' so\'m</div>')+'</div>';}).join('');
+}
+document.getElementById('ride').addEventListener('click',async function(ev){var b=ev.target.closest('button[data-a]');if(!b)return;var id=this.dataset.id;if(b.dataset.a==='cancel'&&!confirm('Bekor qilasizmi?'))return;busy=true;try{await api('/taxi/api/rides/'+id+'/'+b.dataset.a,{});}catch(x){alert(x.message);}busy=false;load();});
+document.getElementById('reqs').addEventListener('click',async function(ev){var b=ev.target.closest('button[data-bid]');if(!b)return;var id=b.dataset.bid;try{await api('/taxi/api/bid',{ride_id:+id,price:+document.getElementById('p'+id).value});}catch(x){alert(x.message);}load();});
+async function toggle(){
+ try{
+  if(!S.online){await new Promise(function(res,rej){if(!navigator.geolocation)return rej(new Error('Geolokatsiya mavjud emas'));navigator.geolocation.getCurrentPosition(function(p){api('/taxi/api/location',{lat:p.coords.latitude,lng:p.coords.longitude}).then(res,rej);},function(){rej(new Error('Joylashuvga ruxsat bering'));},{enableHighAccuracy:true,timeout:15000});});}
+  await api('/taxi/api/online',{value:!S.online});load();
+ }catch(x){alert(x.message);}
+}
+function sendLoc(){if(!S||!S.online||!navigator.geolocation)return;navigator.geolocation.getCurrentPosition(function(p){api('/taxi/api/location',{lat:p.coords.latitude,lng:p.coords.longitude}).catch(function(){});},function(){},{maximumAge:5000,timeout:8000});}
+setInterval(function(){document.querySelectorAll('[data-t]').forEach(function(s){var v=Math.max(+s.textContent-1,0);s.textContent=v;});},1000);
+load();setInterval(load,3000);setInterval(sendLoc,10000);
+</script>
+</body>
+</html>
