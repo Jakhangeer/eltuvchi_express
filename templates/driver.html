@@ -56,6 +56,8 @@ function renderMag(m){
   var b=document.getElementById('mag-box');if(!m.enabled&&!m.entry){b.classList.add('hidden');return;}b.classList.remove('hidden');
   var h='<b class="text-sm">🚐 Magistral navbat</b><div class="text-xs opacity-70 mt-1">Depozit: <b>'+n(m.deposit)+'</b> so\'m · platforma ulushi '+m.commission+'% · navbat uchun terminaldan '+m.radius_m+' m ichida bo\'ling</div>';
   if(m.blacklisted)h+='<div class="mt-2 p-2 rounded-xl bg-rose-100 text-rose-800 text-xs font-bold">⛔ Siz qora ro\'yxatdasiz'+(m.blacklist_reason?': '+e(m.blacklist_reason):'')+'</div>';
+  if(m.my_rating&&m.my_rating.avg!=null)h+='<div class="text-xs mt-1">Sizning reytingingiz: ⭐ '+m.my_rating.avg+' ('+m.my_rating.count+')</div>';
+  if(m.to_rate&&m.to_rate.length)h+='<div class="mt-2 p-2 rounded-xl border text-xs">Yo\'lovchini baholang:'+m.to_rate.map(function(p){return '<div class="flex justify-between items-center py-1">'+e(p.name)+'<span>'+[1,2,3,4,5].map(function(s){return '<button class="px-1" onclick="magRate('+p.id+','+s+')">'+(s<=3?'☆':'★')+s+'</button>';}).join('')+'</span></div>';}).join('')+'</div>';
   var en=m.entry;
   if(en){
     h+='<div class="mt-2 p-3 rounded-xl border"><div class="flex justify-between"><b>'+e(en.from)+' → '+e(en.to)+'</b><span class="text-xs">'+(en.status==='departed'?'🚗 Yo\'lda':'⏳ Navbat: <b>'+en.position+'</b> / '+en.queue_len)+'</span></div>'
@@ -70,6 +72,7 @@ function renderMag(m){
   }
   b.innerHTML=h;
 }
+async function magRate(id,s){try{await api('/driver/mag/rate/'+id,{stars:s});load();}catch(x){alert(x.message);}}
 async function magApply(){var v=(document.getElementById('mg-route').value||'').split('|');if(v.length<2||!v[0])return alert('Yo\'nalishni tanlang');
   if(!navigator.geolocation)return alert('Geolokatsiya mavjud emas');
   navigator.geolocation.getCurrentPosition(async function(p){try{await api('/driver/express/location',{lat:p.coords.latitude,lng:p.coords.longitude});await api('/driver/mag/apply',{from_city_id:+v[0],to_city_id:+v[1]});load();}catch(x){alert(x.message);}},function(){alert('Joylashuvga ruxsat bering');},{enableHighAccuracy:true,timeout:15000});}

@@ -81,6 +81,7 @@ class User(Base):
 
     # Faqat OWNER/ADMIN (operator) rollari uchun ishlatiladi — mijoz/kuryer/hamkorda bo'sh qoladi
     password_hash = Column(String, nullable=True)
+    gender = Column(String, nullable=True)   # male | female (taksi jins filtri uchun; foydalanuvchi o'zi ko'rsatadi)
 
     # Operator (ADMIN) uchun: qaysi shaharga biriktirilgan. OWNER uchun NULL — cheklovsiz.
     city_id = Column(Integer, ForeignKey("cities.id"), nullable=True)
@@ -489,6 +490,13 @@ class SystemSetting(Base):
     taxi_per_km = Column(Float, nullable=True, default=2500.0)
     taxi_min_balance = Column(Float, nullable=True, default=0.0)
     taxi_stale_min = Column(Integer, nullable=True, default=5)
+    # Pooling va reyting (D bosqich)
+    taxi_pool_discount = Column(Float, nullable=True, default=20.0)      # sherik bilan yurganda narx chegirmasi (%)
+    taxi_pool_max = Column(Integer, nullable=True, default=3)            # bir mashinada eng ko'p yo'lovchi (buyurtma)
+    taxi_pool_pickup_km = Column(Float, nullable=True, default=3.0)      # haydovchidan 2-yo'lovchigacha eng uzog'i
+    taxi_pool_detour_km = Column(Float, nullable=True, default=3.0)      # manzillar orasidagi eng katta farq
+    rating_block_below = Column(Float, nullable=True, default=0.0)       # o'rtacha reyting shundan past bo'lsa bloklanadi (0 = o'chiq)
+    rating_min_count = Column(Integer, nullable=True, default=5)         # blok uchun kamida shuncha baho kerak
 
     # Har bir rol uchun alohida shartlar — odam shu rolni tanlaganda
     # birinchi bo'lib shu matn ko'rsatiladi, "Roziman" bosmasa davom etolmaydi.
@@ -1185,6 +1193,7 @@ class MagBooking(Base):
     amount = Column(Float, nullable=False, default=0.0)
     commission = Column(Float, nullable=False, default=0.0)
     status = Column(String, default="booked", index=True)    # booked | cancelled | done | dropped
+    solo = Column(Boolean, default=False)   # yolg'iz ayol: boshqa ayolsiz ham jo'nashga rozi
     created_at = Column(DateTime, default=datetime.utcnow)
 
     entry = relationship("MagQueueEntry", foreign_keys=[entry_id])
@@ -1203,6 +1212,7 @@ class TaxiDriver(Base):
     is_active = Column(Boolean, default=True)
     blacklisted = Column(Boolean, default=False)
     blacklist_reason = Column(String, nullable=True)
+    female_clients_only = Column(Boolean, default=False)   # ayol haydovchi faqat ayol yo'lovchi olishni tanlaydi
     is_online = Column(Boolean, default=False)
     balance = Column(Float, default=0.0)               # oldindan to'langan balans, komissiya shundan yechiladi
     latitude = Column(Float, nullable=True)
@@ -1232,6 +1242,8 @@ class TaxiRide(Base):
     price = Column(Float, default=0.0)                 # kelishilgan narx
     commission = Column(Float, default=0.0)
     comment = Column(String, nullable=True)
+    allow_share = Column(Boolean, default=False)        # sherik bilan yurishga rozi (arzonroq)
+    female_only = Column(Boolean, default=False)        # faqat ayol haydovchi
     bid_deadline = Column(DateTime, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     assigned_at = Column(DateTime, nullable=True)
@@ -1253,3 +1265,17 @@ class TaxiBid(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     driver = relationship("User", foreign_keys=[driver_id])
+
+
+class Rating(Base):
+    """O'zaro baho: yo'lovchi -> haydovchi va haydovchi -> yo'lovchi (taksi va magistral)."""
+    __tablename__ = "ratings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    kind = Column(String, nullable=False, index=True)          # taxi | mag
+    ref_id = Column(Integer, nullable=False, index=True)       # taxi_rides.id yoki mag_bookings.id
+    from_user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    to_user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    stars = Column(Integer, nullable=False)
+    comment = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)

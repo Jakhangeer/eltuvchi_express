@@ -38,25 +38,29 @@ async function load(){
  document.getElementById('nm').textContent='🚕 '+S.name;document.getElementById('car').textContent=S.car;document.getElementById('bal').textContent=n(S.balance)+' so\'m';
  document.getElementById('onl').textContent=S.online?'🟢 Onlayn':'⚪ Oflayn';document.getElementById('onbtn').textContent=S.online?'Oflayn bo\'lish':'Onlayn bo\'lish';
  document.getElementById('info').textContent=S.blacklisted?'⛔ Qora ro\'yxat':(!S.enabled?'Taksi hozircha yoqilmagan':'Platforma ulushi '+S.commission+'% · minimal balans '+n(S.min_balance));
- var r=S.ride,h='';
- if(r){
-  h='<div class="card" style="border:2px solid #4f46e5"><div class="flex justify-between"><b>🚕 Buyurtma #'+r.id+'</b><b>'+n(r.price)+' so\'m</b></div>'
+ var h='',stars=function(rt){return rt&&rt.avg!=null?' ⭐ '+rt.avg+' ('+rt.count+')':' · yangi';};
+ document.getElementById('nm').textContent='🚕 '+S.name+(S.my_rating&&S.my_rating.avg!=null?'  ⭐ '+S.my_rating.avg:'');
+ S.rides.forEach(function(r){
+  h+='<div class="card" style="border:2px solid #4f46e5" data-ride="'+r.id+'"><div class="flex justify-between"><b>🚕 Buyurtma #'+r.id+(r.share?' · 👥 sherik':'')+'</b><b>'+n(r.price)+' so\'m</b></div>'
    +'<div class="text-sm mt-1">📍 '+e(r.pickup_address)+nav(r.pickup_lat,r.pickup_lng)+'</div><div class="text-sm">🏁 '+e(r.dropoff_address)+nav(r.dropoff_lat,r.dropoff_lng)+'</div>'
-   +'<div class="text-xs mt-1">👤 '+e(r.client)+' <a class="text-indigo-500" href="tel:'+e(r.client_phone)+'">'+e(r.client_phone)+'</a> · '+r.km+' km · naqd · ulush '+n(r.commission)+'</div>'+(r.comment?'<div class="text-xs">💬 '+e(r.comment)+'</div>':'')
+   +'<div class="text-xs mt-1">👤 '+e(r.client)+stars(r.client_rating)+' <a class="text-indigo-500" href="tel:'+e(r.client_phone)+'">'+e(r.client_phone)+'</a> · '+r.km+' km · naqd · ulush '+n(r.commission)+'</div>'+(r.comment?'<div class="text-xs">💬 '+e(r.comment)+'</div>':'')
    +'<div class="flex flex-wrap gap-2 mt-2">'
    +(r.status==='assigned'?'<button class="btn" data-a="arrive">📍 Yetib keldim</button>':'')
    +((r.status==='assigned'||r.status==='arrived')?'<button class="btng" data-a="start">▶️ Yo\'lga chiqdik</button><button class="btn2" data-a="cancel">Bekor qilish</button>':'')
    +(r.status==='started'?'<button class="btng" data-a="complete">✅ Yakunlash</button>':'')+'</div></div>';
- }
- document.getElementById('ride').innerHTML=h;document.getElementById('ride').dataset.id=r?r.id:'';
+ });
+ if(S.rides.length>1)h='<div class="text-xs px-1 opacity-70">👥 Sherikli safar: '+S.rides.length+' yo\'lovchi</div>'+h;
+ document.getElementById('ride').innerHTML=h;
+ var hs=document.getElementById('hist');hs.innerHTML=S.history.map(function(h){return '<div class="flex justify-between items-center">#'+h.id+' · '+n(h.price)+' so\'m '+(h.rated?'<span class="opacity-60">baholangan</span>':'<span>'+[1,2,3,4,5].map(function(s){return '<button data-rate="'+h.id+'" data-s="'+s+'" class="px-1">'+(s<=3?'☆':'★')+s+'</button>';}).join('')+'</span>')+'</div>';}).join('')||'Hali yo\'q';
  var rq=document.getElementById('reqs');
- if(!document.activeElement||document.activeElement.tagName!=='INPUT')rq.innerHTML=(S.requests.length?'<div class="text-xs opacity-70 px-1">Yaqin atrofdagi buyurtmalar</div>':(S.online&&!r?'<div class="text-center text-xs opacity-60 py-6">Buyurtma kutilmoqda…</div>':''))+S.requests.map(function(q){
-  return '<div class="card"><div class="flex justify-between"><b>🚕 '+q.km+' km safar</b><span class="text-xs">⏱ <span data-t="'+q.seconds_left+'">'+q.seconds_left+'</span> s</span></div><div class="text-xs opacity-70">Sizdan '+q.to_you_km+' km · takliflar '+q.bids+'/'+S.max_bids+'</div>'
+ if(!document.activeElement||document.activeElement.tagName!=='INPUT')rq.innerHTML=(S.requests.length?'<div class="text-xs opacity-70 px-1">Yaqin atrofdagi buyurtmalar</div>':(S.online&&!S.rides.length?'<div class="text-center text-xs opacity-60 py-6">Buyurtma kutilmoqda…</div>':''))+S.requests.map(function(q){
+  return '<div class="card"><div class="flex justify-between"><b>🚕 '+q.km+' km safar'+(q.share?' · 👥 sherik':'')+'</b><span class="text-xs">⏱ <span data-t="'+q.seconds_left+'">'+q.seconds_left+'</span> s</span></div><div class="text-xs opacity-70">Sizdan '+q.to_you_km+' km · takliflar '+q.bids+'/'+S.max_bids+' · yo\'lovchi'+stars(q.client_rating)+'</div>'
   +(q.my_bid!=null?'<div class="mt-2 text-sm font-bold text-emerald-600">Sizning taklifingiz: '+n(q.my_bid)+' so\'m — mijoz tanlashini kuting</div>'
    :'<div class="flex gap-2 mt-2"><input id="p'+q.id+'" type="number" step="500" value="'+q.start_price+'" class="flex-1"><button class="btng" data-bid="'+q.id+'">Taklif berish</button></div><div class="text-[11px] opacity-60">Mijoz narxi: '+n(q.start_price)+' so\'m</div>')+'</div>';}).join('');
 }
-document.getElementById('ride').addEventListener('click',async function(ev){var b=ev.target.closest('button[data-a]');if(!b)return;var id=this.dataset.id;if(b.dataset.a==='cancel'&&!confirm('Bekor qilasizmi?'))return;busy=true;try{await api('/taxi/api/rides/'+id+'/'+b.dataset.a,{});}catch(x){alert(x.message);}busy=false;load();});
+document.getElementById('ride').addEventListener('click',async function(ev){var b=ev.target.closest('button[data-a]');if(!b)return;var id=b.closest('[data-ride]').dataset.ride;if(b.dataset.a==='cancel'&&!confirm('Bekor qilasizmi?'))return;busy=true;try{await api('/taxi/api/rides/'+id+'/'+b.dataset.a,{});}catch(x){alert(x.message);}busy=false;load();});
 document.getElementById('reqs').addEventListener('click',async function(ev){var b=ev.target.closest('button[data-bid]');if(!b)return;var id=b.dataset.bid;try{await api('/taxi/api/bid',{ride_id:+id,price:+document.getElementById('p'+id).value});}catch(x){alert(x.message);}load();});
+document.getElementById('hist').addEventListener('click',async function(ev){var b=ev.target.closest('button[data-rate]');if(!b)return;try{await api('/taxi/api/rides/'+b.dataset.rate+'/rate',{stars:+b.dataset.s});}catch(x){alert(x.message);}load();});
 async function toggle(){
  try{
   if(!S.online){await new Promise(function(res,rej){if(!navigator.geolocation)return rej(new Error('Geolokatsiya mavjud emas'));navigator.geolocation.getCurrentPosition(function(p){api('/taxi/api/location',{lat:p.coords.latitude,lng:p.coords.longitude}).then(res,rej);},function(){rej(new Error('Joylashuvga ruxsat bering'));},{enableHighAccuracy:true,timeout:15000});});}

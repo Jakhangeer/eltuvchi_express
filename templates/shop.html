@@ -788,16 +788,25 @@
               <div class="card-bg p-3 rounded-2xl border space-y-2"><b class="text-xs">🏙 Qayerga boramiz</b>
                 <select id="mg-to" onchange="magLoad()" class="w-full p-2.5 border rounded-xl text-sm card-bg text-title">${opts}</select>
                 <div class="text-[10px] text-sub">Mashina terminaldan jo'naydi. Terminalga o'zingiz kelasiz. Pul haydovchiga naqd to'lanadi.</div></div>
+              <div id="mg-gbox" class="text-[11px] text-sub px-1"></div>
               <div id="mg-q" class="space-y-2"></div></div>`;
+            magGender();
             magLoad(); MG.timer = setInterval(() => { if (!document.getElementById('mg-q')) clearInterval(MG.timer); else magLoad(); }, 10000);
         }
+        function magGender() {
+            const b = document.getElementById('mg-gbox'); if (!b) return;
+            b.innerHTML = MG.cfg.gender ? `Salonda eng ko'pi 4 mijoz. ${MG.cfg.gender === 'female' ? '👩 Ayollar faqat ayollar bilan ketadi (kamida 2 ayol; xohlasangiz yolg\'iz ham ketishingiz mumkin).' : '👨 Erkaklar erkaklar bilan ketadi.'}`
+                : `Jinsingizni tanlang (ayollar alohida mashinada ketadi): <button onclick="magSetGender('female')" class="px-2 py-1 rounded-lg bg-gray-100 font-bold">👩 Ayol</button> <button onclick="magSetGender('male')" class="px-2 py-1 rounded-lg bg-gray-100 font-bold">👨 Erkak</button>`;
+        }
+        async function magSetGender(g) { try { await api('/taxi/gender', { gender: g }); MG.cfg.gender = g; magGender(); magLoad(); } catch (e) { alert(e.message); } }
         async function magLoad() {
             const to = (document.getElementById('mg-to') || {}).value; if (!to) return;
             try {
                 const my = await api('/mag/my', {});
                 const act = my.items.filter(b => b.status === 'booked');
+                const rate = my.items.find(b => b.status === 'done' && b.rated === false);
                 const box = document.getElementById('mg-my');
-                if (box) box.innerHTML = act.map(b => `<div class="card-bg p-3 rounded-2xl border text-xs space-y-1" style="border-color:#fcd34d">
+                if (box) box.innerHTML = (rate ? `<div class="card-bg p-3 rounded-2xl border text-xs text-center" style="border-color:#86efac"><div class="text-sub">Safar yakunlandi. ${pcE(rate.driver || 'Haydovchi')}ni baholang:</div><div class="flex justify-center gap-1 mt-1">${[1, 2, 3, 4, 5].map(s => `<button onclick="magRate(${rate.id},${s})" class="text-2xl">${s <= 3 ? '☆' : '★'}</button>`).join('')}</div></div>` : '') + act.map(b => `<div class="card-bg p-3 rounded-2xl border text-xs space-y-1" style="border-color:#fcd34d">
                     <div class="flex justify-between"><b class="text-title">🎫 Bron #${b.id} · ${pcE(b.from)} → ${pcE(b.to)}</b><b style="color:#b45309">${b.trip_status === 'departed' ? '🚗 Yo\'lda' : (b.position ? 'Navbat: ' + b.position : 'Kutmoqda')}</b></div>
                     <div class="text-sub">${b.seats} o'rindiq · <b>${pcN(b.amount)} so'm</b> (haydovchiga naqd)</div>
                     <div class="text-sub">🚗 ${pcE(b.driver || '')} ${pcE(b.car || '')} <a class="text-indigo-600" href="tel:${pcE(b.driver_phone)}">${pcE(b.driver_phone || '')}</a></div>
@@ -807,13 +816,16 @@
                 const el = document.getElementById('mg-q'); if (!el) return;
                 el.innerHTML = `<div class="text-[11px] text-sub px-1">🏢 ${pcE(q.from_terminal)} (${pcE(q.from_address || '')}) → ${pcE(q.to_terminal)} · o'rindiq ${pcN(q.price)} so'm</div>` +
                     (q.items.map(i => `<div class="card-bg p-3 rounded-2xl border text-xs flex items-center gap-3"><div class="w-8 h-8 rounded-full bg-amber-100 text-amber-800 font-black flex items-center justify-center">${i.position}</div>
-                    <div class="flex-1"><div class="font-bold text-title">${pcE(i.driver)} · ${pcE(i.car)}</div><div class="text-sub">Bo'sh o'rindiq: ${i.free_seats} / ${i.capacity} ${i.ready ? '· ✅ jo\'nashga tayyor' : ''}</div></div>
-                    ${i.bookable ? `<button onclick="magBook(${i.entry_id}, ${i.free_seats})" class="px-3 py-2 rounded-xl bg-indigo-600 text-white font-bold">Band qilish</button>` : `<span class="text-sub">To'lgan</span>`}</div>`).join('') || '<p class="text-center text-xs text-sub py-6">Hozircha navbatda mashina yo\'q. Birozdan keyin qayta urinib ko\'ring.</p>');
+                    <div class="flex-1"><div class="font-bold text-title">${pcE(i.driver)} · ${pcE(i.car)} <span class="text-sub">${i.rating && i.rating.avg != null ? '⭐ ' + i.rating.avg : ''}</span></div><div class="text-sub">${i.women_only ? '👩 Ayollar mashinasi · ' : ''}Bo'sh o'rindiq: ${i.free_seats} / ${i.capacity} ${i.ready ? '· ✅ jo\'nashga tayyor' : ''}</div></div>
+                    ${i.bookable ? `<button onclick="magBook(${i.entry_id}, ${i.free_seats}, ${i.clients === 0 || i.needs_women})" class="px-3 py-2 rounded-xl bg-indigo-600 text-white font-bold">Band qilish</button>` : `<span class="text-sub">${i.free_seats < 1 || i.clients >= 4 ? 'To\'lgan' : 'Sizga mos emas'}</span>`}</div>`).join('') || '<p class="text-center text-xs text-sub py-6">Hozircha navbatda mashina yo\'q. Birozdan keyin qayta urinib ko\'ring.</p>');
             } catch (e) { const el = document.getElementById('mg-q'); if (el) el.innerHTML = `<p class="text-xs text-red-500">${pcE(e.message)}</p>`; }
         }
-        async function magBook(id, free) {
+        async function magRate(id, s) { try { await api('/mag/rate', { booking_id: id, stars: s }); magLoad(); } catch (e) { alert(e.message); } }
+        async function magBook(id, free, askSolo) {
             const s = prompt(`Nechta o'rindiq? (1–${free})`, '1'); if (!s) return;
-            try { const r = await api('/mag/book', { entry_id: id, seats: +s }); alert(`✅ Band qilindi. Haydovchi: ${r.driver}. Terminalga keling va ${pcN(r.amount)} so'mni haydovchiga naqd to'lang.`); magLoad(); } catch (e) { alert(e.message); }
+            let solo = false;
+            if (askSolo && MG.cfg.gender === 'female' && confirm("Mashinada hozircha boshqa ayol yo'q. Boshqa ayol qo'shilmasa ham yolg'iz ketishga rozimisiz?\n\nOK = ha, yolg'iz ketaman\nBekor = boshqa ayol qo'shilishini kutaman")) solo = true;
+            try { const r = await api('/mag/book', { entry_id: id, seats: +s, solo }); alert(`✅ Band qilindi. Haydovchi: ${r.driver}. Terminalga keling va ${pcN(r.amount)} so'mni haydovchiga naqd to'lang.`); magLoad(); } catch (e) { alert(e.message); }
         }
         async function magCancel(id) { if (!confirm('Bronni bekor qilasizmi?')) return; try { await api('/mag/cancel', { id }); magLoad(); } catch (e) { alert(e.message); } }
 
@@ -854,13 +866,16 @@
             if (!TX.form.pickup || !TX.form.dropoff) { box.textContent = 'Ikkala joyni belgilang'; return; }
             try {
                 const q = await api('/taxi/quote', { pickup_lat: TX.form.pickup.lat, pickup_lng: TX.form.pickup.lng, dropoff_lat: TX.form.dropoff.lat, dropoff_lng: TX.form.dropoff.lng });
-                TX.form.km = q.km; if (!TX.form.price || TX.form.sug !== q.price) { TX.form.price = q.price; TX.form.sug = q.price; }
-                box.innerHTML = `Masofa ≈ <b>${q.km} km</b> · tavsiya etilgan narx <b>${pcN(q.price)} so'm</b>`;
-                const pi = document.getElementById('tx-price'); if (pi) pi.value = TX.form.price;
+                TX.form.km = q.km;
+                const sh = (document.getElementById('tx-share') || {}).checked; const rec = sh ? q.pool_price : q.price;
+                TX.form.price = rec; TX.form.sug = rec;
+                box.innerHTML = `Masofa ≈ <b>${q.km} km</b> · tavsiya etilgan narx <b>${pcN(rec)} so'm</b>${sh ? ' (sherikli)' : ''}`;
+                const pi = document.getElementById('tx-price'); if (pi) pi.value = rec;
             } catch (e) { box.innerHTML = `<span style="color:#dc2626">${pcE(e.message)}</span>`; }
         }
         async function openTaxi() {
             txStop(); TX.form = { pickup: null, dropoff: null, km: 0, price: 0 };
+            try { TX.cfg = await api('/taxi/config', {}); } catch (e) { }
             const app = document.getElementById('app');
             const r = await api('/taxi/status', {}).catch(() => ({ ride: null }));
             if (r.ride && ['bidding', 'assigned', 'arrived', 'started'].includes(r.ride.status)) { txRide(); return; }
@@ -876,7 +891,9 @@
                 <div class="flex items-center gap-2 text-[11px]"><button type="button" onclick="txPick('dropoff')" class="px-2.5 py-1.5 rounded-lg bg-indigo-50 text-indigo-700 font-bold">🗺 Xaritadan</button><span id="tx-pt-dropoff" class="text-sub">Belgilanmagan</span></div></div>
               <div class="card-bg p-3 rounded-2xl border space-y-2"><div id="tx-quote" class="text-xs text-sub">Ikkala joyni belgilang</div>
                 <b class="text-xs">💰 Sizning narxingiz (so'm)</b><input id="tx-price" type="number" step="500" ${inp}>
-                <input id="tx-cm" ${inp} placeholder="Izoh (ixtiyoriy)"><p class="text-[10px] text-sub">Haydovchilar ${TX.cfg.bid_seconds} soniya ichida narx taklif qiladi, siz birini tanlaysiz. To'lov haydovchiga naqd.</p></div>
+                <input id="tx-cm" ${inp} placeholder="Izoh (ixtiyoriy)">
+                <label class="flex items-start gap-2 text-[11px]"><input type="checkbox" id="tx-share" class="mt-0.5" onchange="txRefresh()"> <span>👥 Sherik yo'lovchi bilan yuraman (narx ${TX.cfg.pool_discount}% arzon)</span></label>
+                <p class="text-[10px] text-sub">Haydovchilar ${TX.cfg.bid_seconds} soniya ichida narx taklif qiladi, siz birini tanlaysiz. To'lov haydovchiga naqd.</p></div>
               <button onclick="txCreate(this)" class="w-full py-3 rounded-2xl bg-yellow-500 text-white font-black text-sm">🚕 Taksi chaqirish</button></div>`;
         }
         async function txCreate(btn) {
@@ -884,7 +901,7 @@
             if (!f.pickup || !f.dropoff) return alert('Ikkala joyni xaritada belgilang.');
             btn.disabled = true;
             try {
-                await api('/taxi/create', { pickup_lat: f.pickup.lat, pickup_lng: f.pickup.lng, dropoff_lat: f.dropoff.lat, dropoff_lng: f.dropoff.lng, pickup_address: v('tx-pa'), dropoff_address: v('tx-da'), price: +v('tx-price'), comment: v('tx-cm') });
+                await api('/taxi/create', { pickup_lat: f.pickup.lat, pickup_lng: f.pickup.lng, dropoff_lat: f.dropoff.lat, dropoff_lng: f.dropoff.lng, pickup_address: v('tx-pa'), dropoff_address: v('tx-da'), price: +v('tx-price'), comment: v('tx-cm'), allow_share: !!(document.getElementById('tx-share') || {}).checked });
                 txRide();
             } catch (e) { alert(e.message); btn.disabled = false; }
         }
@@ -900,7 +917,7 @@
                     el.innerHTML = `<div class="card-bg p-3 rounded-2xl border text-xs space-y-1"><div class="flex justify-between"><b class="text-title">⏳ Takliflar kutilmoqda</b><b id="tx-sec" style="color:#b45309">${r.seconds_left} s</b></div>
                         <div style="height:5px;background:#e5e7eb;border-radius:9px;overflow:hidden"><div style="height:5px;background:#eab308;width:${Math.round(r.seconds_left / r.total_seconds * 100)}%"></div></div>
                         <div class="text-sub">📍 ${pcE(r.pickup_address)} → 🏁 ${pcE(r.dropoff_address)} · ${r.km} km · sizning narxingiz ${pcN(r.start_price)} so'm</div></div>` +
-                        (r.bids.map(b => `<div class="card-bg p-3 rounded-2xl border text-xs flex items-center gap-3"><div class="flex-1"><div class="font-bold text-title">${pcE(b.driver)} · ${pcE(b.car)}</div><div class="text-sub">Taklif: <b class="text-title">${pcN(b.price)} so'm</b></div></div><button onclick="txChoose(${r.id},${b.id})" class="px-3 py-2 rounded-xl bg-indigo-600 text-white font-bold">Tanlash</button></div>`).join('') || '<p class="text-center text-xs text-sub py-4">Hozircha taklif yo\'q…</p>') +
+                        (r.bids.map(b => `<div class="card-bg p-3 rounded-2xl border text-xs flex items-center gap-3"><div class="flex-1"><div class="font-bold text-title">${pcE(b.driver)} · ${pcE(b.car)} <span class="text-sub">${b.rating && b.rating.avg != null ? '⭐ ' + b.rating.avg + ' (' + b.rating.count + ')' : '· yangi'}</span></div><div class="text-sub">Taklif: <b class="text-title">${pcN(b.price)} so'm</b></div></div><button onclick="txChoose(${r.id},${b.id})" class="px-3 py-2 rounded-xl bg-indigo-600 text-white font-bold">Tanlash</button></div>`).join('') || '<p class="text-center text-xs text-sub py-4">Hozircha taklif yo\'q…</p>') +
                         `<button onclick="txCancel(${r.id})" class="w-full py-2.5 rounded-2xl bg-gray-100 text-gray-700 font-bold text-xs">Bekor qilish</button>`;
                 } else if (['assigned', 'arrived', 'started'].includes(r.status)) {
                     el.innerHTML = `<div class="card-bg p-3 rounded-2xl border text-xs space-y-1" style="border-color:#a5b4fc"><div class="flex justify-between"><b class="text-title">${pcE(r.status_label)}</b><b>${pcN(r.price)} so'm</b></div>
@@ -909,12 +926,13 @@
                         ${r.status !== 'started' ? `<button onclick="txCancel(${r.id})" class="mt-1 px-3 py-1.5 rounded-lg bg-rose-50 text-rose-700 font-bold">Bekor qilish</button>` : ''}</div>`;
                 } else {
                     txStop();
-                    el.innerHTML = `<div class="card-bg p-4 rounded-2xl border text-center"><div class="text-3xl">${r.status === 'completed' ? '✅' : '⚠️'}</div><b class="text-title">${pcE(r.status_label)}</b>${r.status === 'completed' ? `<div class="text-xs text-sub mt-1">${pcN(r.price)} so'm (naqd)</div>` : ''}</div><button onclick="openTaxi()" class="w-full py-3 rounded-2xl bg-yellow-500 text-white font-black text-sm">🚕 Yangi buyurtma</button>`;
+                    el.innerHTML = `<div class="card-bg p-4 rounded-2xl border text-center"><div class="text-3xl">${r.status === 'completed' ? '✅' : '⚠️'}</div><b class="text-title">${pcE(r.status_label)}</b>${r.status === 'completed' ? `<div class="text-xs text-sub mt-1">${pcN(r.price)} so'm (naqd)</div>${r.rated ? '<div class="text-xs text-sub mt-2">Baho berdingiz ✓</div>' : `<div class="mt-2 text-xs text-sub">Haydovchini baholang:</div><div class="flex justify-center gap-1 mt-1">${[1, 2, 3, 4, 5].map(s => `<button onclick="txRate(${r.id},${s})" class="text-2xl">${s <= 3 ? '☆' : '★'}</button>`).join('')}</div>`}` : ''}</div><button onclick="openTaxi()" class="w-full py-3 rounded-2xl bg-yellow-500 text-white font-black text-sm">🚕 Yangi buyurtma</button>`;
                 }
             };
             await draw(); TX.timer = setInterval(draw, 2500);
             TX.tick = setInterval(() => { const s = document.getElementById('tx-sec'); if (s) { const v = Math.max(parseInt(s.textContent) - 1, 0); s.textContent = v + ' s'; } }, 1000);
         }
+        async function txRate(id, s) { try { await api('/taxi/rate', { ride_id: id, stars: s }); txRide(); } catch (e) { alert(e.message); } }
         async function txChoose(rid, bid) { try { await api('/taxi/choose', { ride_id: rid, bid_id: bid }); } catch (e) { alert(e.message); } }
         async function txCancel(id) { if (!confirm('Buyurtmani bekor qilasizmi?')) return; try { await api('/taxi/cancel', { id }); txStop(); openTaxi(); } catch (e) { alert(e.message); } }
         let pcMapObj = null;

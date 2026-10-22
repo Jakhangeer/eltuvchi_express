@@ -67,7 +67,7 @@ from models import (
     OperatorPermission,
     PaymentReceipt,
     ParcelOrder,
-    ExpressDriver, ExpressFare, Terminal, TerminalOperator, LinehaulTrip, IntercityOrder, IntercityEvent, TerminalCashLog, MagRoute, MagQueueEntry, MagBooking, TaxiDriver, TaxiRide, TaxiBid,
+    ExpressDriver, ExpressFare, Terminal, TerminalOperator, LinehaulTrip, IntercityOrder, IntercityEvent, TerminalCashLog, MagRoute, MagQueueEntry, MagBooking, TaxiDriver, TaxiRide, TaxiBid, Rating,
     LedAd,
     AIMessage,
     AIMessageLog,
@@ -10702,6 +10702,10 @@ async def _mag_entry_for_trip(db: AsyncSession, trip_id: int) -> Optional[MagQue
     return (await db.execute(select(MagQueueEntry).where(MagQueueEntry.trip_id == trip_id))).scalars().first()
 
 
+MAG_MAX_CLIENTS = 4   # magistral salonida eng ko'pi bilan 4 mijoz
+MAG_MIN_WOMEN = 2     # ayollar mashinasi: kamida 2 ayol (yoki yolg'iz ketishga o'zi rozi)
+
+
 async def _mag_info(db: AsyncSession, e: MagQueueEntry, cfg: dict, route: Optional[MagRoute], drv: ExpressDriver) -> dict:
     bk = (await db.execute(select(MagBooking).options(selectinload(MagBooking.client)).where(MagBooking.entry_id == e.id, MagBooking.status == "booked").order_by(MagBooking.id))).scalars().all()
     ps = (await db.execute(select(IntercityOrder).where(IntercityOrder.trip_id == e.trip_id, IntercityOrder.status == "in_transit"))).scalars().all()
@@ -10709,12 +10713,17 @@ async def _mag_info(db: AsyncSession, e: MagQueueEntry, cfg: dict, route: Option
     pseats = sum(_mag_pseat(cfg, o.size) for o in ps + rt)
     sb = sum(b.seats for b in bk)
     income = sum(b.amount for b in bk) + sum(float(o.fare or 0) for o in ps)
-    cap = (drv.seats if drv and drv.seats else 4)
+    cap = min((drv.seats if drv and drv.seats else 4), MAG_MAX_CLIENTS)
     free = cap - sb - pseats
+    fem = [b for b in bk if b.client is not None and b.client.gender == "female"]
+    mal = [b for b in bk if b.client is not None and b.client.gender != "female"]
+    women_only = bool(fem) and not mal
+    men_only = bool(mal) and not fem
+    needs_women = women_only and len(fem) < MAG_MIN_WOMEN and not any(b.solo for b in fem)
     minv = float(route.min_income) if route else 0.0
     full = free <= 1e-6
-    ready = full or (income > 0 and income >= minv)
-    return {"entry_id": e.id, "trip_id": e.trip_id, "capacity": cap, "seats_booked": sb, "parcel_seats": round(pseats, 2), "free_seats": max(int(free + 1e-9), 0),
+    ready = (full or (income > 0 and income >= minv)) and not needs_women
+    return {"women_only": women_only, "men_only": men_only, "needs_women": needs_women, "clients": len(bk), "entry_id": e.id, "trip_id": e.trip_id, "capacity": cap, "seats_booked": sb, "parcel_seats": round(pseats, 2), "free_seats": max(int(free + 1e-9), 0),
             "income": income, "min_income": minv, "ready": ready, "full": full, "price": float(route.seat_price) if route else 0.0,
             "passengers": [{"id": b.id, "name": b.client.full_name if b.client else "", "phone": b.client.phone_number if b.client else "", "seats": b.seats, "amount": b.amount} for b in bk],
             "parcels": len(ps) + len(rt)}
@@ -10788,6 +10797,8 @@ async def _mag_prepare_depart(db: AsyncSession, trip: LinehaulTrip) -> bool:
     fcity = (await db.execute(select(Terminal.city_id).where(Terminal.id == e.from_terminal_id))).scalar()
     tcity = (await db.execute(select(Terminal.city_id).where(Terminal.id == e.to_terminal_id))).scalar()
     info = await _mag_info(db, e, cfg, await _mag_route(db, fcity, tcity), drv)
+    if info.get("needs_women"):
+        raise HTTPException(status_code=400, detail="Mashinada bitta ayol bor — yana bir ayol qo'shilishi kerak (yoki u yolg'iz ketishga rozi bo'lishi kerak)")
     if not info["ready"]:
         raise HTTPException(status_code=400, detail=f"Jo'nash uchun daromad yetarli emas: {_fm(info['income'])} / {_fm(info['min_income'])} so'm")
     e.status = "departed"
@@ -10835,7 +10846,14 @@ async def driver_mag_state(db: AsyncSession = Depends(get_db), user: User = Depe
             pos = next((i + 1 for i, x in enumerate(q) if x.id == e.id), None)
         entry = {**info, "status": e.status, "position": pos, "queue_len": total, "from": e.from_terminal.name, "to": e.to_terminal.name}
     last = (await db.execute(select(MagQueueEntry).where(MagQueueEntry.driver_id == user.id, MagQueueEntry.status.in_(["dropped", "removed"])).order_by(MagQueueEntry.id.desc()).limit(1))).scalars().first()
-    return {"enabled": cfg["enabled"], "radius_m": cfg["radius_m"], "deposit": drv.deposit or 0, "min_deposit": cfg["min_deposit"], "commission": cfg["commission"],
+    done = (await db.execute(select(MagBooking).options(selectinload(MagBooking.client)).join(MagQueueEntry, MagQueueEntry.id == MagBooking.entry_id).where(
+        MagQueueEntry.driver_id == user.id, MagBooking.status == "done").order_by(MagBooking.id.desc()).limit(6))).scalars().all()
+    to_rate = []
+    for b in done:
+        if not (await db.execute(select(Rating.id).where(Rating.kind == "mag", Rating.ref_id == b.id, Rating.from_user_id == user.id))).first():
+            to_rate.append({"id": b.id, "name": b.client.full_name if b.client else "", "seats": b.seats})
+    myr, myn = await _rating_avg(db, user.id)
+    return {"to_rate": to_rate, "my_rating": _rating_public(myr, myn), "enabled": cfg["enabled"], "radius_m": cfg["radius_m"], "deposit": drv.deposit or 0, "min_deposit": cfg["min_deposit"], "commission": cfg["commission"],
             "blacklisted": bool(drv.blacklisted), "blacklist_reason": drv.blacklist_reason, "routes": out_routes, "entry": entry,
             "last_drop": {"reason": last.drop_reason, "at": last.ended_at.isoformat() if last.ended_at else None} if last and not entry else None}
 
@@ -10856,6 +10874,7 @@ async def driver_mag_apply(body: MagApplyBody, db: AsyncSession = Depends(get_db
         raise HTTPException(status_code=403, detail="Siz qora ro'yxatdasiz" + (f": {drv.blacklist_reason}" if drv.blacklist_reason else ""))
     if (await db.execute(select(TaxiDriver.id).where(TaxiDriver.user_id == user.id, TaxiDriver.is_online == True))).first():
         raise HTTPException(status_code=400, detail="Siz ichki taksida onlaynsiz. Avval oflayn bo'ling.")
+    await _rating_check(db, user.id, _tx_cfg(st), "Sizning")
     if (drv.deposit or 0) < cfg["min_deposit"]:
         raise HTTPException(status_code=400, detail=f"Depozit yetarli emas (kerak: {_fm(cfg['min_deposit'])} so'm, sizda: {_fm(drv.deposit or 0)})")
     route = await _mag_route(db, body.from_city_id, body.to_city_id)
@@ -10910,12 +10929,13 @@ async def mag_config(body: IcConfigBody, db: AsyncSession = Depends(get_db)):
                 dests.append({"id": cid, "name": nm, "price": pr})
         if not (await db.execute(select(Terminal.id).where(Terminal.city_id == client.city_id, Terminal.is_active == True))).first():
             dests = []
-    return {"enabled": bool(dests), "destinations": dests}
+    return {"enabled": bool(dests), "destinations": dests, "gender": client.gender}
 
 
 class MagQueueBody(BaseModel):
     init_data: str
     to_city_id: int
+    female_only: bool = False
 
 
 @mag_client_router.post("/queue")
@@ -10929,22 +10949,27 @@ async def mag_queue(body: MagQueueBody, db: AsyncSession = Depends(get_db)):
     if not route:
         raise HTTPException(status_code=400, detail="Bu yo'nalishda xizmat yo'q")
     ta, tb = await _ic_active_terminal(db, client.city_id), await _ic_active_terminal(db, body.to_city_id)
-    q = (await _mag_waiting(db, ta.id, tb.id))[:MAG_TOP]
+    q = await _mag_waiting(db, ta.id, tb.id)
+    q = q[:MAG_TOP]
     items = []
     for i, e in enumerate(q):
         drv = (await db.execute(select(ExpressDriver).where(ExpressDriver.user_id == e.driver_id))).scalars().first()
         info = await _mag_info(db, e, cfg, route, drv)
         per_comm = round(route.seat_price * cfg["commission"] / 100.0)
-        items.append({"entry_id": e.id, "position": i + 1, "driver": e.driver.full_name, "car": f"{drv.car_model or ''} {drv.car_plate or ''}".strip(),
+        ra, rn = await _rating_avg(db, e.driver_id)
+        items.append({"entry_id": e.id, "position": i + 1, "rating": _rating_public(ra, rn), "driver": e.driver.full_name, "car": f"{drv.car_model or ''} {drv.car_plate or ''}".strip(),
                       "free_seats": info["free_seats"], "capacity": info["capacity"], "ready": info["ready"],
-                      "bookable": info["free_seats"] >= 1 and (drv.deposit or 0) >= per_comm})
-    return {"price": route.seat_price, "from_terminal": ta.name, "from_address": ta.address, "to_terminal": tb.name, "items": items}
+                      "women_only": info["women_only"], "needs_women": info["needs_women"], "clients": info["clients"],
+                      "bookable": info["free_seats"] >= 1 and info["clients"] < MAG_MAX_CLIENTS and (drv.deposit or 0) >= per_comm
+                                  and not (client.gender == "female" and info["men_only"]) and not (client.gender != "female" and info["women_only"])})
+    return {"gender": client.gender, "price": route.seat_price, "from_terminal": ta.name, "from_address": ta.address, "to_terminal": tb.name, "items": items}
 
 
 class MagBookBody(BaseModel):
     init_data: str
     entry_id: int
     seats: int = 1
+    solo: bool = False
 
 
 @mag_client_router.post("/book")
@@ -10954,8 +10979,11 @@ async def mag_book(body: MagBookBody, db: AsyncSession = Depends(get_db)):
     cfg = _mag_cfg(await _get_or_create_setting(db))
     if not cfg["enabled"]:
         raise HTTPException(status_code=403, detail="Magistral taksi hozircha ishlamayapti")
-    if body.seats < 1 or body.seats > 6:
+    if body.seats < 1 or body.seats > MAG_MAX_CLIENTS:
         raise HTTPException(status_code=400, detail="O'rindiqlar soni noto'g'ri")
+    if client.gender not in ("male", "female"):
+        raise HTTPException(status_code=400, detail="Avval jinsingizni tanlang (ayollar alohida mashinada ketadi)")
+    await _rating_check(db, client.id, _tx_cfg(await _get_or_create_setting(db)), "Sizning")
     if (await db.execute(select(func.count(MagBooking.id)).where(MagBooking.client_id == client.id, MagBooking.status == "booked"))).scalar():
         raise HTTPException(status_code=400, detail="Sizda allaqachon faol bron bor. Avval uni bekor qiling.")
     e = (await db.execute(select(MagQueueEntry).options(selectinload(MagQueueEntry.from_terminal), selectinload(MagQueueEntry.to_terminal)).where(
@@ -10970,6 +10998,12 @@ async def mag_book(body: MagBookBody, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Yo'nalish topilmadi")
     drv = (await db.execute(select(ExpressDriver).where(ExpressDriver.user_id == e.driver_id).with_for_update())).scalars().first()
     info = await _mag_info(db, e, cfg, route, drv)
+    if info["clients"] >= MAG_MAX_CLIENTS:
+        raise HTTPException(status_code=400, detail="Salon to'lgan (eng ko'pi 4 mijoz)")
+    if client.gender == "female" and info["men_only"]:
+        raise HTTPException(status_code=400, detail="Bu mashinada erkak yo'lovchi bor. Ayollar faqat ayollar bilan ketadi — boshqa mashinani tanlang")
+    if client.gender != "female" and info["women_only"]:
+        raise HTTPException(status_code=400, detail="Bu mashina ayollar uchun. Boshqa mashinani tanlang")
     if body.seats > info["free_seats"]:
         raise HTTPException(status_code=400, detail=f"Bo'sh o'rindiq yetarli emas (bo'sh: {info['free_seats']})")
     amount = float(route.seat_price) * body.seats
@@ -10977,7 +11011,7 @@ async def mag_book(body: MagBookBody, db: AsyncSession = Depends(get_db)):
     if (drv.deposit or 0) < comm:
         raise HTTPException(status_code=400, detail="Bu haydovchida depozit yetarli emas, boshqa mashinani tanlang")
     drv.deposit = (drv.deposit or 0) - comm
-    b = MagBooking(entry_id=e.id, client_id=client.id, seats=body.seats, amount=amount, commission=comm)
+    b = MagBooking(entry_id=e.id, client_id=client.id, seats=body.seats, amount=amount, commission=comm, solo=bool(body.solo and client.gender == "female"))
     db.add(b)
     await db.commit()
     await _ic_notify(db, e.driver_id, f"🧍 Yangi yo'lovchi: {client.full_name} ({client.phone_number}), {body.seats} o'rindiq — {_fm(amount)} so'm (naqd).")
@@ -11001,12 +11035,44 @@ async def mag_my(body: IcConfigBody, db: AsyncSession = Depends(get_db)):
             q = await _mag_waiting(db, e.from_terminal_id, e.to_terminal_id)
             pos = next((i + 1 for i, x in enumerate(q) if x.id == e.id), None)
         show = b.status in ("booked", "done")
-        out.append({"id": b.id, "status": b.status, "trip_status": e.status, "seats": b.seats, "amount": b.amount, "position": pos,
+        rated = bool((await db.execute(select(Rating.id).where(Rating.kind == "mag", Rating.ref_id == b.id, Rating.from_user_id == client.id))).first()) if b.status == "done" else None
+        out.append({"id": b.id, "rated": rated, "status": b.status, "trip_status": e.status, "seats": b.seats, "amount": b.amount, "position": pos,
                     "from": e.from_terminal.name, "from_address": e.from_terminal.address, "to": e.to_terminal.name,
                     "driver": e.driver.full_name if show else None, "driver_phone": e.driver.phone_number if show else None,
                     "car": f"{drv.car_model or ''} {drv.car_plate or ''}".strip() if show and drv else None,
                     "created_at": b.created_at.isoformat() if b.created_at else None})
     return {"items": out}
+
+
+class RateBody(BaseModel):
+    stars: int
+    comment: Optional[str] = None
+
+
+class MagRateBody(BaseModel):
+    init_data: str
+    booking_id: int
+    stars: int
+    comment: Optional[str] = None
+
+
+@mag_client_router.post("/rate")
+async def mag_client_rate(body: MagRateBody, db: AsyncSession = Depends(get_db)):
+    client = await _client_for_cancel(db, body.init_data)
+    b = (await db.execute(select(MagBooking).options(selectinload(MagBooking.entry)).where(MagBooking.id == body.booking_id, MagBooking.client_id == client.id, MagBooking.status == "done"))).scalars().first()
+    if not b:
+        raise HTTPException(status_code=404, detail="Bron topilmadi")
+    await _rate(db, "mag", b.id, client.id, b.entry.driver_id, RateBody(stars=body.stars, comment=body.comment))
+    return {"ok": True}
+
+
+@driver_mag_router.post("/rate/{bid}")
+async def driver_mag_rate(bid: int, body: RateBody, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_express_driver)):
+    b = (await db.execute(select(MagBooking).options(selectinload(MagBooking.entry)).where(MagBooking.id == bid, MagBooking.status == "done"))).scalars().first()
+    if not b or b.entry.driver_id != user.id:
+        raise HTTPException(status_code=404, detail="Bron topilmadi")
+    await _rate(db, "mag", b.id, user.id, b.client_id, body)
+    return {"ok": True}
 
 
 @mag_client_router.post("/cancel")
@@ -11079,7 +11145,8 @@ async def admin_mag_overview(db: AsyncSession = Depends(get_db), current_user: U
     return {"cfg": cfg, "is_owner": current_user.role == UserRole.OWNER, "cities": [{"id": c.id, "name": c.name} for c in cities],
             "routes": [{"id": r.id, "from": r.from_city_id, "to": r.to_city_id, "seat_price": r.seat_price, "min_income": r.min_income, "active": bool(r.is_active)} for r in routes],
             "drivers": [{"user_id": u.id, "name": u.full_name, "phone": u.phone_number, "deposit": d.deposit or 0, "blacklisted": bool(d.blacklisted), "reason": d.blacklist_reason,
-                         "seats": d.seats or 4, "active": bool(d.is_active)} for d, u in drivers], "queue": queue}
+                         "seats": d.seats or 4, "active": bool(d.is_active), "gender": u.gender,
+                         "rating": dict(zip(("avg", "count"), await _rating_avg(db, u.id)))} for d, u in drivers], "queue": queue}
 
 
 @admin_mag_router.post("/settings")
@@ -11164,7 +11231,7 @@ class MagSeatsBody(BaseModel):
 @admin_mag_router.post("/drivers/{uid}/seats")
 async def admin_mag_seats(uid: int, body: MagSeatsBody, db: AsyncSession = Depends(get_db), owner: User = Depends(require_owner)):
     d = (await db.execute(select(ExpressDriver).where(ExpressDriver.user_id == uid))).scalars().first()
-    if not d or not (1 <= body.seats <= 12):
+    if not d or not (1 <= body.seats <= MAG_MAX_CLIENTS):
         raise HTTPException(status_code=400, detail="Qiymat noto'g'ri")
     d.seats = body.seats
     await db.commit()
@@ -11189,7 +11256,9 @@ def _tx_cfg(setting) -> dict:
         return d if v is None else v
     return {"enabled": bool(g("taxi_local_enabled", False)), "commission": float(g("taxi_commission_percent", 10.0)), "bid_seconds": int(g("taxi_bid_seconds", 40)),
             "max_bids": int(g("taxi_max_bids", 3)), "radius_km": float(g("taxi_radius_km", 5.0)), "base_fare": float(g("taxi_base_fare", 5000.0)),
-            "per_km": float(g("taxi_per_km", 2500.0)), "min_balance": float(g("taxi_min_balance", 0.0)), "stale_min": int(g("taxi_stale_min", 5))}
+            "per_km": float(g("taxi_per_km", 2500.0)), "min_balance": float(g("taxi_min_balance", 0.0)), "stale_min": int(g("taxi_stale_min", 5)),
+            "pool_discount": float(g("taxi_pool_discount", 20.0)), "pool_max": min(int(g("taxi_pool_max", 3)), 3), "pool_pickup_km": float(g("taxi_pool_pickup_km", 3.0)),
+            "pool_detour_km": float(g("taxi_pool_detour_km", 3.0)), "rating_block_below": float(g("rating_block_below", 0.0)), "rating_min_count": int(g("rating_min_count", 5))}
 
 
 TX_ACTIVE = ("assigned", "arrived", "started")
@@ -11222,6 +11291,43 @@ async def _tx_expire(db: AsyncSession) -> None:
         await db.commit()
 
 
+async def _rating_avg(db: AsyncSession, uid: int):
+    row = (await db.execute(select(func.avg(Rating.stars), func.count(Rating.id)).where(Rating.to_user_id == uid))).first()
+    n = int(row[1] or 0)
+    return (round(float(row[0]), 1) if n else None), n
+
+
+def _rating_public(avg, n) -> dict:
+    return {"avg": avg if n >= 3 else None, "count": n}
+
+
+async def _rating_check(db: AsyncSession, uid: int, cfg: dict, who: str) -> None:
+    thr = cfg.get("rating_block_below") or 0
+    if thr <= 0:
+        return
+    avg, n = await _rating_avg(db, uid)
+    if n >= cfg.get("rating_min_count", 5) and avg is not None and avg < thr:
+        raise HTTPException(status_code=403, detail=f"{who} reytingi ({avg}) minimal {thr} dan past. Administrator bilan bog'laning.")
+
+
+async def _tx_can_take(db: AsyncSession, user_id: int, td: TaxiDriver, ride: TaxiRide, cfg: dict) -> Optional[str]:
+    """Haydovchi bu buyurtmani ola oladimi? None = ha, aks holda sabab (matn)."""
+    du = (await db.execute(select(User).where(User.id == user_id))).scalars().first()
+    act = (await db.execute(select(TaxiRide).where(TaxiRide.driver_id == user_id, TaxiRide.status.in_(TX_ACTIVE)))).scalars().all()
+    if not act:
+        return None
+    if not ride.allow_share or any(not a.allow_share for a in act):
+        return "Sizda faol buyurtma bor"
+    if len(act) >= cfg["pool_max"]:
+        return "Mashinada joy qolmadi"
+    if td.latitude is None or _haversine_km(td.latitude, td.longitude, ride.pickup_lat, ride.pickup_lng) > cfg["pool_pickup_km"]:
+        return "Yo'lovchi sizdan uzoqda"
+    for a in act:
+        if _haversine_km(a.dropoff_lat, a.dropoff_lng, ride.dropoff_lat, ride.dropoff_lng) > cfg["pool_detour_km"]:
+            return "Manzillar bir yo'nalishda emas"
+    return None
+
+
 async def _tx_driver_busy(db: AsyncSession, uid: int) -> bool:
     return bool((await db.execute(select(TaxiRide.id).where(TaxiRide.driver_id == uid, TaxiRide.status.in_(TX_ACTIVE)))).first())
 
@@ -11243,6 +11349,8 @@ class TxCreateBody(TxQuoteBody):
     dropoff_address: str
     price: float
     comment: Optional[str] = None
+    allow_share: bool = False
+    female_only: bool = False
 
 
 class TxChooseBody(BaseModel):
@@ -11256,7 +11364,23 @@ async def taxi_config(body: IcConfigBody, db: AsyncSession = Depends(get_db)):
     client = await _client_for_cancel(db, body.init_data)
     cfg = _tx_cfg(await _get_or_create_setting(db))
     ok = cfg["enabled"] and client.city_id is not None
-    return {"enabled": ok, "base_fare": cfg["base_fare"], "per_km": cfg["per_km"], "bid_seconds": cfg["bid_seconds"]}
+    return {"enabled": ok, "base_fare": cfg["base_fare"], "per_km": cfg["per_km"], "bid_seconds": cfg["bid_seconds"], "gender": client.gender,
+            "pool_discount": cfg["pool_discount"]}
+
+
+class TxGenderBody(BaseModel):
+    init_data: str
+    gender: str
+
+
+@taxi_client_router.post("/gender")
+async def taxi_gender(body: TxGenderBody, db: AsyncSession = Depends(get_db)):
+    client = await _client_for_cancel(db, body.init_data)
+    if body.gender not in ("male", "female"):
+        raise HTTPException(status_code=400, detail="Jinsni tanlang")
+    client.gender = body.gender
+    await db.commit()
+    return {"ok": True}
 
 
 @taxi_client_router.post("/quote")
@@ -11267,21 +11391,26 @@ async def taxi_quote(body: TxQuoteBody, db: AsyncSession = Depends(get_db)):
     km = _road_km(st, body.pickup_lat, body.pickup_lng, body.dropoff_lat, body.dropoff_lng)
     if km is None:
         raise HTTPException(status_code=400, detail="Joylarni xaritada belgilang")
-    return {"km": round(km, 1), "price": _tx_price(cfg, km)}
+    p = _tx_price(cfg, km)
+    return {"km": round(km, 1), "price": p, "pool_price": float(math.ceil(p * (1 - cfg["pool_discount"] / 100.0) / 500.0) * 500)}
 
 
 async def _tx_ride_dict(db: AsyncSession, r: TaxiRide, cfg: dict, for_client: bool = True) -> dict:
     now = datetime.utcnow()
     d = {"id": r.id, "status": r.status, "status_label": TX_STATUS_UZ.get(r.status, r.status), "pickup_address": r.pickup_address, "dropoff_address": r.dropoff_address,
          "km": r.km, "start_price": r.start_price, "price": r.price, "seconds_left": max(int((r.bid_deadline - now).total_seconds()), 0) if r.status == "bidding" else 0,
-         "total_seconds": cfg["bid_seconds"]}
+         "total_seconds": cfg["bid_seconds"], "allow_share": bool(r.allow_share), "female_only": bool(r.female_only)}
     if r.status == "bidding":
         bids = (await db.execute(select(TaxiBid).options(selectinload(TaxiBid.driver)).where(TaxiBid.ride_id == r.id, TaxiBid.status == "offered").order_by(TaxiBid.id))).scalars().all()
         items = []
         for b in bids:
             td = (await db.execute(select(TaxiDriver).where(TaxiDriver.user_id == b.driver_id))).scalars().first()
-            items.append({"id": b.id, "price": b.price, "driver": b.driver.full_name.split(" ")[0] if b.driver else "", "car": f"{td.car_model or ''} {td.car_plate or ''}".strip() if td else ""})
+            ra, rn = await _rating_avg(db, b.driver_id)
+            items.append({"id": b.id, "price": b.price, "driver": b.driver.full_name.split(" ")[0] if b.driver else "", "car": f"{td.car_model or ''} {td.car_plate or ''}".strip() if td else "",
+                          "rating": _rating_public(ra, rn)})
         d["bids"] = items
+    if r.status == "completed":
+        d["rated"] = bool((await db.execute(select(Rating.id).where(Rating.kind == "taxi", Rating.ref_id == r.id, Rating.from_user_id == r.client_id))).first())
     if r.driver_id and r.status in TX_ACTIVE + ("completed",):
         dr = (await db.execute(select(User).where(User.id == r.driver_id))).scalars().first()
         td = (await db.execute(select(TaxiDriver).where(TaxiDriver.user_id == r.driver_id))).scalars().first()
@@ -11301,6 +11430,7 @@ async def taxi_create(body: TxCreateBody, db: AsyncSession = Depends(get_db)):
     if client.city_id is None:
         raise HTTPException(status_code=400, detail="Avval shaharingizni tanlang")
     await _tx_expire(db)
+    await _rating_check(db, client.id, cfg, "Sizning")
     if (await db.execute(select(TaxiRide.id).where(TaxiRide.client_id == client.id, TaxiRide.status.in_(("bidding",) + TX_ACTIVE)))).first():
         raise HTTPException(status_code=400, detail="Sizda faol taksi buyurtmasi bor")
     pa, da = (body.pickup_address or "").strip()[:200], (body.dropoff_address or "").strip()[:200]
@@ -11310,11 +11440,13 @@ async def taxi_create(body: TxCreateBody, db: AsyncSession = Depends(get_db)):
     if km is None or km < 0.2:
         raise HTTPException(status_code=400, detail="Joylarni xaritada to'g'ri belgilang")
     sug = _tx_price(cfg, km)
+    if body.allow_share:
+        sug = float(math.ceil(sug * (1 - cfg["pool_discount"] / 100.0) / 500.0) * 500)
     if not (sug * 0.5 <= body.price <= sug * 3):
         raise HTTPException(status_code=400, detail=f"Narx {_fm(sug * 0.5)} – {_fm(sug * 3)} so'm oralig'ida bo'lsin")
     r = TaxiRide(client_id=client.id, city_id=client.city_id, status="bidding", pickup_address=pa, pickup_lat=body.pickup_lat, pickup_lng=body.pickup_lng,
                  dropoff_address=da, dropoff_lat=body.dropoff_lat, dropoff_lng=body.dropoff_lng, km=round(km, 1), start_price=float(round(body.price)),
-                 comment=(body.comment or "").strip()[:200] or None, bid_deadline=datetime.utcnow() + timedelta(seconds=cfg["bid_seconds"]))
+                 comment=(body.comment or "").strip()[:200] or None, allow_share=body.allow_share, female_only=False, bid_deadline=datetime.utcnow() + timedelta(seconds=cfg["bid_seconds"]))
     db.add(r)
     await db.commit()
     try:
@@ -11350,7 +11482,7 @@ async def taxi_choose(body: TxChooseBody, db: AsyncSession = Depends(get_db)):
     if not b:
         raise HTTPException(status_code=404, detail="Taklif topilmadi")
     td = (await db.execute(select(TaxiDriver).where(TaxiDriver.user_id == b.driver_id).with_for_update())).scalars().first()
-    if not td or not td.is_online or not td.is_active or td.blacklisted or await _tx_driver_busy(db, b.driver_id):
+    if not td or not td.is_online or not td.is_active or td.blacklisted or await _tx_can_take(db, b.driver_id, td, r, cfg):
         b.status = "rejected"
         await db.commit()
         raise HTTPException(status_code=409, detail="Bu haydovchi band bo'lib qoldi, boshqasini tanlang")
@@ -11422,11 +11554,11 @@ async def taxi_state(db: AsyncSession = Depends(get_db), user: User = Depends(ge
     cfg = _tx_cfg(st)
     await _tx_expire(db)
     td = await _tx_td(db, user)
-    active = (await db.execute(select(TaxiRide).options(selectinload(TaxiRide.client)).where(TaxiRide.driver_id == user.id, TaxiRide.status.in_(TX_ACTIVE)).order_by(TaxiRide.id.desc()))).scalars().first()
+    actives = (await db.execute(select(TaxiRide).options(selectinload(TaxiRide.client)).where(TaxiRide.driver_id == user.id, TaxiRide.status.in_(TX_ACTIVE)).order_by(TaxiRide.id))).scalars().all()
     requests = []
-    if td.is_online and not active and cfg["enabled"] and _tx_fresh(td, cfg) and not td.blacklisted:
+    if td.is_online and cfg["enabled"] and _tx_fresh(td, cfg) and not td.blacklisted:
         now = datetime.utcnow()
-        rs = (await db.execute(select(TaxiRide).where(TaxiRide.status == "bidding", TaxiRide.city_id == td.city_id, TaxiRide.bid_deadline >= now).order_by(TaxiRide.id.desc()).limit(20))).scalars().all()
+        rs = (await db.execute(select(TaxiRide).where(TaxiRide.status == "bidding", TaxiRide.city_id == td.city_id, TaxiRide.bid_deadline >= now).order_by(TaxiRide.id.desc()).limit(30))).scalars().all()
         for r in rs:
             d = _haversine_km(td.latitude, td.longitude, r.pickup_lat, r.pickup_lng)
             if d > cfg["radius_km"]:
@@ -11435,13 +11567,73 @@ async def taxi_state(db: AsyncSession = Depends(get_db), user: User = Depends(ge
             mine = next((b for b in bids if b.driver_id == user.id), None)
             if len(bids) >= cfg["max_bids"] and not mine:
                 continue
+            if await _tx_can_take(db, user.id, td, r, cfg):
+                continue
+            ra, rn = await _rating_avg(db, r.client_id)
             requests.append({"id": r.id, "km": r.km, "to_you_km": round(d, 1), "start_price": r.start_price, "seconds_left": max(int((r.bid_deadline - now).total_seconds()), 0),
-                             "my_bid": mine.price if mine else None, "bids": len(bids)})
+                             "my_bid": mine.price if mine else None, "bids": len(bids), "share": bool(r.allow_share), "female_only": bool(r.female_only),
+                             "client_rating": _rating_public(ra, rn)})
+    rides = []
+    for a_ in actives:
+        d_ = _tx_ride_for_driver(a_, True)
+        ra, rn = await _rating_avg(db, a_.client_id)
+        d_["client_rating"] = _rating_public(ra, rn)
+        d_["share"] = bool(a_.allow_share)
+        rides.append(d_)
     hist = (await db.execute(select(TaxiRide).where(TaxiRide.driver_id == user.id, TaxiRide.status == "completed").order_by(TaxiRide.id.desc()).limit(10))).scalars().all()
+    hist_out = []
+    for h in hist:
+        rated = bool((await db.execute(select(Rating.id).where(Rating.kind == "taxi", Rating.ref_id == h.id, Rating.from_user_id == user.id))).first())
+        hist_out.append({"id": h.id, "price": h.price, "commission": h.commission, "at": h.completed_at.isoformat() if h.completed_at else None, "rated": rated})
+    myr, myn = await _rating_avg(db, user.id)
     return {"name": user.full_name, "car": f"{td.car_model or ''} {td.car_plate or ''}".strip(), "online": bool(td.is_online), "balance": td.balance or 0, "enabled": cfg["enabled"],
             "blacklisted": bool(td.blacklisted), "commission": cfg["commission"], "min_balance": cfg["min_balance"], "max_bids": cfg["max_bids"],
-            "ride": _tx_ride_for_driver(active, True) if active else None, "requests": requests,
-            "history": [{"id": h.id, "price": h.price, "commission": h.commission, "at": h.completed_at.isoformat() if h.completed_at else None} for h in hist]}
+            "ride": rides[0] if rides else None, "rides": rides, "requests": requests, "history": hist_out, "gender": user.gender, "female_clients_only": bool(td.female_clients_only),
+            "my_rating": _rating_public(myr, myn), "pool_max": cfg["pool_max"]}
+
+
+class TxPrefsBody(BaseModel):
+    female_clients_only: bool
+
+
+@taxi_driver_router.post("/taxi/api/prefs")
+async def taxi_prefs(body: TxPrefsBody, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_taxi_driver)):
+    return {"ok": True}
+
+
+async def _rate(db: AsyncSession, kind: str, ref_id: int, from_id: int, to_id: int, body: RateBody) -> None:
+    if not (1 <= body.stars <= 5):
+        raise HTTPException(status_code=400, detail="Baho 1 dan 5 gacha")
+    if (await db.execute(select(Rating.id).where(Rating.kind == kind, Rating.ref_id == ref_id, Rating.from_user_id == from_id))).first():
+        raise HTTPException(status_code=400, detail="Siz allaqachon baho bergansiz")
+    db.add(Rating(kind=kind, ref_id=ref_id, from_user_id=from_id, to_user_id=to_id, stars=body.stars, comment=(body.comment or "").strip()[:200] or None))
+    await db.commit()
+
+
+@taxi_driver_router.post("/taxi/api/rides/{rid}/rate")
+async def taxi_driver_rate(rid: int, body: RateBody, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_taxi_driver)):
+    r = (await db.execute(select(TaxiRide).where(TaxiRide.id == rid, TaxiRide.driver_id == user.id, TaxiRide.status == "completed"))).scalars().first()
+    if not r:
+        raise HTTPException(status_code=404, detail="Safar topilmadi")
+    await _rate(db, "taxi", r.id, user.id, r.client_id, body)
+    return {"ok": True}
+
+
+class TxClientRateBody(BaseModel):
+    init_data: str
+    ride_id: int
+    stars: int
+    comment: Optional[str] = None
+
+
+@taxi_client_router.post("/rate")
+async def taxi_client_rate(body: TxClientRateBody, db: AsyncSession = Depends(get_db)):
+    client = await _client_for_cancel(db, body.init_data)
+    r = (await db.execute(select(TaxiRide).where(TaxiRide.id == body.ride_id, TaxiRide.client_id == client.id, TaxiRide.status == "completed"))).scalars().first()
+    if not r or not r.driver_id:
+        raise HTTPException(status_code=404, detail="Safar topilmadi")
+    await _rate(db, "taxi", r.id, client.id, r.driver_id, RateBody(stars=body.stars, comment=body.comment))
+    return {"ok": True}
 
 
 class TxOnlineBody(BaseModel):
@@ -11457,6 +11649,7 @@ async def taxi_online(body: TxOnlineBody, db: AsyncSession = Depends(get_db), us
             raise HTTPException(status_code=403, detail="Taksi hozircha yoqilmagan")
         if td.blacklisted:
             raise HTTPException(status_code=403, detail="Siz qora ro'yxatdasiz" + (f": {td.blacklist_reason}" if td.blacklist_reason else ""))
+        await _rating_check(db, user.id, cfg, "Sizning")
         if (td.balance or 0) < max(cfg["min_balance"], 0):
             raise HTTPException(status_code=400, detail=f"Balans yetarli emas (kerak: {_fm(cfg['min_balance'])} so'm)")
         if (await db.execute(select(MagQueueEntry.id).where(MagQueueEntry.driver_id == user.id, MagQueueEntry.status.in_(["waiting", "departed"])))).first():
@@ -11491,12 +11684,14 @@ async def taxi_bid(body: TxBidBody, db: AsyncSession = Depends(get_db), user: Us
     td = await _tx_td(db, user, True)
     if not cfg["enabled"] or not td.is_online or td.blacklisted or not _tx_fresh(td, cfg):
         raise HTTPException(status_code=400, detail="Avval onlayn bo'ling (joylashuv yoqilgan bo'lsin)")
-    if await _tx_driver_busy(db, user.id):
-        raise HTTPException(status_code=400, detail="Sizda faol buyurtma bor")
+    await _rating_check(db, user.id, cfg, "Sizning")
     r = (await db.execute(select(TaxiRide).where(TaxiRide.id == body.ride_id).with_for_update())).scalars().first()
     now = datetime.utcnow()
     if not r or r.status != "bidding" or r.bid_deadline < now or r.city_id != td.city_id:
         raise HTTPException(status_code=400, detail="Vaqt tugadi yoki buyurtma mavjud emas")
+    why = await _tx_can_take(db, user.id, td, r, cfg)
+    if why:
+        raise HTTPException(status_code=400, detail=why)
     if _haversine_km(td.latitude, td.longitude, r.pickup_lat, r.pickup_lng) > cfg["radius_km"]:
         raise HTTPException(status_code=400, detail="Buyurtma sizdan uzoqda")
     if not (r.start_price * 0.5 <= body.price <= r.start_price * 3):
@@ -11572,7 +11767,8 @@ async def admin_taxi_overview(db: AsyncSession = Depends(get_db), current_user: 
     rides = (await db.execute(select(TaxiRide).options(selectinload(TaxiRide.client), selectinload(TaxiRide.driver)).order_by(TaxiRide.id.desc()).limit(60))).scalars().all()
     return {"cfg": cfg, "is_owner": current_user.role == UserRole.OWNER, "cities": [{"id": c.id, "name": c.name} for c in cities],
             "drivers": [{"user_id": u.id, "name": u.full_name, "phone": u.phone_number, "city_id": d.city_id, "car": f"{d.car_model or ''} {d.car_plate or ''}".strip(), "balance": d.balance or 0,
-                         "online": bool(d.is_online), "active": bool(d.is_active), "blacklisted": bool(d.blacklisted), "reason": d.blacklist_reason} for d, u in ds],
+                         "online": bool(d.is_online), "active": bool(d.is_active), "blacklisted": bool(d.blacklisted), "reason": d.blacklist_reason, "gender": u.gender,
+                         "rating": dict(zip(("avg", "count"), await _rating_avg(db, u.id)))} for d, u in ds],
             "rides": [{"id": r.id, "status": r.status, "label": TX_STATUS_UZ.get(r.status, r.status), "client": r.client.full_name if r.client else "", "client_phone": r.client.phone_number if r.client else "",
                        "driver": r.driver.full_name if r.driver else "", "from": r.pickup_address, "to": r.dropoff_address, "km": r.km, "price": r.price or r.start_price, "commission": r.commission,
                        "at": r.created_at.isoformat() if r.created_at else None} for r in rides]}
@@ -11581,20 +11777,28 @@ async def admin_taxi_overview(db: AsyncSession = Depends(get_db), current_user: 
 @admin_taxi_router.post("/settings")
 async def admin_taxi_settings(commission: float = Form(10.0, allow_inf_nan=False), bid_seconds: int = Form(40), max_bids: int = Form(3), radius_km: float = Form(5.0, allow_inf_nan=False),
                               base_fare: float = Form(5000.0, allow_inf_nan=False), per_km: float = Form(2500.0, allow_inf_nan=False),
-                              min_balance: float = Form(0.0, allow_inf_nan=False), db: AsyncSession = Depends(get_db), owner: User = Depends(require_owner)):
+                              min_balance: float = Form(0.0, allow_inf_nan=False), pool_discount: float = Form(20.0, allow_inf_nan=False), pool_max: int = Form(3),
+                              pool_pickup_km: float = Form(3.0, allow_inf_nan=False), pool_detour_km: float = Form(3.0, allow_inf_nan=False),
+                              rating_block_below: float = Form(0.0, allow_inf_nan=False), rating_min_count: int = Form(5),
+                              db: AsyncSession = Depends(get_db), owner: User = Depends(require_owner)):
+    if not (0 <= pool_discount <= 60) or not (1 <= pool_max <= 3) or not (0.2 <= pool_pickup_km <= 50) or not (0.2 <= pool_detour_km <= 50) \
+            or not (0 <= rating_block_below <= 5) or not (1 <= rating_min_count <= 1000):
+        raise HTTPException(status_code=400, detail="Qiymatlar noto'g'ri")
     if not (0 <= commission <= 60) or not (10 <= bid_seconds <= 300) or not (1 <= max_bids <= 10) or not (0.5 <= radius_km <= 100) \
             or not (0 <= base_fare <= 1_000_000) or not (0 <= per_km <= 100_000) or not (-1_000_000_000 <= min_balance <= 1_000_000_000):
         raise HTTPException(status_code=400, detail="Qiymatlar noto'g'ri")
     st = await _get_or_create_setting(db)
     st.taxi_commission_percent, st.taxi_bid_seconds, st.taxi_max_bids, st.taxi_radius_km = commission, bid_seconds, max_bids, radius_km
     st.taxi_base_fare, st.taxi_per_km, st.taxi_min_balance = base_fare, per_km, min_balance
+    st.taxi_pool_discount, st.taxi_pool_max, st.taxi_pool_pickup_km, st.taxi_pool_detour_km = pool_discount, pool_max, pool_pickup_km, pool_detour_km
+    st.rating_block_below, st.rating_min_count = rating_block_below, rating_min_count
     await db.commit()
     return {"ok": True}
 
 
 @admin_taxi_router.post("/drivers/create")
 async def admin_taxi_driver_create(full_name: str = Form(...), phone_number: str = Form(...), password: str = Form(...), city_id: int = Form(...),
-                                   car_model: str = Form(""), car_plate: str = Form(""), db: AsyncSession = Depends(get_db), owner: User = Depends(require_owner)):
+                                   car_model: str = Form(""), car_plate: str = Form(""), gender: str = Form(""), db: AsyncSession = Depends(get_db), owner: User = Depends(require_owner)):
     if not (await db.execute(select(City.id).where(City.id == city_id))).first():
         raise HTTPException(status_code=404, detail="Shahar topilmadi")
     u = await find_or_create_login_user(db, phone_number, password, full_name, city_id)
@@ -11602,7 +11806,33 @@ async def admin_taxi_driver_create(full_name: str = Form(...), phone_number: str
         raise HTTPException(status_code=400, detail="Bu foydalanuvchi allaqachon taksi haydovchisi")
     if (await db.execute(select(ExpressDriver.id).where(ExpressDriver.user_id == u.id, ExpressDriver.is_active == True))).first():
         raise HTTPException(status_code=400, detail="Bu foydalanuvchi magistral haydovchi — ikkalasi bir vaqtda bo'la olmaydi")
+    if gender in ("male", "female"):
+        u.gender = gender
     db.add(TaxiDriver(user_id=u.id, city_id=city_id, car_model=car_model.strip()[:80] or None, car_plate=car_plate.strip()[:20] or None, is_active=True))
+    await db.commit()
+    return {"ok": True}
+
+
+class GenderBody(BaseModel):
+    gender: str
+
+
+@admin_taxi_router.post("/drivers/{uid}/gender")
+async def admin_taxi_gender(uid: int, body: GenderBody, db: AsyncSession = Depends(get_db), owner: User = Depends(require_owner)):
+    u = (await db.execute(select(User).where(User.id == uid))).scalars().first()
+    if not u or body.gender not in ("male", "female"):
+        raise HTTPException(status_code=400, detail="Qiymat noto'g'ri")
+    u.gender = body.gender
+    await db.commit()
+    return {"ok": True}
+
+
+@admin_mag_router.post("/drivers/{uid}/gender")
+async def admin_mag_gender(uid: int, body: GenderBody, db: AsyncSession = Depends(get_db), owner: User = Depends(require_owner)):
+    u = (await db.execute(select(User).where(User.id == uid))).scalars().first()
+    if not u or body.gender not in ("male", "female"):
+        raise HTTPException(status_code=400, detail="Qiymat noto'g'ri")
+    u.gender = body.gender
     await db.commit()
     return {"ok": True}
 
