@@ -288,7 +288,7 @@
     <div class="premium-orb premium-orb-2"></div>
 
     <div id="top-tabs" class="zm-top-tabs" role="tablist">
-        <button type="button" role="tab" data-top-tab="city" onclick="switchNavGroup('city')" class="zm-top-tab">🏙️ Shahar xizmatlari</button>
+        {% if not is_terminal_op %}<button type="button" role="tab" data-top-tab="city" onclick="switchNavGroup('city')" class="zm-top-tab">🏙️ Shahar xizmatlari</button>{% endif %}
         {% if is_owner or operator_perms.get('magistral') %}
         <button type="button" role="tab" data-top-tab="magistral" onclick="switchNavGroup('magistral')" class="zm-top-tab">🚛 Magistral logistika</button>
         {% endif %}
@@ -315,7 +315,7 @@
             <button type="button" data-zm-settings="all" aria-label="Mavzu va til"></button>
             <span class="bg-green-500 text-xs font-bold px-3 py-1 rounded-full">Tizim Faol</span>
             <div class="flex items-center gap-2 text-xs bg-white/10 px-3 py-1.5 rounded-lg border border-white/20">
-                <span>👤 {{ current_user.full_name }} ({% if is_owner %}Egasi{% else %}Operator{% endif %})</span>
+                <span>👤 {{ current_user.full_name }} ({% if is_owner %}Egasi{% elif is_terminal_op %}Terminal operatori{% else %}Operator{% endif %})</span>
                 <a href="/logout" class="text-red-200 hover:text-red-100 font-semibold">Chiqish</a>
             </div>
         </div>
@@ -325,6 +325,7 @@
         <aside class="w-60 bg-white dark:bg-gray-900 border-r dark:border-gray-700 shrink-0 py-4 hidden md:block">
             <nav id="admin-nav-groups" class="px-3">
                 <!-- ===== SHAHAR XIZMATLARI ===== -->
+                {% if not is_terminal_op %}
                 <div data-nav-group="city">
                   <div class="flex flex-col gap-1">
                     <button onclick="showPage('bosh')" data-page-btn="bosh" class="nav-btn">🏠 Bosh sahifa</button>
@@ -384,6 +385,7 @@
                   </div>
                 </div>
 
+                {% endif %}
                 <!-- ===== MAGISTRAL LOGISTIKA ===== -->
                 {% if is_owner or operator_perms.get('magistral') %}
                 <div data-nav-group="magistral" style="display:none;">
@@ -408,7 +410,7 @@
 
         <main class="flex-1 mt-2 p-4 space-y-6 min-w-0" id="main-content">
             <select id="mobile-page-select" onchange="showPage(this.value)" class="md:hidden w-full mb-2 p-2 border rounded-lg font-semibold">
-                <optgroup label="🏙️ Shahar xizmatlari" data-nav-group="city">
+                {% if not is_terminal_op %}<optgroup label="🏙️ Shahar xizmatlari" data-nav-group="city">
                 <option value="bosh">🏠 Bosh sahifa</option>
                 <option value="buyurtmalar">📦 Buyurtmalar</option>
                 <option value="kuryerlar">🛵 Kuryerlar</option>
@@ -428,7 +430,7 @@
                 <option value="xavfzone">⚠️ Reset</option>
                 {% endif %}
                 {% if not is_owner and (operator_perms.get('banner') or operator_perms.get('banner_sorovlari')) %}<option value="banner">🖼️ Banner</option>{% endif %}
-                </optgroup>
+                </optgroup>{% endif %}
                 {% if is_owner or operator_perms.get('magistral') %}
                 <optgroup label="🚛 Magistral logistika" data-nav-group="magistral">
                 <option value="mg-bosh">🏠 Bosh sahifa</option>
@@ -446,6 +448,7 @@
             </select>
 
 
+{% if not is_terminal_op %}
 <section class="app-page" data-page="bosh">
         <!-- DASHBOARD & SETTINGS -->
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -705,6 +708,7 @@
         {% endif %}
 
 </section>
+{% endif %}
 
         {% if is_owner or operator_perms.get('buyurtmalar') %}
         <section class="app-page" data-page="buyurtmalar" style="display:none;">
@@ -2681,7 +2685,8 @@
          Bu ham VS Code kabi muharrirlarni chalg'itmaydi, ham xavfsizroq usul. -->
     <script type="application/json" id="products-data">{{ products_json | safe }}</script>
 
-    <script>
+    {% if not is_terminal_op %}
+<script>
         // Barcha mavjud mahsulotlar (do'kon bo'yicha filtrlash uchun) — yuqoridagi JSON blokdan o'qiladi
         const allProducts = JSON.parse(document.getElementById('products-data').textContent);
         let orderItemRowCounter = 0;
@@ -2895,6 +2900,7 @@
         }
 
         // ===== Yuqori tablar: menyu guruhlarini display none/block bilan almashtirish =====
+        const IS_TERM_OP = {{ 'true' if is_terminal_op else 'false' }};
         const NAV_HOME = { city: 'bosh', magistral: 'mg-bosh' };
         let currentNavGroup = 'city';
         let _mobileNavGroups = null;
@@ -2965,7 +2971,7 @@
                 target.classList.add('page-fade-in');
             } else if (pageName !== 'bosh') {
                 const _toMg = String(pageName).indexOf('mg-') === 0 && pageName !== 'mg-bosh' && document.querySelector('.app-page[data-page="mg-bosh"]');
-                showPage(_toMg ? 'mg-bosh' : 'bosh');
+                showPage((_toMg || IS_TERM_OP) ? 'mg-bosh' : 'bosh');
                 return;
             }
 
@@ -3704,8 +3710,14 @@
                 if (hourlyChartInstance) { hourlyChartInstance.destroy(); hourlyChartInstance = null; renderHourlyChart(); }
             });
             applyWeatherMultiplier();
-            setNavGroup('city');
-            showPage(localStorage.getItem('admin_active_page') || 'bosh');
+            const _savedPage = localStorage.getItem('admin_active_page');
+            if (IS_TERM_OP) {
+                setNavGroup('magistral');
+                showPage(String(_savedPage).indexOf('mg-') === 0 ? _savedPage : 'mg-bosh');
+            } else {
+                setNavGroup('city');
+                showPage(_savedPage || 'bosh');
+            }
             updateLiveClock();
             setInterval(updateLiveClock, 1000);
             animateStatNumbers();
@@ -3726,6 +3738,7 @@
             }
         });
     </script>
+{% endif %}
 
     <script>
     (function(){
@@ -3736,7 +3749,8 @@
         document.addEventListener('DOMContentLoaded',function(){setC('#f59e0b');});
     })();
     </script>
-    <script>
+    {% if not is_terminal_op %}
+<script>
     (function(){
         function e(v){return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/\n/g,'<br>');}
         var sec='partner',uid=null,lastTotal=null,AU={partner:'hamkorlarga',courier:'kuryerlarga',client:'mijozlarga'},ac=null;
@@ -3783,7 +3797,9 @@
             window.addEventListener('pageshow',unread);}
     })();
     </script>
-    <script>
+{% endif %}
+    {% if not is_terminal_op %}
+<script>
     (function(){
         function e(v){return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
         var timers={};
@@ -3805,10 +3821,12 @@
         });
     })();
     </script>
+{% endif %}
     <script src="/static/js/zm-secure.js?v=2"></script>
     <script src="/static/js/zm-ai.js?v=4"></script>
     {% if ai_help_on %}<script>document.addEventListener("DOMContentLoaded",function(){if(window.ZMAI)ZMAI.mountHelp({url:"/admin/ai/help"});});</script>{% endif %}
-    <script>
+    {% if not is_terminal_op %}
+<script>
     (function(){
         function e(v){return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
         var ST={pending:'⏳ To\'lov kutilmoqda',approved:'✅ Efirda',rejected:'⛔ Rad',expired:'⌛ Muddati tugagan'};
@@ -3853,5 +3871,6 @@
         document.addEventListener('DOMContentLoaded',function(){load();loadAim();});
     })();
     </script>
+{% endif %}
 </body>
 </html>

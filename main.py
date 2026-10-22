@@ -602,6 +602,39 @@ def require_section(section_key: str):
 
 
 
+# ==================== TERMINAL OPERATORI -> ADMIN PANEL (faqat Magistral logistika) ====================
+# Terminal operatori (TerminalOperator) o'z hisobi bilan /admin ga kira oladi va FAQAT
+# "Magistral logistika" bo'limini o'z terminali shahri doirasida ko'radi. Ular /terminal
+# sahifasida ham avvalgidek ishlayveradi. auth.py ga tegilmagan.
+_PANEL_ADMIN_ROLES = (UserRole.OWNER, UserRole.ADMIN)
+
+
+async def get_panel_user(request: Request, db: AsyncSession = Depends(get_db)):
+    """Admin/operator YOKI terminal operatori. Terminal operatoriga `_is_terminal_op` va
+    `_term_city_id` (terminal shahri) belgilari qo'yiladi."""
+    uid = request.session.get("user_id")
+    if uid:
+        user = (await db.execute(select(User).where(User.id == uid))).scalars().first()
+        if user and user.is_active and user.role not in _PANEL_ADMIN_ROLES:
+            op = (await db.execute(select(TerminalOperator).options(selectinload(TerminalOperator.terminal)).where(
+                TerminalOperator.user_id == user.id, TerminalOperator.is_active == True))).scalars().first()
+            if op and op.terminal and op.terminal.is_active:
+                user._is_terminal_op = True
+                user._term_city_id = op.terminal.city_id
+                return user
+    return await get_current_admin_user(request, db)
+
+
+async def require_magistral(request: Request, db: AsyncSession = Depends(get_db)):
+    """Magistral logistika: OWNER, "magistral" ruxsati berilgan operator yoki terminal operatori."""
+    user = await get_panel_user(request, db)
+    if getattr(user, "_is_terminal_op", False):
+        return user
+    if not await operator_can_see(db, user, "magistral"):
+        raise HTTPException(status_code=403, detail="Bu bo'limni ko'rish huquqingiz yo'q — administrator bilan bog'laning.")
+    return user
+
+
 admin_router = APIRouter(tags=["Admin Dashboard"])
 settings_router = APIRouter(
     prefix="/admin/settings", tags=["Tizim Sozlamalari"], dependencies=[Depends(require_owner)]
@@ -764,6 +797,8 @@ async def login_submit(
     can_terminal = (await db.execute(select(TerminalOperator.id).where(TerminalOperator.user_id == user.id, TerminalOperator.is_active == True))).first() is not None
     can_taxi = (await db.execute(select(TaxiDriver.id).where(TaxiDriver.user_id == user.id, TaxiDriver.is_active == True))).first() is not None
     available = [can_admin, can_partner, can_courier, can_driver, can_terminal, can_taxi].count(True)
+    if can_terminal and not can_admin:
+        available += 1   # terminal operatori ham /terminal, ham /admin (Magistral logistika) ga kira oladi
 
     if available == 0 and (
         (user.partner_profile and user.partner_profile.application_status == "pending")
@@ -827,6 +862,8 @@ async def choose_panel(request: Request, db: AsyncSession = Depends(get_db)):
         panels.append({"url": "/driver", "label": "🚗 Magistral haydovchi"})
     if (await db.execute(select(TerminalOperator.id).where(TerminalOperator.user_id == user.id, TerminalOperator.is_active == True))).first():
         panels.append({"url": "/terminal", "label": "🏢 Terminal operatori"})
+        if user.role not in (UserRole.OWNER, UserRole.ADMIN):
+            panels.append({"url": "/admin", "label": "🚛 Magistral logistika (boshqaruv paneli)"})
     if (await db.execute(select(TaxiDriver.id).where(TaxiDriver.user_id == user.id, TaxiDriver.is_active == True))).first():
         panels.append({"url": "/taxi", "label": "🚕 Taksi haydovchisi"})
 
@@ -844,9 +881,18 @@ async def logout(request: Request):
 async def admin_dashboard(
     request: Request,
     city_id: Optional[int] = None,
-    current_user: User = Depends(get_current_admin_user),
+    current_user: User = Depends(get_panel_user),
     db: AsyncSession = Depends(get_db),
 ):
+    # Terminal operatori: faqat Magistral logistika tabi (o'z terminali shahri doirasida)
+    if getattr(current_user, "_is_terminal_op", False):
+        _perms = {k: False for k in SECTION_LABELS_UZ}
+        _perms["magistral"] = True
+        return templates.TemplateResponse(request=request, name="admin.html", context={
+            "current_user": current_user, "is_owner": False, "is_terminal_op": True,
+            "active_city_id": current_user._term_city_id, "all_cities": [], "current_city_scope": current_user._term_city_id,
+            "operator_perms": _perms, "section_labels": SECTION_LABELS_UZ,
+        })
     # DIQQAT: date.today() server vaqti (UTC) bo'yicha hisoblaydi — bu esa
     # O'zbekiston vaqtidan 5 soat orqada. Ya'ni Toshkentda tun yarmidan
     # o'tib, allaqachon "ertangi kun" boshlangan bo'lsa ham, server hali
@@ -9234,6 +9280,8 @@ def _parcel_admin_dict(o: ParcelOrder) -> dict:
 
 
 def _parcel_scope(current_user: User):
+    if getattr(current_user, "_is_terminal_op", False):
+        return current_user._term_city_id
     return current_user.city_id if is_scoped_to_city(current_user) else None
 
 
@@ -10410,7 +10458,7 @@ async def terminal_photo(oid: int, db: AsyncSession = Depends(get_db), ctx=Depen
 
 
 # ---------------- Admin ----------------
-admin_express_router = APIRouter(prefix="/admin/express", tags=["Tumanlararo boshqaruv"], dependencies=[Depends(require_section("magistral"))])
+admin_express_router = APIRouter(prefix="/admin/express", tags=["Tumanlararo boshqaruv"], dependencies=[Depends(require_magistral)])
 
 
 async def _scope_city_info(db: AsyncSession, scope):
@@ -10443,7 +10491,7 @@ def _ic_scope_filter(q, scope):
 
 
 @admin_express_router.get("/overview")
-async def admin_ic_overview(db: AsyncSession = Depends(get_db), current_user: User = Depends(require_section("magistral"))):
+async def admin_ic_overview(db: AsyncSession = Depends(get_db), current_user: User = Depends(require_magistral)):
     st = await _get_or_create_setting(db)
     cfg = _ic_cfg(st)
     cities = (await db.execute(select(City).order_by(City.name))).scalars().all()
@@ -10619,7 +10667,7 @@ async def admin_ic_driver_payout(uid: int, body: IcPayout, db: AsyncSession = De
 
 
 @admin_express_router.get("/orders")
-async def admin_ic_orders(status_filter: Optional[str] = None, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_section("magistral"))):
+async def admin_ic_orders(status_filter: Optional[str] = None, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_magistral)):
     scope = _parcel_scope(current_user)
     cfg = _ic_cfg(await _get_or_create_setting(db))
     q = _ic_scope_filter(select(IntercityOrder).options(*_IC_LOAD).order_by(IntercityOrder.id.desc()).limit(150), scope)
@@ -10638,7 +10686,7 @@ async def admin_ic_orders(status_filter: Optional[str] = None, db: AsyncSession 
 
 
 @admin_express_router.get("/orders/{oid}/events")
-async def admin_ic_events(oid: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_section("magistral"))):
+async def admin_ic_events(oid: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_magistral)):
     o = (await db.execute(select(IntercityOrder).where(IntercityOrder.id == oid))).scalars().first()
     scope = _parcel_scope(current_user)
     if not o or (scope is not None and scope not in (o.from_city_id, o.to_city_id)):
@@ -10649,7 +10697,7 @@ async def admin_ic_events(oid: int, db: AsyncSession = Depends(get_db), current_
 
 
 @admin_express_router.get("/orders/{oid}/photo")
-async def admin_ic_photo(oid: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_section("magistral"))):
+async def admin_ic_photo(oid: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_magistral)):
     o = (await db.execute(select(IntercityOrder).where(IntercityOrder.id == oid))).scalars().first()
     scope = _parcel_scope(current_user)
     if not o or not o.pickup_photo or (scope is not None and scope not in (o.from_city_id, o.to_city_id)):
@@ -10658,7 +10706,7 @@ async def admin_ic_photo(oid: int, db: AsyncSession = Depends(get_db), current_u
 
 
 @admin_express_router.post("/orders/{oid}/cancel")
-async def admin_ic_cancel(oid: int, body: ParcelCancelBody, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_section("magistral"))):
+async def admin_ic_cancel(oid: int, body: ParcelCancelBody, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_magistral)):
     scope = _parcel_scope(current_user)
     o = (await db.execute(select(IntercityOrder).where(IntercityOrder.id == oid).with_for_update())).scalars().first()
     if not o or (scope is not None and scope not in (o.from_city_id, o.to_city_id)):
@@ -10687,7 +10735,7 @@ class IcServiceBody(BaseModel):
 
 
 @admin_express_router.get("/services")
-async def admin_ic_services(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_admin_user)):
+async def admin_ic_services(db: AsyncSession = Depends(get_db), current_user: User = Depends(require_magistral)):
     st = await _get_or_create_setting(db)
     return {"is_owner": current_user.role == UserRole.OWNER, "services": {
         "pochta_local": bool(getattr(st, "parcel_enabled", False)), "pochta_intercity": bool(getattr(st, "express_enabled", False)),
@@ -11161,11 +11209,11 @@ async def terminal_mag_remove(eid: int, db: AsyncSession = Depends(get_db), ctx=
 
 
 # ---------------- Admin ----------------
-admin_mag_router = APIRouter(prefix="/admin/mag", tags=["Magistral taksi boshqaruvi"], dependencies=[Depends(require_section("magistral"))])
+admin_mag_router = APIRouter(prefix="/admin/mag", tags=["Magistral taksi boshqaruvi"], dependencies=[Depends(require_magistral)])
 
 
 @admin_mag_router.get("/overview")
-async def admin_mag_overview(db: AsyncSession = Depends(get_db), current_user: User = Depends(require_section("magistral"))):
+async def admin_mag_overview(db: AsyncSession = Depends(get_db), current_user: User = Depends(require_magistral)):
     await _mag_sweep(db)
     st = await _get_or_create_setting(db)
     cfg = _mag_cfg(st)
@@ -11282,7 +11330,7 @@ async def admin_mag_seats(uid: int, body: MagSeatsBody, db: AsyncSession = Depen
 
 
 @admin_mag_router.post("/queue/{eid}/remove")
-async def admin_mag_remove(eid: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_section("magistral"))):
+async def admin_mag_remove(eid: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_magistral)):
     e = (await db.execute(select(MagQueueEntry).options(selectinload(MagQueueEntry.from_terminal), selectinload(MagQueueEntry.to_terminal)).where(
         MagQueueEntry.id == eid, MagQueueEntry.status == "waiting").with_for_update())).scalars().first()
     scope = _parcel_scope(current_user)
