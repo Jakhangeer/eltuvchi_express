@@ -971,6 +971,7 @@ class ExpressDriver(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False, index=True)
+    city_id = Column(Integer, ForeignKey("cities.id", ondelete="SET NULL"), nullable=True, index=True)   # haydovchi biriktirilgan shahar (operator shu bo'yicha ko'radi)
     car_model = Column(String, nullable=True)
     car_plate = Column(String, nullable=True)
     is_active = Column(Boolean, default=True)

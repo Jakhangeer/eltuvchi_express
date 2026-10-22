@@ -527,6 +527,7 @@ SECTION_LABELS_UZ = {
     "banner_sorovlari": "📣 Hamkorlarning banner reklama so'rovlarini ko'rish (o'z shahrida)",
     "pochta": "📮 Pochta (shaxsiy buyum yuborish) — o'z shahri buyurtmalari",
     "taksi": "🚕 Taksi bo'limi",
+    "magistral": "🚛 Magistral logistika (terminallar, tumanlararo pochta, magistral taksi, haydovchilar, terminal operatorlari) — o'z shahri doirasida",
 }
 DEFAULT_OPERATOR_SECTION_VISIBILITY = {
     # Kundalik operativ ish uchun shart bo'lgan bo'limlar — standart OCHIQ
@@ -550,6 +551,7 @@ DEFAULT_OPERATOR_SECTION_VISIBILITY = {
     "mahsulot_qoshish": False,   # standart YOPIQ — egasi ruxsat bergandagina operator mahsulot qo'sha oladi
     "pochta": True,              # pochta buyurtmalarini operator o'z shahrida boshqaradi (egasi xohlasa yopadi)
     "taksi": False,
+    "magistral": False,          # standart YOPIQ — egasi ruxsat bergandagina operator "Magistral logistika" tabini ko'radi
 }
 # "xavfzone" (tizimni butunlay tozalash) — BU YERDA ATAYLAB YO'Q: shu bo'lim
 # har doim, hech qanday sozlamadan qat'i nazar, FAQAT OWNER'ga ko'rinadi va
@@ -10408,7 +10410,32 @@ async def terminal_photo(oid: int, db: AsyncSession = Depends(get_db), ctx=Depen
 
 
 # ---------------- Admin ----------------
-admin_express_router = APIRouter(prefix="/admin/express", tags=["Tumanlararo boshqaruv"])
+admin_express_router = APIRouter(prefix="/admin/express", tags=["Tumanlararo boshqaruv"], dependencies=[Depends(require_section("magistral"))])
+
+
+async def _scope_city_info(db: AsyncSession, scope):
+    """Operator biriktirilgan shahar (None — OWNER, barcha shaharlar)."""
+    if scope is None:
+        return None
+    c = (await db.execute(select(City).where(City.id == scope))).scalars().first()
+    return {"id": scope, "name": c.name if c else str(scope)}
+
+
+async def _scope_express_driver_ids(db: AsyncSession, scope) -> set:
+    """Shahar bo'yicha magistral haydovchilar: shahar terminallari bilan bog'liq reys/navbati bor
+    yoki o'sha shaharga biriktirilgan foydalanuvchilar."""
+    tids = [t for (t,) in (await db.execute(select(Terminal.id).where(Terminal.city_id == scope))).all()]
+    ids = set()
+    if tids:
+        for (d,) in (await db.execute(select(LinehaulTrip.driver_id).where(or_(LinehaulTrip.from_terminal_id.in_(tids), LinehaulTrip.to_terminal_id.in_(tids))))).all():
+            ids.add(d)
+        for (d,) in (await db.execute(select(MagQueueEntry.driver_id).where(or_(MagQueueEntry.from_terminal_id.in_(tids), MagQueueEntry.to_terminal_id.in_(tids))))).all():
+            ids.add(d)
+    for (d,) in (await db.execute(select(ExpressDriver.user_id).where(ExpressDriver.city_id == scope))).all():
+        ids.add(d)
+    for (d,) in (await db.execute(select(User.id).join(ExpressDriver, ExpressDriver.user_id == User.id).where(User.city_id == scope))).all():
+        ids.add(d)
+    return ids
 
 
 def _ic_scope_filter(q, scope):
@@ -10416,7 +10443,7 @@ def _ic_scope_filter(q, scope):
 
 
 @admin_express_router.get("/overview")
-async def admin_ic_overview(db: AsyncSession = Depends(get_db), current_user: User = Depends(require_section("pochta"))):
+async def admin_ic_overview(db: AsyncSession = Depends(get_db), current_user: User = Depends(require_section("magistral"))):
     st = await _get_or_create_setting(db)
     cfg = _ic_cfg(st)
     cities = (await db.execute(select(City).order_by(City.name))).scalars().all()
@@ -10424,14 +10451,22 @@ async def admin_ic_overview(db: AsyncSession = Depends(get_db), current_user: Us
     drivers = (await db.execute(select(ExpressDriver, User).join(User, User.id == ExpressDriver.user_id).order_by(User.full_name))).all()
     terms = (await db.execute(select(Terminal).order_by(Terminal.id))).scalars().all()
     ops = (await db.execute(select(TerminalOperator, User).join(User, User.id == TerminalOperator.user_id).order_by(TerminalOperator.id))).all()
-    return {"cfg": cfg, "is_owner": current_user.role == UserRole.OWNER, "sms": sms_configured(),
+    scope = _parcel_scope(current_user)
+    if scope is not None:
+        terms = [t for t in terms if t.city_id == scope]
+        _tids = {t.id for t in terms}
+        ops = [(o, u) for o, u in ops if o.terminal_id in _tids]
+        fares = [f for f in fares if scope in (f.from_city_id, f.to_city_id)]
+        _dids = await _scope_express_driver_ids(db, scope)
+        drivers = [(d, u) for d, u in drivers if u.id in _dids]
+    return {"cfg": cfg, "is_owner": current_user.role == UserRole.OWNER, "sms": sms_configured(), "scope_city": await _scope_city_info(db, scope),
             "cities": [{"id": c.id, "name": c.name} for c in cities],
             "terminals": [{"id": t.id, "city_id": t.city_id, "name": t.name, "address": t.address, "lat": t.latitude, "lng": t.longitude, "hours": t.work_hours,
                            "active": bool(t.is_active), "cash": t.cash_balance or 0} for t in terms],
             "operators": [{"user_id": u.id, "name": u.full_name, "phone": u.phone_number, "terminal_id": o.terminal_id, "active": bool(o.is_active)} for o, u in ops],
             "fares": [{"id": f.id, "from": f.from_city_id, "to": f.to_city_id, "small": f.price_small, "medium": f.price_medium, "large": f.price_large, "active": bool(f.is_active)} for f in fares],
             "drivers": [{"user_id": u.id, "name": u.full_name, "phone": u.phone_number, "car": f"{d.car_model or ''} {d.car_plate or ''}".strip(),
-                         "active": bool(d.is_active), "balance": d.balance or 0} for d, u in drivers]}
+                         "active": bool(d.is_active), "balance": d.balance or 0, "city_id": d.city_id} for d, u in drivers]}
 
 
 @admin_express_router.post("/settings")
@@ -10544,14 +10579,16 @@ async def admin_ic_fare_delete(fid: int, db: AsyncSession = Depends(get_db), own
 
 @admin_express_router.post("/drivers/create")
 async def admin_ic_driver_create(full_name: str = Form(...), phone_number: str = Form(...), password: str = Form(...),
-                                 car_model: str = Form(""), car_plate: str = Form(""),
+                                 car_model: str = Form(""), car_plate: str = Form(""), city_id: Optional[int] = Form(None),
                                  db: AsyncSession = Depends(get_db), owner: User = Depends(require_owner)):
-    u = await find_or_create_login_user(db, phone_number, password, full_name, None)
+    if city_id is not None and not (await db.execute(select(City.id).where(City.id == city_id))).first():
+        raise HTTPException(status_code=404, detail="Shahar topilmadi")
+    u = await find_or_create_login_user(db, phone_number, password, full_name, city_id)
     if (await db.execute(select(ExpressDriver.id).where(ExpressDriver.user_id == u.id))).first():
         raise HTTPException(status_code=400, detail="Bu foydalanuvchi allaqachon magistral haydovchi")
     if (await db.execute(select(TaxiDriver.id).where(TaxiDriver.user_id == u.id, TaxiDriver.is_active == True))).first():
         raise HTTPException(status_code=400, detail="Bu foydalanuvchi ichki taksi haydovchisi — ikkalasi bir vaqtda bo'la olmaydi")
-    db.add(ExpressDriver(user_id=u.id, car_model=car_model.strip()[:80] or None, car_plate=car_plate.strip()[:20] or None, is_active=True))
+    db.add(ExpressDriver(user_id=u.id, city_id=city_id, car_model=car_model.strip()[:80] or None, car_plate=car_plate.strip()[:20] or None, is_active=True))
     await db.commit()
     return {"ok": True}
 
@@ -10582,7 +10619,7 @@ async def admin_ic_driver_payout(uid: int, body: IcPayout, db: AsyncSession = De
 
 
 @admin_express_router.get("/orders")
-async def admin_ic_orders(status_filter: Optional[str] = None, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_section("pochta"))):
+async def admin_ic_orders(status_filter: Optional[str] = None, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_section("magistral"))):
     scope = _parcel_scope(current_user)
     cfg = _ic_cfg(await _get_or_create_setting(db))
     q = _ic_scope_filter(select(IntercityOrder).options(*_IC_LOAD).order_by(IntercityOrder.id.desc()).limit(150), scope)
@@ -10601,7 +10638,7 @@ async def admin_ic_orders(status_filter: Optional[str] = None, db: AsyncSession 
 
 
 @admin_express_router.get("/orders/{oid}/events")
-async def admin_ic_events(oid: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_section("pochta"))):
+async def admin_ic_events(oid: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_section("magistral"))):
     o = (await db.execute(select(IntercityOrder).where(IntercityOrder.id == oid))).scalars().first()
     scope = _parcel_scope(current_user)
     if not o or (scope is not None and scope not in (o.from_city_id, o.to_city_id)):
@@ -10612,7 +10649,7 @@ async def admin_ic_events(oid: int, db: AsyncSession = Depends(get_db), current_
 
 
 @admin_express_router.get("/orders/{oid}/photo")
-async def admin_ic_photo(oid: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_section("pochta"))):
+async def admin_ic_photo(oid: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_section("magistral"))):
     o = (await db.execute(select(IntercityOrder).where(IntercityOrder.id == oid))).scalars().first()
     scope = _parcel_scope(current_user)
     if not o or not o.pickup_photo or (scope is not None and scope not in (o.from_city_id, o.to_city_id)):
@@ -10621,7 +10658,7 @@ async def admin_ic_photo(oid: int, db: AsyncSession = Depends(get_db), current_u
 
 
 @admin_express_router.post("/orders/{oid}/cancel")
-async def admin_ic_cancel(oid: int, body: ParcelCancelBody, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_section("pochta"))):
+async def admin_ic_cancel(oid: int, body: ParcelCancelBody, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_section("magistral"))):
     scope = _parcel_scope(current_user)
     o = (await db.execute(select(IntercityOrder).where(IntercityOrder.id == oid).with_for_update())).scalars().first()
     if not o or (scope is not None and scope not in (o.from_city_id, o.to_city_id)):
@@ -11124,11 +11161,11 @@ async def terminal_mag_remove(eid: int, db: AsyncSession = Depends(get_db), ctx=
 
 
 # ---------------- Admin ----------------
-admin_mag_router = APIRouter(prefix="/admin/mag", tags=["Magistral taksi boshqaruvi"])
+admin_mag_router = APIRouter(prefix="/admin/mag", tags=["Magistral taksi boshqaruvi"], dependencies=[Depends(require_section("magistral"))])
 
 
 @admin_mag_router.get("/overview")
-async def admin_mag_overview(db: AsyncSession = Depends(get_db), current_user: User = Depends(require_section("taksi"))):
+async def admin_mag_overview(db: AsyncSession = Depends(get_db), current_user: User = Depends(require_section("magistral"))):
     await _mag_sweep(db)
     st = await _get_or_create_setting(db)
     cfg = _mag_cfg(st)
@@ -11137,15 +11174,21 @@ async def admin_mag_overview(db: AsyncSession = Depends(get_db), current_user: U
     drivers = (await db.execute(select(ExpressDriver, User).join(User, User.id == ExpressDriver.user_id).order_by(User.full_name))).all()
     es = (await db.execute(select(MagQueueEntry).options(selectinload(MagQueueEntry.driver), selectinload(MagQueueEntry.from_terminal), selectinload(MagQueueEntry.to_terminal)).where(
         MagQueueEntry.status.in_(["waiting", "departed"])).order_by(MagQueueEntry.applied_at))).scalars().all()
+    scope = _parcel_scope(current_user)
+    if scope is not None:
+        routes = [r for r in routes if scope in (r.from_city_id, r.to_city_id)]
+        es = [e for e in es if scope in (e.from_terminal.city_id, e.to_terminal.city_id)]
+        _dids = await _scope_express_driver_ids(db, scope)
+        drivers = [(d, u) for d, u in drivers if u.id in _dids]
     queue = []
     for e in es:
         drv = (await db.execute(select(ExpressDriver).where(ExpressDriver.user_id == e.driver_id))).scalars().first()
         info = await _mag_info(db, e, cfg, await _mag_route(db, e.from_terminal.city_id, e.to_terminal.city_id), drv)
         queue.append({**info, "status": e.status, "driver": e.driver.full_name, "from": e.from_terminal.name, "to": e.to_terminal.name})
-    return {"cfg": cfg, "is_owner": current_user.role == UserRole.OWNER, "cities": [{"id": c.id, "name": c.name} for c in cities],
+    return {"cfg": cfg, "is_owner": current_user.role == UserRole.OWNER, "scope_city": await _scope_city_info(db, scope), "cities": [{"id": c.id, "name": c.name} for c in cities],
             "routes": [{"id": r.id, "from": r.from_city_id, "to": r.to_city_id, "seat_price": r.seat_price, "min_income": r.min_income, "active": bool(r.is_active)} for r in routes],
             "drivers": [{"user_id": u.id, "name": u.full_name, "phone": u.phone_number, "deposit": d.deposit or 0, "blacklisted": bool(d.blacklisted), "reason": d.blacklist_reason,
-                         "seats": d.seats or 4, "active": bool(d.is_active), "gender": u.gender,
+                         "seats": d.seats or 4, "active": bool(d.is_active), "gender": u.gender, "city_id": d.city_id,
                          "rating": dict(zip(("avg", "count"), await _rating_avg(db, u.id)))} for d, u in drivers], "queue": queue}
 
 
@@ -11239,9 +11282,11 @@ async def admin_mag_seats(uid: int, body: MagSeatsBody, db: AsyncSession = Depen
 
 
 @admin_mag_router.post("/queue/{eid}/remove")
-async def admin_mag_remove(eid: int, db: AsyncSession = Depends(get_db), owner: User = Depends(require_owner)):
-    e = (await db.execute(select(MagQueueEntry).where(MagQueueEntry.id == eid, MagQueueEntry.status == "waiting").with_for_update())).scalars().first()
-    if not e:
+async def admin_mag_remove(eid: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_section("magistral"))):
+    e = (await db.execute(select(MagQueueEntry).options(selectinload(MagQueueEntry.from_terminal), selectinload(MagQueueEntry.to_terminal)).where(
+        MagQueueEntry.id == eid, MagQueueEntry.status == "waiting").with_for_update())).scalars().first()
+    scope = _parcel_scope(current_user)
+    if not e or (scope is not None and scope not in (e.from_terminal.city_id, e.to_terminal.city_id)):
         raise HTTPException(status_code=404, detail="Topilmadi")
     await _mag_release(db, e, "removed", "Administrator navbatdan chiqardi")
     await db.commit()
@@ -11763,9 +11808,16 @@ async def admin_taxi_overview(db: AsyncSession = Depends(get_db), current_user: 
     await _tx_expire(db)
     cfg = _tx_cfg(await _get_or_create_setting(db))
     cities = (await db.execute(select(City).order_by(City.name))).scalars().all()
-    ds = (await db.execute(select(TaxiDriver, User).join(User, User.id == TaxiDriver.user_id).order_by(User.full_name))).all()
-    rides = (await db.execute(select(TaxiRide).options(selectinload(TaxiRide.client), selectinload(TaxiRide.driver)).order_by(TaxiRide.id.desc()).limit(60))).scalars().all()
-    return {"cfg": cfg, "is_owner": current_user.role == UserRole.OWNER, "cities": [{"id": c.id, "name": c.name} for c in cities],
+    scope = _parcel_scope(current_user)
+    _dq = select(TaxiDriver, User).join(User, User.id == TaxiDriver.user_id).order_by(User.full_name)
+    _rq = select(TaxiRide).options(selectinload(TaxiRide.client), selectinload(TaxiRide.driver)).order_by(TaxiRide.id.desc()).limit(60)
+    if scope is not None:
+        _dq = _dq.where(TaxiDriver.city_id == scope)
+        _rq = _rq.where(TaxiRide.city_id == scope)
+        cities = [c for c in cities if c.id == scope]
+    ds = (await db.execute(_dq)).all()
+    rides = (await db.execute(_rq)).scalars().all()
+    return {"cfg": cfg, "is_owner": current_user.role == UserRole.OWNER, "scope_city": await _scope_city_info(db, scope), "cities": [{"id": c.id, "name": c.name} for c in cities],
             "drivers": [{"user_id": u.id, "name": u.full_name, "phone": u.phone_number, "city_id": d.city_id, "car": f"{d.car_model or ''} {d.car_plate or ''}".strip(), "balance": d.balance or 0,
                          "online": bool(d.is_online), "active": bool(d.is_active), "blacklisted": bool(d.blacklisted), "reason": d.blacklist_reason, "gender": u.gender,
                          "rating": dict(zip(("avg", "count"), await _rating_avg(db, u.id)))} for d, u in ds],
@@ -11883,6 +11935,9 @@ async def admin_taxi_balance(uid: int, body: MagDepositBody, db: AsyncSession = 
 @admin_taxi_router.post("/rides/{rid}/cancel")
 async def admin_taxi_cancel(rid: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(require_section("taksi"))):
     r = (await db.execute(select(TaxiRide).where(TaxiRide.id == rid).with_for_update())).scalars().first()
+    _sc = _parcel_scope(current_user)
+    if r and _sc is not None and r.city_id != _sc:
+        raise HTTPException(status_code=404, detail="Buyurtma topilmadi")
     if not r or r.status not in ("bidding",) + TX_ACTIVE:
         raise HTTPException(status_code=400, detail="Bekor qilib bo'lmaydi")
     r.status, r.cancelled_by = "cancelled", "admin"

@@ -289,7 +289,9 @@
 
     <div id="top-tabs" class="zm-top-tabs" role="tablist">
         <button type="button" role="tab" data-top-tab="city" onclick="switchNavGroup('city')" class="zm-top-tab">🏙️ Shahar xizmatlari</button>
+        {% if is_owner or operator_perms.get('magistral') %}
         <button type="button" role="tab" data-top-tab="magistral" onclick="switchNavGroup('magistral')" class="zm-top-tab">🚛 Magistral logistika</button>
+        {% endif %}
     </div>
 
     <header id="main-header" class="bg-indigo-700 text-white p-4 shadow-md flex justify-between items-center transition-colors duration-300">
@@ -330,7 +332,7 @@
                     <button onclick="showPage('buyurtmalar')" data-page-btn="buyurtmalar" class="nav-btn">📦 Buyurtmalar</button>
                     {% endif %}
                     {% if is_owner or operator_perms.get('kuryerlar') %}
-                    <button onclick="showPage('kuryerlar')" data-page-btn="kuryerlar" class="nav-btn">🛵 Ichki kuryer</button>
+                    <button onclick="showPage('kuryerlar')" data-page-btn="kuryerlar" class="nav-btn">🛵 Kuryerlar</button>
                     {% endif %}
                     {% if is_owner or operator_perms.get('mijozlar') %}
                     <button onclick="showPage('mijozlar')" data-page-btn="mijozlar" class="nav-btn">👥 Mijozlar</button>
@@ -339,10 +341,10 @@
                     <button onclick="showPage('dokonlar')" data-page-btn="dokonlar" class="nav-btn">🏪 Do'konlar</button>
                     {% endif %}
                     {% if is_owner or operator_perms.get('pochta') %}
-                    <button onclick="showPage('pochta')" data-page-btn="pochta" class="nav-btn">📮 Ichki pochta <span id="pochta-nav-badge" class="hidden ml-1 bg-red-500 text-white text-[10px] font-bold px-1.5 rounded-full"></span></button>
+                    <button onclick="showPage('pochta')" data-page-btn="pochta" class="nav-btn">📮 Pochtalar <span id="pochta-nav-badge" class="hidden ml-1 bg-red-500 text-white text-[10px] font-bold px-1.5 rounded-full"></span></button>
                     {% endif %}
                     {% if is_owner or operator_perms.get('taksi') %}
-                    <button onclick="showPage('taksi')" data-page-btn="taksi" class="nav-btn">🚕 Shahar taksisi</button>
+                    <button onclick="showPage('taksi')" data-page-btn="taksi" class="nav-btn">🚕 Shahar Taxi</button>
                     {% endif %}
 
                     {% if is_owner or operator_perms.get('tugilgankun') or operator_perms.get('referal') or operator_perms.get('bonuscashback') %}
@@ -383,22 +385,24 @@
                 </div>
 
                 <!-- ===== MAGISTRAL LOGISTIKA ===== -->
+                {% if is_owner or operator_perms.get('magistral') %}
                 <div data-nav-group="magistral" style="display:none;">
                   <div class="flex flex-col gap-1">
                     <button onclick="showPage('mg-bosh')" data-page-btn="mg-bosh" class="nav-btn">🏠 Bosh sahifa</button>
-                    {% if is_owner or operator_perms.get('pochta') %}
+                    {% if is_owner or operator_perms.get('magistral') %}
                     <button onclick="showPage('mg-terminal')" data-page-btn="mg-terminal" class="nav-btn">🏢 Terminallar qo'shish</button>
                     <button onclick="showPage('mg-pochta')" data-page-btn="mg-pochta" class="nav-btn">🚀 Tumanlararo pochta</button>
                     {% endif %}
-                    {% if is_owner or operator_perms.get('taksi') %}
+                    {% if is_owner or operator_perms.get('magistral') %}
                     <button onclick="showPage('mg-taksi')" data-page-btn="mg-taksi" class="nav-btn">🚐 Magistral taksi</button>
                     {% endif %}
-                    {% if is_owner or operator_perms.get('pochta') %}
+                    {% if is_owner or operator_perms.get('magistral') %}
                     <button onclick="showPage('mg-haydovchi')" data-page-btn="mg-haydovchi" class="nav-btn">🚗 Haydovchilar</button>
                     <button onclick="showPage('mg-operator')" data-page-btn="mg-operator" class="nav-btn">👷 Terminal operatorlari</button>
                     {% endif %}
                   </div>
                 </div>
+                {% endif %}
             </nav>
         </aside>
 
@@ -407,11 +411,11 @@
                 <optgroup label="🏙️ Shahar xizmatlari" data-nav-group="city">
                 <option value="bosh">🏠 Bosh sahifa</option>
                 <option value="buyurtmalar">📦 Buyurtmalar</option>
-                <option value="kuryerlar">🛵 Ichki kuryer</option>
+                <option value="kuryerlar">🛵 Kuryerlar</option>
                 <option value="mijozlar">👥 Mijozlar</option>
                 <option value="dokonlar">🏪 Do'konlar</option>
-                {% if is_owner or operator_perms.get('pochta') %}<option value="pochta">📮 Ichki pochta</option>{% endif %}
-                {% if is_owner or operator_perms.get('taksi') %}<option value="taksi">🚕 Shahar taksisi</option>{% endif %}
+                {% if is_owner or operator_perms.get('pochta') %}<option value="pochta">📮 Pochtalar</option>{% endif %}
+                {% if is_owner or operator_perms.get('taksi') %}<option value="taksi">🚕 Shahar Taxi</option>{% endif %}
                 <option value="tugilgankun">🎂 Tug'ilgan kunlar</option>
                 <option value="referal">🎁 Referal</option>
                 <option value="bonuscashback">💸 Bonus/Cashback</option>
@@ -425,18 +429,20 @@
                 {% endif %}
                 {% if not is_owner and (operator_perms.get('banner') or operator_perms.get('banner_sorovlari')) %}<option value="banner">🖼️ Banner</option>{% endif %}
                 </optgroup>
+                {% if is_owner or operator_perms.get('magistral') %}
                 <optgroup label="🚛 Magistral logistika" data-nav-group="magistral">
                 <option value="mg-bosh">🏠 Bosh sahifa</option>
-                {% if is_owner or operator_perms.get('pochta') %}
+                {% if is_owner or operator_perms.get('magistral') %}
                 <option value="mg-terminal">🏢 Terminallar qo'shish</option>
                 <option value="mg-pochta">🚀 Tumanlararo pochta</option>
                 {% endif %}
-                {% if is_owner or operator_perms.get('taksi') %}<option value="mg-taksi">🚐 Magistral taksi</option>{% endif %}
-                {% if is_owner or operator_perms.get('pochta') %}
+                {% if is_owner or operator_perms.get('magistral') %}<option value="mg-taksi">🚐 Magistral taksi</option>{% endif %}
+                {% if is_owner or operator_perms.get('magistral') %}
                 <option value="mg-haydovchi">🚗 Haydovchilar</option>
                 <option value="mg-operator">👷 Terminal operatorlari</option>
                 {% endif %}
                 </optgroup>
+                {% endif %}
             </select>
 
 
@@ -2018,7 +2024,7 @@
                         var f=document.getElementById('tx-set');f.onsubmit=function(ev){ev.preventDefault();j('/admin/taxi/settings',{method:'POST',body:new FormData(f)}).then(function(){document.getElementById('tx-msg').textContent='✓ Saqlandi';load();}).catch(function(x){alert(x.message);});};
                         var d=document.getElementById('tx-drv');d.onsubmit=function(ev){ev.preventDefault();j('/admin/taxi/drivers/create',{method:'POST',body:new FormData(d)}).then(function(){d.reset();load();}).catch(function(x){alert(x.message);});};
                     }
-                    function load(){j('/admin/taxi/overview').then(function(d){X=d;CN={};X.cities.forEach(function(c){CN[c.id]=c.name;});
+                    function load(){j('/admin/taxi/overview').then(function(d){X=d;document.dispatchEvent(new CustomEvent('zmscope',{detail:{scope_city:d.scope_city}}));CN={};X.cities.forEach(function(c){CN[c.id]=c.name;});
                         var b=document.getElementById('tx-badge');b.textContent=X.cfg.enabled?'🟢 Yoqilgan':'⚪ O\'chirilgan';b.className='text-[11px] font-bold px-2 py-0.5 rounded-full '+(X.cfg.enabled?'bg-emerald-100 text-emerald-700':'bg-gray-200 text-gray-600');
                         var ow=document.getElementById('tx-owner');
                         if(X.is_owner&&!(document.activeElement&&ow.contains(document.activeElement)&&document.activeElement.matches('input,select'))){ow.innerHTML=owner();wire();}else if(!X.is_owner)ow.innerHTML='<p class="text-xs text-gray-500">Sozlamalarni faqat egasi o\'zgartiradi.</p>';
@@ -2348,12 +2354,15 @@
 
 
         <!-- ================= MAGISTRAL LOGISTIKA sahifalari ================= -->
+        {% if is_owner or operator_perms.get('magistral') %}
         <section class="app-page" data-page="mg-bosh" style="display:none;"></section>
+        {% endif %}
 
-        {% if is_owner or operator_perms.get('pochta') %}
+        {% if is_owner or operator_perms.get('magistral') %}
         <section class="app-page" data-page="mg-terminal" style="display:none;">
             <div class="card-bg bg-white p-6 rounded-xl shadow-md mb-6">
                 <h2 class="theme-title text-lg font-bold mb-1 text-indigo-700">🏢 Terminallar qo'shish</h2>
+                <div data-scope-badge class="text-xs font-bold text-indigo-600 mb-2" style="display:none"></div>
                 <p class="text-xs text-gray-500 mb-3">Har shaharda bitta terminal. Terminal koordinatalari kerak.</p>
                 <div id="ex-terminals" class="space-y-4"></div>
             </div>
@@ -2375,10 +2384,11 @@
         <section class="app-page" data-page="mg-haydovchi" style="display:none;">
             <div class="card-bg bg-white p-6 rounded-xl shadow-md mb-6">
                 <h2 class="theme-title text-lg font-bold mb-3 text-indigo-700">🚗 Haydovchilar</h2>
+                <div data-scope-badge class="text-xs font-bold text-indigo-600 mb-2" style="display:none"></div>
                 <div id="ex-drv-form" class="mb-4"></div>
                 <h4 class="font-bold text-xs mb-2">🚗 Magistral haydovchilar (posilka)</h4>
                 <div id="ex-drivers" class="space-y-1.5 text-xs"></div>
-                {% if is_owner or operator_perms.get('taksi') %}
+                {% if is_owner or operator_perms.get('magistral') %}
                 <h4 class="font-bold text-xs mt-4 mb-2">🚗 Haydovchilar: depozit va qora ro'yxat</h4>
                 <div id="mag-drivers" class="space-y-1.5 text-xs"></div>
                 {% endif %}
@@ -2388,6 +2398,7 @@
         <section class="app-page" data-page="mg-operator" style="display:none;">
             <div class="card-bg bg-white p-6 rounded-xl shadow-md mb-6">
                 <h2 class="theme-title text-lg font-bold mb-3 text-indigo-700">👷 Terminal operatorlari</h2>
+                <div data-scope-badge class="text-xs font-bold text-indigo-600 mb-2" style="display:none"></div>
                 <div id="ex-operators" class="space-y-4"></div>
             </div>
         </section>
@@ -2424,11 +2435,11 @@
                       +'<form id="ex-fare" class="flex flex-wrap items-end gap-2 mt-2"><div><label class="text-[11px]">Qayerdan</label><select name="from" class="block p-1.5 border rounded text-xs dark:bg-gray-800">'+opts()+'</select></div><div><label class="text-[11px]">Qayerga</label><select name="to" class="block p-1.5 border rounded text-xs dark:bg-gray-800">'+opts()+'</select></div>'
                       +'<div><label class="text-[11px]">Kichik</label><input name="s" type="number" min="0" step="500" class="block p-1.5 border rounded text-xs w-24 dark:bg-gray-800" required></div><div><label class="text-[11px]">O\'rta</label><input name="m" type="number" min="0" step="500" class="block p-1.5 border rounded text-xs w-24 dark:bg-gray-800"></div><div><label class="text-[11px]">Katta</label><input name="l" type="number" min="0" step="500" class="block p-1.5 border rounded text-xs w-24 dark:bg-gray-800"></div><button class="bg-indigo-600 text-white py-1.5 px-3 rounded text-xs font-bold">Qo\'shish / yangilash</button></form>'
                       +'<p class="text-[11px] text-gray-500 mt-1">Teskari yo\'nalish (B→A) alohida qo\'shiladi — u qaytarish narxi ham bo\'ladi.</p></div>';
-                    D+='<form id="ex-drv" class="flex flex-wrap items-end gap-2"><b class="text-xs w-full">➕ Magistral haydovchi qo\'shish</b><input name="full_name" placeholder="Ismi" class="p-1.5 border rounded text-xs dark:bg-gray-800" required><input name="phone_number" placeholder="+998..." class="p-1.5 border rounded text-xs dark:bg-gray-800" required><input name="password" placeholder="Parol" class="p-1.5 border rounded text-xs dark:bg-gray-800" required><input name="car_model" placeholder="Mashina" class="p-1.5 border rounded text-xs dark:bg-gray-800"><input name="car_plate" placeholder="Davlat raqami" class="p-1.5 border rounded text-xs dark:bg-gray-800"><button class="bg-indigo-600 text-white py-1.5 px-3 rounded text-xs font-bold">Qo\'shish</button></form>';
+                    D+='<form id="ex-drv" class="flex flex-wrap items-end gap-2"><b class="text-xs w-full">➕ Magistral haydovchi qo\'shish</b><input name="full_name" placeholder="Ismi" class="p-1.5 border rounded text-xs dark:bg-gray-800" required><input name="phone_number" placeholder="+998..." class="p-1.5 border rounded text-xs dark:bg-gray-800" required><input name="password" placeholder="Parol" class="p-1.5 border rounded text-xs dark:bg-gray-800" required><select name="city_id" class="p-1.5 border rounded text-xs dark:bg-gray-800" required><option value="">Shahar…</option>'+opts()+'</select><input name="car_model" placeholder="Mashina" class="p-1.5 border rounded text-xs dark:bg-gray-800"><input name="car_plate" placeholder="Davlat raqami" class="p-1.5 border rounded text-xs dark:bg-gray-800"><button class="bg-indigo-600 text-white py-1.5 px-3 rounded text-xs font-bold">Qo\'shish</button></form>';
                     return {main:h,terms:T,ops:P,drv:D};
                 }
                 function drivers(){
-                    document.getElementById('ex-drivers').innerHTML=O.drivers.map(function(d){return '<div class="flex flex-wrap items-center gap-2 p-2 border rounded-lg"><b>'+e(d.name)+'</b><a class="text-indigo-600" href="tel:'+e(d.phone)+'">'+e(d.phone)+'</a> '+e(d.car)+' · haq: <b>'+n(d.balance)+'</b> '+(O.is_owner?'<button data-pay="'+d.user_id+'" class="px-2 py-0.5 rounded bg-emerald-100 text-emerald-700">To\'langan</button><button data-act="'+d.user_id+'" data-v="'+(d.active?'0':'1')+'" class="px-2 py-0.5 rounded bg-gray-100">'+(d.active?'O\'chirish':'Yoqish')+'</button>':'')+'</div>';}).join('')||'<p class="text-gray-500">Haydovchi yo\'q</p>';
+                    document.getElementById('ex-drivers').innerHTML=O.drivers.map(function(d){return '<div class="flex flex-wrap items-center gap-2 p-2 border rounded-lg"><b>'+e(d.name)+'</b><a class="text-indigo-600" href="tel:'+e(d.phone)+'">'+e(d.phone)+'</a> '+e(d.car)+(d.city_id&&CN[d.city_id]?' · 📍 '+e(CN[d.city_id]):'')+' · haq: <b>'+n(d.balance)+'</b> '+(O.is_owner?'<button data-pay="'+d.user_id+'" class="px-2 py-0.5 rounded bg-emerald-100 text-emerald-700">To\'langan</button><button data-act="'+d.user_id+'" data-v="'+(d.active?'0':'1')+'" class="px-2 py-0.5 rounded bg-gray-100">'+(d.active?'O\'chirish':'Yoqish')+'</button>':'')+'</div>';}).join('')||'<p class="text-gray-500">Haydovchi yo\'q</p>';
                 }
                 var ST={new:'bg-amber-100 text-amber-800',delivered:'bg-emerald-100 text-emerald-800',cancelled:'bg-rose-100 text-rose-800',failed:'bg-rose-100 text-rose-800'};
                 function orders(d){
@@ -2443,7 +2454,7 @@
                 }
                 function load(){
                     Promise.all([j('/admin/express/overview'),j('/admin/express/orders'),j('/admin/express/services')]).then(function(r){
-                        O=r[0];SV=r[2];CN={};O.cities.forEach(function(c){CN[c.id]=c.name;});
+                        O=r[0];SV=r[2];document.dispatchEvent(new CustomEvent('zmscope',{detail:{scope_city:O.scope_city}}));CN={};O.cities.forEach(function(c){CN[c.id]=c.name;});
                         var b=document.getElementById('ex-badge');b.textContent=O.cfg.enabled?'🟢 Yoqilgan':'⚪ O\'chirilgan';b.className='text-[11px] font-bold px-2 py-0.5 rounded-full '+(O.cfg.enabled?'bg-emerald-100 text-emerald-700':'bg-gray-200 text-gray-600');
                         var ids=['ex-owner','ex-terminals','ex-operators','ex-drv-form'].map(function(i){return document.getElementById(i);});
                         var busy=ids.some(function(x){return x&&document.activeElement&&x.contains(document.activeElement)&&document.activeElement.matches('input,select');});
@@ -2477,10 +2488,11 @@
             </script>
         {% endif %}
 
-        {% if is_owner or operator_perms.get('taksi') %}
+        {% if is_owner or operator_perms.get('magistral') %}
         <section class="app-page" data-page="mg-taksi" style="display:none;">
             <div class="card-bg bg-white p-6 rounded-xl shadow-md">
                 <h2 class="theme-title text-lg font-bold mb-2 text-indigo-700">🚐 Magistral taksi</h2>
+                <div data-scope-badge class="text-xs font-bold text-indigo-600 mb-2" style="display:none"></div>
                 <p class="text-xs text-gray-500 mb-3">🚐 Magistral taksi (shaharlararo): haydovchilar terminal yaqinida navbatga yoziladi, yo'lovchilar o'rindiq bron qiladi, posilkalar ham shu mashinada ketadi. Ichki taksi keyingi bosqichda.</p>
                 <div id="mag-owner" class="space-y-4"></div>
                 <h4 class="font-bold text-xs mt-4 mb-2">🚦 Hozirgi navbat va reyslar</h4>
@@ -2505,7 +2517,7 @@
                         return h;
                     }
                     function render(){
-                        document.getElementById('mag-queue').innerHTML=M.queue.map(function(q){return '<div class="p-2 border rounded-lg flex flex-wrap gap-2 items-center"><b>'+e(q.driver)+'</b> '+e(q.from)+' → '+e(q.to)+' · '+(q.status==='departed'?'🚗 yo\'lda':'⏳ navbatda')+' · yo\'lovchi '+q.seats_booked+'/'+q.capacity+' · posilka '+q.parcels+' · daromad <b>'+n(q.income)+'</b>/'+n(q.min_income)+(q.ready?' ✅':'')+(M.is_owner&&q.status==='waiting'?' <button data-qrm="'+q.entry_id+'" class="px-2 py-0.5 rounded bg-rose-100 text-rose-700">Navbatdan chiqarish</button>':'')+'</div>';}).join('')||'<p class="text-gray-500">Navbat bo\'sh</p>';
+                        document.getElementById('mag-queue').innerHTML=M.queue.map(function(q){return '<div class="p-2 border rounded-lg flex flex-wrap gap-2 items-center"><b>'+e(q.driver)+'</b> '+e(q.from)+' → '+e(q.to)+' · '+(q.status==='departed'?'🚗 yo\'lda':'⏳ navbatda')+' · yo\'lovchi '+q.seats_booked+'/'+q.capacity+' · posilka '+q.parcels+' · daromad <b>'+n(q.income)+'</b>/'+n(q.min_income)+(q.ready?' ✅':'')+(q.status==='waiting'?' <button data-qrm="'+q.entry_id+'" class="px-2 py-0.5 rounded bg-rose-100 text-rose-700">Navbatdan chiqarish</button>':'')+'</div>';}).join('')||'<p class="text-gray-500">Navbat bo\'sh</p>';
                         document.getElementById('mag-drivers').innerHTML=M.drivers.map(function(d){return '<div class="flex flex-wrap items-center gap-2 p-2 border rounded-lg"><b>'+e(d.name)+'</b> '+e(d.phone)+' · depozit <b>'+n(d.deposit)+'</b> · '+d.seats+' o\'rindiq · '+(d.gender==='female'?'👩':(d.gender==='male'?'👨':'jins ?'))+(d.rating&&d.rating.count?' · ⭐ '+d.rating.avg+' ('+d.rating.count+')':'')+' '+(d.blacklisted?'<span class="text-rose-600 font-bold">⛔ qora ro\'yxat'+(d.reason?': '+e(d.reason):'')+'</span>':'')+(M.is_owner?' <button data-dep="'+d.user_id+'" class="px-2 py-0.5 rounded bg-emerald-100 text-emerald-700">Depozit ±</button><button data-seat="'+d.user_id+'" class="px-2 py-0.5 rounded bg-gray-100">O\'rindiq</button><button data-bl="'+d.user_id+'" data-v="'+(d.blacklisted?'0':'1')+'" class="px-2 py-0.5 rounded '+(d.blacklisted?'bg-gray-100':'bg-rose-100 text-rose-700')+'">'+(d.blacklisted?'Ro\'yxatdan chiqarish':'Qora ro\'yxatga')+'</button>':'')+'</div>';}).join('')||'<p class="text-gray-500">Magistral haydovchi yo\'q (Pochta bo\'limida qo\'shing)</p>';
                     }
                     function wire(){
@@ -2514,7 +2526,7 @@
                         document.querySelectorAll('[data-mrdel]').forEach(function(b){b.onclick=function(){if(confirm('Yo\'nalishni o\'chirasizmi?'))post('/admin/mag/route/'+b.dataset.mrdel+'/delete').then(load).catch(function(x){alert(x.message);});};});
                     }
                     function load(){
-                        j('/admin/mag/overview').then(function(d){M=d;CN={};M.cities.forEach(function(c){CN[c.id]=c.name;});
+                        j('/admin/mag/overview').then(function(d){M=d;document.dispatchEvent(new CustomEvent('zmscope',{detail:{scope_city:d.scope_city}}));CN={};M.cities.forEach(function(c){CN[c.id]=c.name;});
                             var ow=document.getElementById('mag-owner');
                             if(M.is_owner&&!(document.activeElement&&ow.contains(document.activeElement)&&document.activeElement.matches('input,select'))){ow.innerHTML=owner();wire();}else if(!M.is_owner)ow.innerHTML='<p class="text-xs text-gray-500">Sozlamalarni faqat egasi o\'zgartiradi.</p>';
                             render();}).catch(function(x){var q=document.getElementById('mag-queue');if(q)q.innerHTML='<p class="text-red-500">'+e(x.message)+'</p>';});
@@ -2918,6 +2930,16 @@
             showPage(NAV_HOME[currentNavGroup]);
         }
 
+
+        // Operator biriktirilgan shaharni magistral/pochta/taksi sahifalarida ko'rsatish
+        document.addEventListener('zmscope', function (ev) {
+            const c = ev.detail && ev.detail.scope_city;
+            document.querySelectorAll('[data-scope-badge]').forEach(el => {
+                el.textContent = c ? ('📍 ' + c.name + ' (sizga biriktirilgan shahar)') : '';
+                el.style.display = c ? '' : 'none';
+            });
+        });
+
         // Berilgan sahifalardan biri hozir ochiqmi (jonli yangilanish uchun)
         function zmPageOpen(names) {
             return names.some(n => {
@@ -2941,8 +2963,9 @@
                 // Yumshoq fade-in — faqat vizual, hech qanday funksiyaga tegmaydi
                 void target.offsetWidth;
                 target.classList.add('page-fade-in');
-            } else if (pageName !== 'bosh' && pageName !== 'mg-bosh') {
-                showPage(String(pageName).indexOf('mg-') === 0 ? 'mg-bosh' : 'bosh');
+            } else if (pageName !== 'bosh') {
+                const _toMg = String(pageName).indexOf('mg-') === 0 && pageName !== 'mg-bosh' && document.querySelector('.app-page[data-page="mg-bosh"]');
+                showPage(_toMg ? 'mg-bosh' : 'bosh');
                 return;
             }
 
