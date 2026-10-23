@@ -1340,60 +1340,7 @@ async def admin_dashboard(
     promo_codes = (await db.execute(_pq)).scalars().all()
     bonus_rules = (await db.execute(_rq)).scalars().all()
 
-    analytics = None
-    if is_owner:
-        month_start = today.replace(day=1)
-        courier_pct = (system_setting.courier_share_percent if system_setting else 80.0) / 100
-        default_commission_pct = (system_setting.service_commission_percent if system_setting else 10.0) / 100
-
-        async def compute_period_stats(period_start):
-            stmt = (
-                select(Order)
-                .options(selectinload(Order.partner))
-                .where(Order.status == OrderStatus.DELIVERED, func.date(Order.created_at) >= period_start)
-            )
-            if active_city_id is not None:
-                stmt = stmt.join(PartnerProfile, Order.partner_id == PartnerProfile.id).where(
-                    PartnerProfile.city_id == active_city_id
-                )
-            delivered = (await db.execute(stmt)).scalars().all()
-
-            courier_pay = partner_pay = commission_income = delivery_income = 0.0
-            for o in delivered:
-                rate = (o.partner.commission_rate / 100) if o.partner else default_commission_pct
-                commission = o.total_price * rate
-                partner_pay += o.total_price - commission
-                commission_income += commission
-                c_pay = _courier_earning(o, courier_pct)
-                courier_pay += c_pay
-                delivery_income += o.delivery_fee - c_pay
-
-            return {
-                "order_count": len(delivered),
-                "courier_pay": courier_pay,
-                "partner_pay": partner_pay,
-                "commission_income": commission_income,
-                "delivery_income": delivery_income,
-                "net_profit": commission_income + delivery_income,
-            }
-
-        async def compute_loss_stats(period_start):
-            stmt = select(
-                func.count(Order.id), func.coalesce(func.sum(Order.total_price + Order.delivery_fee), 0)
-            ).where(Order.status == OrderStatus.CANCELLED, func.date(Order.created_at) >= period_start)
-            if active_city_id is not None:
-                stmt = stmt.join(PartnerProfile, Order.partner_id == PartnerProfile.id).where(
-                    PartnerProfile.city_id == active_city_id
-                )
-            count, total = (await db.execute(stmt)).first()
-            return {"count": count or 0, "amount": total or 0.0}
-
-        analytics = {
-            "today": await compute_period_stats(today),
-            "month": await compute_period_stats(month_start),
-            "today_loss": await compute_loss_stats(today),
-            "month_loss": await compute_loss_stats(month_start),
-        }
+    analytics = None   # moliyaviy hisobot endi /admin/analytics/finance.json orqali (davr tanlanganda) yuklanadi
 
     return templates.TemplateResponse(
         request=request,
@@ -1550,6 +1497,80 @@ async def admin_analytics_hourly(
         "hours": [f"{h:02d}:00" for h in range(24)],
         "order_counts": order_counts,
         "revenue_by_hour": revenue_by_hour,
+    })
+
+
+@admin_router.get("/admin/analytics/finance.json")
+async def admin_analytics_finance(
+    period: str = "D1",
+    city_id: Optional[int] = None,
+    db: AsyncSession = Depends(get_db),
+    owner: User = Depends(require_owner),
+):
+    """Moliyaviy hisobot (faqat OWNER). Davrlar: D1 — bugun, M1 — shu oy, M3/M6 — oxirgi 3/6 oy, Y1/Y3/Y5 — oxirgi 1/3/5 yil
+    (oy boshidan boshlab, hozirgacha). Faqat tanlangan davr hisoblanadi. Shahar tanlangan bo'lsa — faqat shu shahar.
+    Buyurtmalar (hamkor/kuryer/komissiya/yetkazish), ichki pochta (kuryer haqi va platformaning sof haqi) va shahar taksisi
+    (haydovchilar haqi va komissiya) alohida qatorlarda; pochta kuryer haqi "Kuryerlar haqi"ga qo'shiladi."""
+    months_back = {"D1": None, "M1": 0, "M3": 2, "M6": 5, "Y1": 11, "Y3": 35, "Y5": 59}
+    if period not in months_back:
+        period = "D1"
+    today = (datetime.utcnow() + UZB_TZ_OFFSET).date()
+    if months_back[period] is None:
+        start_day = today
+    else:
+        total_m = today.year * 12 + (today.month - 1) - months_back[period]
+        start_day = date(total_m // 12, total_m % 12 + 1, 1)
+    start_utc = datetime.combine(start_day, datetime.min.time()) - UZB_TZ_OFFSET
+    cid = city_id
+
+    base = await _get_or_create_setting(db, None)
+    courier_pct = (base.courier_share_percent if base.courier_share_percent is not None else 80.0) / 100
+    default_rate = (base.service_commission_percent if base.service_commission_percent is not None else 10.0) / 100
+
+    z = lambda c: func.coalesce(c, 0.0)
+    oq = (select(Order.partner_id, PartnerProfile.commission_rate, func.count(Order.id), z(func.sum(Order.total_price)), z(func.sum(Order.delivery_fee)),
+                 z(func.sum(Order.courier_km_bonus)), z(func.sum(Order.courier_pickup_bonus)), z(func.sum(Order.courier_rating_bonus)))
+          .select_from(Order).outerjoin(PartnerProfile, Order.partner_id == PartnerProfile.id)
+          .where(Order.status == OrderStatus.DELIVERED, Order.created_at >= start_utc)
+          .group_by(Order.partner_id, PartnerProfile.commission_rate))
+    lq = (select(func.count(Order.id), z(func.sum(Order.total_price + Order.delivery_fee)))
+          .select_from(Order).outerjoin(PartnerProfile, Order.partner_id == PartnerProfile.id)
+          .where(Order.status == OrderStatus.CANCELLED, Order.created_at >= start_utc))
+    pq = select(func.count(ParcelOrder.id),
+                z(func.sum(func.coalesce(ParcelOrder.courier_earning, ParcelOrder.fee - func.coalesce(ParcelOrder.platform_share, 0.0)))),
+                z(func.sum(func.coalesce(ParcelOrder.platform_share, ParcelOrder.fee - func.coalesce(ParcelOrder.courier_earning, 0.0))))).where(
+        ParcelOrder.status == "delivered", ParcelOrder.delivered_at >= start_utc)
+    tq = select(func.count(TaxiRide.id), z(func.sum(func.coalesce(func.nullif(TaxiRide.price, 0.0), TaxiRide.start_price))), z(func.sum(TaxiRide.commission))).where(
+        TaxiRide.status == "completed", TaxiRide.completed_at >= start_utc)
+    if cid is not None:
+        oq = oq.where(PartnerProfile.city_id == cid)
+        lq = lq.where(PartnerProfile.city_id == cid)
+        pq = pq.where(ParcelOrder.city_id == cid)
+        tq = tq.where(TaxiRide.city_id == cid)
+
+    order_count = 0
+    courier_orders = partner_pay = commission_income = delivery_income = 0.0
+    for _pid, rate, n, s_total, s_fee, s_km, s_pick, s_rate in (await db.execute(oq)).all():
+        r = (rate / 100) if rate is not None else default_rate
+        c_pay = s_fee * courier_pct + s_km + s_pick + s_rate
+        order_count += int(n or 0)
+        commission_income += s_total * r
+        partner_pay += s_total - s_total * r
+        courier_orders += c_pay
+        delivery_income += s_fee - c_pay
+    loss_n, loss_amt = (await db.execute(lq)).first()
+    parcel_n, parcel_courier, parcel_net = (await db.execute(pq)).first()
+    taxi_n, taxi_gross, taxi_comm = (await db.execute(tq)).first()
+    taxi_driver_pay = max(float(taxi_gross or 0.0) - float(taxi_comm or 0.0), 0.0)
+    net = commission_income + delivery_income + float(taxi_comm or 0.0) + float(parcel_net or 0.0)
+    return JSONResponse({
+        "period": period, "from": start_day.strftime("%d.%m.%Y"), "to": today.strftime("%d.%m.%Y"),
+        "order_count": order_count, "parcel_count": int(parcel_n or 0), "taxi_count": int(taxi_n or 0),
+        "courier_pay": courier_orders + float(parcel_courier or 0.0), "courier_pay_parcels": float(parcel_courier or 0.0),
+        "partner_pay": partner_pay, "taxi_driver_pay": taxi_driver_pay,
+        "commission_income": commission_income, "taxi_commission": float(taxi_comm or 0.0),
+        "delivery_income": delivery_income, "parcel_net": float(parcel_net or 0.0),
+        "net_profit": net, "loss_count": int(loss_n or 0), "loss_amount": float(loss_amt or 0.0),
     })
 
 
@@ -3502,6 +3523,9 @@ async def couriers_live_locations(
     busy_courier_ids = select(Order.courier_id).where(
         Order.status == OrderStatus.ON_THE_WAY, Order.courier_id.is_not(None)
     )
+    busy_parcel_courier_ids = select(ParcelOrder.courier_id).where(
+        ParcelOrder.status.in_(["accepted", "picked_up"]), ParcelOrder.courier_id.is_not(None)
+    )
     courier_stmt = (
         select(User)
         .join(CourierProfile, CourierProfile.user_id == User.id)
@@ -3513,6 +3537,7 @@ async def couriers_live_locations(
             or_(
                 and_(CourierProfile.is_online == True, CourierProfile.location_updated_at >= freshness_cutoff),
                 User.id.in_(busy_courier_ids),
+                User.id.in_(busy_parcel_courier_ids),
             ),
         )
     )
@@ -3530,11 +3555,23 @@ async def couriers_live_locations(
         for o in orders_result.scalars().all():
             active_orders_map[o.courier_id] = o
 
+    # Pochta olib ketayotgan kuryerlar (ichki pochta: accepted -> olishga ketmoqda, picked_up -> yetkazmoqda)
+    parcels_map = {}
+    if courier_ids:
+        for pr in (await db.execute(select(ParcelOrder).where(
+                ParcelOrder.courier_id.in_(courier_ids), ParcelOrder.status.in_(["accepted", "picked_up"]))
+                .order_by(ParcelOrder.id))).scalars().all():
+            parcels_map[pr.courier_id] = pr
+
     now_utc = datetime.utcnow()
     couriers_data = []
     for c in couriers:
         cp = c.courier_profile
         active_order = active_orders_map.get(c.id)
+        active_parcel = None if active_order else parcels_map.get(c.id)
+        if active_parcel is not None:
+            to_pickup = active_parcel.status == "accepted"
+            p_dest = (active_parcel.pickup_lat, active_parcel.pickup_lng) if to_pickup else (active_parcel.dropoff_lat, active_parcel.dropoff_lng)
         age = (now_utc - cp.location_updated_at).total_seconds() if cp.location_updated_at else None
         couriers_data.append({
             "courier_id": c.id,
@@ -3547,11 +3584,15 @@ async def couriers_live_locations(
             "age_seconds": int(age) if age is not None else None,
             "stale": (age is None or age > MAP_LOCATION_FRESHNESS_MINUTES * 60),
             "online": bool(cp.is_online),
-            "busy": active_order is not None,
+            "busy": active_order is not None or active_parcel is not None,
             "active_order_id": active_order.id if active_order else None,
             "active_order_address": active_order.delivery_address if active_order else None,
-            "dest_lat": active_order.delivery_latitude if active_order else None,
-            "dest_lng": active_order.delivery_longitude if active_order else None,
+            "active_parcel_id": active_parcel.id if active_parcel else None,
+            "parcel_status": active_parcel.status if active_parcel else None,
+            "parcel_address": ((active_parcel.pickup_address if active_parcel.status == "accepted" else active_parcel.dropoff_address)
+                               if active_parcel else None),
+            "dest_lat": active_order.delivery_latitude if active_order else (p_dest[0] if active_parcel else None),
+            "dest_lng": active_order.delivery_longitude if active_order else (p_dest[1] if active_parcel else None),
         })
 
     # ---- 2) HAMKORLAR / DO'KONLAR ----
@@ -3605,8 +3646,19 @@ async def couriers_live_locations(
         for o in active_orders
     ]
 
+    # ---- 4) FAOL POCHTALAR (ichki pochta) — olish va topshirish nuqtalari ----
+    parcel_stmt = select(ParcelOrder).where(ParcelOrder.status.in_(["new", "accepted", "picked_up"]))
+    if active_city_id is not None:
+        parcel_stmt = parcel_stmt.where(ParcelOrder.city_id == active_city_id)
+    parcels_data = [{
+        "parcel_id": pr.id, "status": pr.status, "courier_id": pr.courier_id,
+        "pickup_address": pr.pickup_address, "pickup_lat": pr.pickup_lat, "pickup_lng": pr.pickup_lng,
+        "dropoff_address": pr.dropoff_address, "dropoff_lat": pr.dropoff_lat, "dropoff_lng": pr.dropoff_lng,
+        "receiver_name": pr.receiver_name, "item": pr.item_description,
+    } for pr in (await db.execute(parcel_stmt.limit(300))).scalars().all()]
+
     return JSONResponse({
-        "couriers": couriers_data, "partners": partners_data, "active_clients": clients_data,
+        "couriers": couriers_data, "partners": partners_data, "active_clients": clients_data, "parcels": parcels_data,
         "server_time": datetime.utcnow().isoformat(),
     })
 
@@ -9213,6 +9265,70 @@ def _parcel_km_or_400(setting, a_lat, a_lng, b_lat, b_lng, cfg) -> float:
     return km
 
 
+# ---- Pochta: shahar aniqlash (ichki pochta yoki Magistral) ----
+CITY_DETECT_MAX_KM = 35.0   # nuqta shahar markazidan shuncha km ichida bo'lsa — o'sha shaharniki
+
+
+async def _city_anchors(db: AsyncSession) -> list:
+    """Faol shaharlarning markaziy nuqtalari: avval express_hub, bo'lmasa terminal koordinatasi."""
+    rows = (await db.execute(
+        select(City.id, City.name, City.express_hub_lat, City.express_hub_lng, Terminal.latitude, Terminal.longitude)
+        .outerjoin(Terminal, Terminal.city_id == City.id).where(City.is_active == True))).all()
+    out = []
+    for cid, name, hl, hg, tl, tg in rows:
+        lat, lng = (hl, hg) if (hl is not None and hg is not None) else (tl, tg)
+        if lat is not None and lng is not None:
+            out.append((cid, name, float(lat), float(lng)))
+    return out
+
+
+def _nearest_city(anchors: list, lat, lng):
+    """(city_id, city_name) yoki (None, None) — eng yaqin shahar, CITY_DETECT_MAX_KM ichida bo'lsa."""
+    if lat is None or lng is None:
+        return None, None
+    best = None
+    for cid, name, a, b in anchors:
+        d = _haversine_km(lat, lng, a, b)
+        if best is None or d < best[0]:
+            best = (d, cid, name)
+    if best and best[0] <= CITY_DETECT_MAX_KM:
+        return best[1], best[2]
+    return None, None
+
+
+async def _client_current_city(db: AsyncSession, client, anchors, cur_city_id=None, cur_lat=None, cur_lng=None):
+    """Mijoz hozir qaysi shaharda: tanlangan shahar > GPS bo'yicha aniqlangan > ro'yxatdagi shahri."""
+    if cur_city_id is not None:
+        return cur_city_id
+    cid, _ = _nearest_city(anchors, cur_lat, cur_lng)
+    return cid if cid is not None else client.city_id
+
+
+async def _parcel_city_guard(db: AsyncSession, client, body) -> int:
+    """Ichki pochta qoidasi: olish va topshirish BIR shaharda bo'lishi shart, mijoz ham shu shaharda.
+    Aks holda 409 — mijozga Magistral pochtadan foydalanish kerakligi aytiladi. Qaytaradi: pochta shahri id."""
+    anchors = await _city_anchors(db)
+    names = {r[0]: r[1] for r in (await db.execute(select(City.id, City.name))).all()}
+    cur = await _client_current_city(db, client, anchors, getattr(body, "current_city_id", None),
+                                     getattr(body, "current_lat", None), getattr(body, "current_lng", None))
+    pc, _ = _nearest_city(anchors, body.pickup_lat, body.pickup_lng)
+    dc, _ = _nearest_city(anchors, body.dropoff_lat, body.dropoff_lng)
+    pc = pc if pc is not None else cur
+    dc = dc if dc is not None else pc
+    if pc is None:
+        raise HTTPException(status_code=400, detail="Avval shaharingizni tanlang")
+    if dc != pc:
+        raise HTTPException(status_code=409, detail=(
+            f"Yetkazish manzili boshqa shaharda ({names.get(dc, 'boshqa shahar')}). Ichki pochta faqat bitta shahar ichida ishlaydi — "
+            f"iltimos, Magistral pochta xizmatidan foydalaning."), headers={"X-Use-Magistral": "1"})
+    if cur is not None and pc != cur:
+        raise HTTPException(status_code=409, detail=(
+            f"Siz hozir {names.get(cur, 'boshqa shahar')} shahridasiz — ichki pochta faqat shu shahar ichida ishlaydi. "
+            f"Olish manzilini {names.get(cur, 'shu shahar')} ichida tanlang yoki Magistral pochtadan foydalaning."), headers={"X-Use-Magistral": "1"})
+    return pc
+
+
+
 def _parcel_phone_ok(v: str) -> str:
     digits = "".join(ch for ch in (v or "") if ch.isdigit())
     if len(digits) < 9 or len(digits) > 15:
@@ -9222,6 +9338,9 @@ def _parcel_phone_ok(v: str) -> str:
 
 class ParcelQuoteBody(BaseModel):
     init_data: str
+    current_lat: Optional[float] = None      # mijozning hozirgi GPS joyi (ixtiyoriy)
+    current_lng: Optional[float] = None
+    current_city_id: Optional[int] = None    # mijoz qo'lda tanlagan joriy shahar (ixtiyoriy)
     pickup_lat: float
     pickup_lng: float
     dropoff_lat: float
@@ -9267,8 +9386,9 @@ async def parcel_config(db: AsyncSession = Depends(get_db)):
 
 @parcel_router.post("/api/shop/parcel/quote")
 async def parcel_quote(body: ParcelQuoteBody, db: AsyncSession = Depends(get_db)):
-    await _client_for_cancel(db, body.init_data)
-    setting = await _get_or_create_setting(db)
+    client = await _client_for_cancel(db, body.init_data)
+    pcity = await _parcel_city_guard(db, client, body)
+    setting = await _get_or_create_setting(db, city_id=pcity)
     cfg = _parcel_cfg(setting)
     if not cfg["enabled"]:
         raise HTTPException(status_code=403, detail="Pochta xizmati hozircha ishlamayapti")
@@ -9281,7 +9401,8 @@ async def parcel_quote(body: ParcelQuoteBody, db: AsyncSession = Depends(get_db)
 @parcel_router.post("/api/shop/parcel/create")
 async def parcel_create(body: ParcelCreateBody, db: AsyncSession = Depends(get_db)):
     client = await _client_for_cancel(db, body.init_data)
-    setting = await _get_or_create_setting(db)
+    pcity = await _parcel_city_guard(db, client, body)
+    setting = await _get_or_create_setting(db, city_id=pcity)
     cfg = _parcel_cfg(setting)
     if not cfg["enabled"]:
         raise HTTPException(status_code=403, detail="Pochta xizmati hozircha ishlamayapti")
@@ -9292,8 +9413,6 @@ async def parcel_create(body: ParcelCreateBody, db: AsyncSession = Depends(get_d
     if len(pa) < 3 or len(da) < 3 or len(rn) < 2 or len(item) < 2:
         raise HTTPException(status_code=400, detail="Barcha maydonlarni to'ldiring")
     rphone = _parcel_phone_ok(body.receiver_phone)
-    if client.city_id is None:
-        raise HTTPException(status_code=400, detail="Avval shaharingizni tanlang")
     active = (await db.execute(select(func.count(ParcelOrder.id)).where(
         ParcelOrder.client_id == client.id, ParcelOrder.status.in_(["new", "accepted", "picked_up"])))).scalar() or 0
     if active >= 5:
@@ -9302,7 +9421,7 @@ async def parcel_create(body: ParcelCreateBody, db: AsyncSession = Depends(get_d
     fee = _parcel_price(cfg, km, body.size)
     earning = round(fee * cfg["courier_percent"] / 100.0)
     code = f"{secrets.randbelow(9000) + 1000}"
-    o = ParcelOrder(client_id=client.id, city_id=client.city_id, status="new", pickup_address=pa,
+    o = ParcelOrder(client_id=client.id, city_id=pcity, status="new", pickup_address=pa,
                     pickup_lat=body.pickup_lat, pickup_lng=body.pickup_lng, dropoff_address=da,
                     dropoff_lat=body.dropoff_lat, dropoff_lng=body.dropoff_lng, receiver_name=rn, receiver_phone=rphone,
                     item_description=item, size=body.size, comment=(body.comment or "").strip()[:500] or None,
@@ -9314,7 +9433,7 @@ async def parcel_create(body: ParcelCreateBody, db: AsyncSession = Depends(get_d
     try:
         rows = (await db.execute(
             select(User).join(CourierProfile, CourierProfile.user_id == User.id).where(
-                User.city_id == client.city_id, CourierProfile.is_online == True, CourierProfile.is_blocked == False,
+                User.city_id == pcity, CourierProfile.is_online == True, CourierProfile.is_blocked == False,
                 User.telegram_id.isnot(None)).limit(40))).scalars().all()
         for cu in rows:
             await send_telegram_message(cu.telegram_id, f"📮 Yangi pochta buyurtmasi #{o.id}: {pa} → {da}\n"
@@ -9322,6 +9441,28 @@ async def parcel_create(body: ParcelCreateBody, db: AsyncSession = Depends(get_d
     except Exception as e:
         print(f"Pochta xabari yuborilmadi: {e}")
     return {"ok": True, "id": o.id, "fee": fee, "code": code, "km": km}
+
+
+class ParcelRouteCheckBody(ParcelQuoteBody):
+    pass
+
+
+@parcel_router.post("/api/shop/parcel/route-check")
+async def parcel_route_check(body: ParcelRouteCheckBody, db: AsyncSession = Depends(get_db)):
+    """Mijoz ilovasi manzil tanlanganda chaqiradi: ichki pochtami yoki Magistral kerakmi."""
+    client = await _client_for_cancel(db, body.init_data)
+    anchors = await _city_anchors(db)
+    names = {r[0]: r[1] for r in (await db.execute(select(City.id, City.name))).all()}
+    cur = await _client_current_city(db, client, anchors, body.current_city_id, body.current_lat, body.current_lng)
+    pc, _ = _nearest_city(anchors, body.pickup_lat, body.pickup_lng)
+    dc, _ = _nearest_city(anchors, body.dropoff_lat, body.dropoff_lng)
+    pc = pc if pc is not None else cur
+    dc = dc if dc is not None else pc
+    ok = pc is not None and pc == dc and (cur is None or cur == pc)
+    return {"mode": "local" if ok else "magistral", "current_city_id": cur, "current_city": names.get(cur),
+            "pickup_city_id": pc, "pickup_city": names.get(pc), "dropoff_city_id": dc, "dropoff_city": names.get(dc),
+            "to_city_id": dc if (not ok and dc is not None and dc != pc) else None,
+            "message": None if ok else "Manzil boshqa shaharda — Magistral pochta xizmatidan foydalaning."}
 
 
 class ParcelInitBody(BaseModel):
@@ -9849,10 +9990,16 @@ express_router = APIRouter(tags=["Tumanlararo posilka: mijoz"])
 
 class IcConfigBody(BaseModel):
     init_data: str
+    current_lat: Optional[float] = None
+    current_lng: Optional[float] = None
+    current_city_id: Optional[int] = None
 
 
 class IcQuoteBody(BaseModel):
     init_data: str
+    current_lat: Optional[float] = None
+    current_lng: Optional[float] = None
+    current_city_id: Optional[int] = None
     to_city_id: int
     pickup_lat: float
     pickup_lng: float
@@ -9878,15 +10025,27 @@ class IcIdBody(BaseModel):
     id: int
 
 
+async def _ic_from_city(db: AsyncSession, client, body) -> int:
+    """Magistral pochta jo'nash shahri: mijoz hozir turgan shahar (tanlangan/GPS), bo'lmasa ro'yxatdagi shahri."""
+    anchors = await _city_anchors(db)
+    cid = await _client_current_city(db, client, anchors, body.current_city_id, body.current_lat, body.current_lng)
+    pc, _ = _nearest_city(anchors, body.pickup_lat, body.pickup_lng)
+    cid = pc if pc is not None else cid
+    if cid is None:
+        raise HTTPException(status_code=400, detail="Avval shaharingizni tanlang")
+    return cid
+
+
 @express_router.post("/api/shop/express/config")
 async def express_config(body: IcConfigBody, db: AsyncSession = Depends(get_db)):
     client = await _client_for_cancel(db, body.init_data)
     setting = await _get_or_create_setting(db)
     cfg = _ic_cfg(setting)
     dests = []
-    if cfg["enabled"] and client.city_id is not None and (await db.execute(select(Terminal.id).where(Terminal.city_id == client.city_id, Terminal.is_active == True))).first():
+    from_city = await _client_current_city(db, client, await _city_anchors(db), body.current_city_id, body.current_lat, body.current_lng)
+    if cfg["enabled"] and from_city is not None and (await db.execute(select(Terminal.id).where(Terminal.city_id == from_city, Terminal.is_active == True))).first():
         rows = (await db.execute(select(City.id, City.name, Terminal.latitude, Terminal.longitude).join(ExpressFare, ExpressFare.to_city_id == City.id)
-                                 .join(Terminal, Terminal.city_id == City.id).where(ExpressFare.from_city_id == client.city_id, ExpressFare.is_active == True,
+                                 .join(Terminal, Terminal.city_id == City.id).where(ExpressFare.from_city_id == from_city, ExpressFare.is_active == True,
                                                                                     City.is_active == True, Terminal.is_active == True).order_by(City.name))).all()
         dests = [{"id": r[0], "name": r[1], "lat": r[2], "lng": r[3]} for r in rows]
     return {"enabled": cfg["enabled"] and bool(dests), "destinations": dests, "max_value": cfg["max_value"], "free_days": cfg["free_days"],
@@ -9900,11 +10059,10 @@ async def express_quote(body: IcQuoteBody, db: AsyncSession = Depends(get_db)):
     cfg = _ic_cfg(setting)
     if not cfg["enabled"]:
         raise HTTPException(status_code=403, detail="Tumanlararo posilka hozircha ishlamayapti")
-    if client.city_id is None:
-        raise HTTPException(status_code=400, detail="Avval shaharingizni tanlang")
+    from_city = await _ic_from_city(db, client, body)
     if body.size not in PARCEL_SIZES:
         raise HTTPException(status_code=400, detail="Hajmni tanlang")
-    q = await _ic_quote(db, setting, cfg, client.city_id, body.to_city_id, body.size, body.pickup_lat, body.pickup_lng, body.dropoff_lat, body.dropoff_lng)
+    q = await _ic_quote(db, setting, cfg, from_city, body.to_city_id, body.size, body.pickup_lat, body.pickup_lng, body.dropoff_lat, body.dropoff_lng)
     return {"total": q["total"], "leg1_fee": q["leg1_fee"], "leg3_fee": q["leg3_fee"], "fare": q["fare"], "platform_fee": q["platform_fee"],
             "from_terminal": q["ta"].name, "to_terminal": q["tb"].name, "from_address": q["ta"].address, "to_address": q["tb"].address}
 
@@ -9916,8 +10074,7 @@ async def express_create(body: IcCreateBody, db: AsyncSession = Depends(get_db))
     cfg = _ic_cfg(setting)
     if not cfg["enabled"]:
         raise HTTPException(status_code=403, detail="Tumanlararo posilka hozircha ishlamayapti")
-    if client.city_id is None:
-        raise HTTPException(status_code=400, detail="Avval shaharingizni tanlang")
+    from_city = await _ic_from_city(db, client, body)
     if body.size not in PARCEL_SIZES or body.payer not in ("sender", "receiver"):
         raise HTTPException(status_code=400, detail="Ma'lumot noto'g'ri")
     if not body.rules_ok:
@@ -9932,8 +10089,8 @@ async def express_create(body: IcCreateBody, db: AsyncSession = Depends(get_db))
     active = (await db.execute(select(func.count(IntercityOrder.id)).where(IntercityOrder.client_id == client.id, IntercityOrder.status.in_(IC_ACTIVE)))).scalar() or 0
     if active >= 5:
         raise HTTPException(status_code=400, detail="Bir vaqtda 5 tadan ortiq faol tumanlararo posilka yubora olmaysiz")
-    q = await _ic_quote(db, setting, cfg, client.city_id, body.to_city_id, body.size, body.pickup_lat, body.pickup_lng, body.dropoff_lat, body.dropoff_lng)
-    o = IntercityOrder(client_id=client.id, from_city_id=client.city_id, to_city_id=body.to_city_id, from_terminal_id=q["ta"].id, to_terminal_id=q["tb"].id,
+    q = await _ic_quote(db, setting, cfg, from_city, body.to_city_id, body.size, body.pickup_lat, body.pickup_lng, body.dropoff_lat, body.dropoff_lng)
+    o = IntercityOrder(client_id=client.id, from_city_id=from_city, to_city_id=body.to_city_id, from_terminal_id=q["ta"].id, to_terminal_id=q["tb"].id,
                        status="new", pickup_address=pa, pickup_lat=body.pickup_lat, pickup_lng=body.pickup_lng, dropoff_address=da,
                        dropoff_lat=body.dropoff_lat, dropoff_lng=body.dropoff_lng, receiver_name=rn, receiver_phone=rphone, item_description=item,
                        size=body.size, declared_value=body.declared_value, comment=(body.comment or "").strip()[:500] or None, payer=body.payer,
@@ -9950,7 +10107,7 @@ async def express_create(body: IcCreateBody, db: AsyncSession = Depends(get_db))
         await db.commit()
     try:
         rows = (await db.execute(select(User).join(CourierProfile, CourierProfile.user_id == User.id).where(
-            User.city_id == client.city_id, CourierProfile.is_online == True, CourierProfile.is_blocked == False, User.telegram_id.isnot(None)).limit(40))).scalars().all()
+            User.city_id == from_city, CourierProfile.is_online == True, CourierProfile.is_blocked == False, User.telegram_id.isnot(None)).limit(40))).scalars().all()
         for cu in rows:
             await send_telegram_message(cu.telegram_id, f"📦 Tumanlararo posilka #{o.id}: {pa} → {q['tb'].name}\nSizga {_fm(q['leg1_fee'])} so'm. Kuryer kabinetini oching.")
     except Exception as e:
@@ -12155,6 +12312,50 @@ async def taxi_driver_cancel(rid: int, db: AsyncSession = Depends(get_db), user:
 
 # ---------------- Admin ----------------
 admin_taxi_router = APIRouter(prefix="/admin/taxi", tags=["Ichki taksi boshqaruvi"], dependencies=[Depends(_owner_city_dep)])
+
+
+@admin_taxi_router.get("/live-locations")
+async def admin_taxi_live_locations(db: AsyncSession = Depends(get_db), current_user: User = Depends(require_section("taksi"))):
+    """Admin xaritasi uchun: SHAHAR ICHIDAGI taksi haydovchilari (online yoki safarda) va taksidan foydalanayotgan mijozlar.
+    Magistral/qo'shma magistral bu yerga kirmaydi. Shahar tanlangan (yoki operator) bo'lsa — faqat shu shahar."""
+    scope = _parcel_scope(current_user)
+    cfg = _tx_cfg(await _get_or_create_setting(db))
+    stale_s = max(int(cfg.get("stale_min") or 5), 1) * 60
+    now = datetime.utcnow()
+    rq = select(TaxiRide).options(selectinload(TaxiRide.client), selectinload(TaxiRide.driver)).where(TaxiRide.status.in_(("bidding",) + TX_ACTIVE))
+    dq = select(TaxiDriver, User).join(User, User.id == TaxiDriver.user_id).where(
+        TaxiDriver.is_active == True, TaxiDriver.latitude.isnot(None), TaxiDriver.longitude.isnot(None))
+    if scope is not None:
+        rq = rq.where(TaxiRide.city_id == scope)
+        dq = dq.where(TaxiDriver.city_id == scope)
+    rides = (await db.execute(rq)).scalars().all()
+    busy = {r.driver_id: r for r in rides if r.driver_id and r.status in TX_ACTIVE}
+    drivers = []
+    for d, u in (await db.execute(dq)).all():
+        age = int((now - d.location_at).total_seconds()) if d.location_at else None
+        r = busy.get(u.id)
+        if not (d.is_online or r):
+            continue
+        if age is not None and age > 6 * 3600 and not r:
+            continue
+        drivers.append({"driver_id": u.id, "full_name": u.full_name, "phone": u.phone_number, "car": f"{d.car_model or ''} {d.car_plate or ''}".strip(),
+                        "lat": d.latitude, "lng": d.longitude, "age_seconds": age, "stale": age is None or age > stale_s,
+                        "busy": r is not None, "ride_id": r.id if r else None, "blacklisted": bool(d.blacklisted)})
+    dpos = {x["driver_id"]: (x["lat"], x["lng"]) for x in drivers}
+    riders = []
+    for r in rides:
+        # mijoz joyi: safar boshlanguncha — olib ketish nuqtasi; yo'lda — mashina (mijoz bilan birga) joylashuvi
+        lat, lng = r.pickup_lat, r.pickup_lng
+        dest = (r.pickup_lat, r.pickup_lng) if r.status in ("assigned", "arrived") else ((r.dropoff_lat, r.dropoff_lng) if r.status == "started" else (None, None))
+        if r.status == "started" and r.driver_id in dpos:
+            lat, lng = dpos[r.driver_id]
+        if lat is None or lng is None:
+            continue
+        riders.append({"ride_id": r.id, "status": r.status, "label": TX_STATUS_UZ.get(r.status, r.status), "client_name": r.client.full_name if r.client else "",
+                       "client_phone": r.client.phone_number if r.client else "", "lat": lat, "lng": lng, "from": r.pickup_address, "to": r.dropoff_address,
+                       "price": r.price or r.start_price, "driver_id": r.driver_id, "driver_name": r.driver.full_name if r.driver else None,
+                       "dest_lat": dest[0], "dest_lng": dest[1]})
+    return {"drivers": drivers, "riders": riders}
 
 
 @admin_taxi_router.get("/overview")

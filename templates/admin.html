@@ -163,6 +163,7 @@
                yangilanganda (refreshCourierLocations 5 soniyada bir marta
                ishlaydi) sakrab emas, yumshoq suzib o'tadi. ---- */
         .leaflet-marker-icon { transition: transform 1.1s linear; }
+        .zm-dark-tiles { filter: invert(1) hue-rotate(180deg) brightness(.95) contrast(.9) saturate(.75); }
         .leaflet-popup-content-wrapper, .leaflet-popup-tip { background: #12131e; color: #e5e7eb; }
 
         /* ---- Raqamlar hisoblanib chiqadigan animatsiya uchun tayyorgarlik ---- */
@@ -745,33 +746,24 @@
             #dyn-color-list input[type=color] { width: 28px; height: 22px; padding: 0; border: none; background: none; cursor: pointer; }
         </style>
 
-        {% if is_owner and analytics %}
-        <!-- ANALITIKA (faqat OWNER) -->
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div class="card-bg bg-white p-6 rounded-xl shadow-md" data-live="adm-fin-today">
-                <h2 class="theme-title text-lg font-bold mb-4 text-indigo-700">📈 Bugungi Moliyaviy Hisobot</h2>
-                <div class="space-y-2 text-sm">
-                    <div class="flex justify-between"><span class="text-gray-500">Yetkazilgan buyurtmalar</span><span class="font-semibold">{{ analytics.today.order_count }} ta</span></div>
-                    <div class="flex justify-between"><span class="text-gray-500">🛵 Kuryerlar haqi</span><span class="font-semibold">{{ "%.0f"|format(analytics.today.courier_pay) }} so'm</span></div>
-                    <div class="flex justify-between"><span class="text-gray-500">🏪 Hamkorlar haqi</span><span class="font-semibold">{{ "%.0f"|format(analytics.today.partner_pay) }} so'm</span></div>
-                    <div class="flex justify-between"><span class="text-gray-500">🏷️ Komissiya daromadi</span><span class="font-semibold">{{ "%.0f"|format(analytics.today.commission_income) }} so'm</span></div>
-                    <div class="flex justify-between"><span class="text-gray-500">🚚 Yetkazishdan sof haq</span><span class="font-semibold">{{ "%.0f"|format(analytics.today.delivery_income) }} so'm</span></div>
-                    <div class="flex justify-between border-t pt-2 mt-2 dark:border-gray-700"><span class="font-bold">💰 Bugungi sof daromad</span><span class="font-bold text-green-600">{{ "%.0f"|format(analytics.today.net_profit) }} so'm</span></div>
-                    <div class="flex justify-between text-red-600"><span>❌ Bekor qilingan ({{ analytics.today_loss.count }} ta)</span><span class="font-semibold">−{{ "%.0f"|format(analytics.today_loss.amount) }} so'm</span></div>
-                </div>
+        {% if is_owner %}
+        <!-- MOLIYAVIY HISOBOT (faqat OWNER): davr tanlanadi, faqat tanlangan davr yuklanadi; ochish/yopish mumkin -->
+        <div class="card-bg bg-white p-6 rounded-xl shadow-md" id="fin-card">
+            <div class="flex items-center justify-between flex-wrap gap-2">
+                <h2 class="theme-title text-lg font-bold text-indigo-700">📊 Moliyaviy Hisobot <span class="text-xs font-semibold opacity-60" id="fin-range"></span></h2>
+                <button type="button" id="fin-toggle" class="px-3 py-1 rounded-lg text-xs font-bold border" style="border-color:rgba(100,116,139,.35)">▾ Yopish</button>
             </div>
-
-            <div class="card-bg bg-white p-6 rounded-xl shadow-md" data-live="adm-fin-month">
-                <h2 class="theme-title text-lg font-bold mb-4 text-indigo-700">📅 Shu Oylik Moliyaviy Hisobot</h2>
-                <div class="space-y-2 text-sm">
-                    <div class="flex justify-between"><span class="text-gray-500">Yetkazilgan buyurtmalar</span><span class="font-semibold">{{ analytics.month.order_count }} ta</span></div>
-                    <div class="flex justify-between"><span class="text-gray-500">🛵 Kuryerlar haqi</span><span class="font-semibold">{{ "%.0f"|format(analytics.month.courier_pay) }} so'm</span></div>
-                    <div class="flex justify-between"><span class="text-gray-500">🏪 Hamkorlar haqi</span><span class="font-semibold">{{ "%.0f"|format(analytics.month.partner_pay) }} so'm</span></div>
-                    <div class="flex justify-between"><span class="text-gray-500">🏷️ Komissiya daromadi</span><span class="font-semibold">{{ "%.0f"|format(analytics.month.commission_income) }} so'm</span></div>
-                    <div class="flex justify-between"><span class="text-gray-500">🚚 Yetkazishdan sof haq</span><span class="font-semibold">{{ "%.0f"|format(analytics.month.delivery_income) }} so'm</span></div>
-                    <div class="flex justify-between border-t pt-2 mt-2 dark:border-gray-700"><span class="font-bold">💰 Oylik sof daromad</span><span class="font-bold text-green-600">{{ "%.0f"|format(analytics.month.net_profit) }} so'm</span></div>
-                    <div class="flex justify-between text-red-600"><span>❌ Bekor qilingan ({{ analytics.month_loss.count }} ta)</span><span class="font-semibold">−{{ "%.0f"|format(analytics.month_loss.amount) }} so'm</span></div>
+            <div id="fin-body" class="mt-3">
+                <div class="flex flex-wrap gap-1.5 mb-4" id="fin-periods">
+                    <button type="button" data-p="D1" class="dyn-tf-btn">Kunlik</button>
+                    <button type="button" data-p="M1" class="dyn-tf-btn">Oylik</button>
+                    <button type="button" data-p="M3" class="dyn-tf-btn">3 oylik</button>
+                    <button type="button" data-p="M6" class="dyn-tf-btn">6 oylik</button>
+                    <button type="button" data-p="Y1" class="dyn-tf-btn">1 yillik</button>
+                    <button type="button" data-p="Y3" class="dyn-tf-btn">3 yillik</button>
+                    <button type="button" data-p="Y5" class="dyn-tf-btn">5 yillik</button>
                 </div>
+                <div class="space-y-2 text-sm" id="fin-rows"><p class="text-gray-500 text-sm">Yuklanmoqda…</p></div>
             </div>
         </div>
         {% endif %}
@@ -1021,7 +1013,7 @@
                 <div id="courier-map" style="height: 380px; border-radius: 0.75rem;"></div>
                 <div id="admin-map-list" class="zm-map-list"></div>
             </div>
-            <p class="text-[11px] text-gray-400 mt-2">🟢 kuryer bo'sh · 🔴 yo'lda · 🏪 hamkor/do'kon · 📦 faol buyurtma (mijoz manzili). Yuqori o'ngdagi qatlam tugmasi orqali sputnik (yo'ldosh) ko'rinishga o'tish mumkin. Xarita har 5 soniyada o'zi yangilanadi.</p>
+            <p class="text-[11px] text-gray-400 mt-2">🟢 kuryer bo'sh · 🔴 yo'lda · 🏪 hamkor/do'kon · 📦 faol buyurtma (mijoz manzili) · 🚕 shahar taksisi (sariq — bo'sh, to'q sariq — safarda) · 🧍 taksi mijozi. Yuqori o'ngdagi qatlam tugmasi orqali sputnik (yo'ldosh) ko'rinishga o'tish mumkin. Xarita har 5 soniyada o'zi yangilanadi.</p>
         </div>
 
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -3146,14 +3138,17 @@
 
             // ---- UCHTA QATLAM: TUNGI (standart, futuristik "mission control"
             // ko'rinishi), ODATIY SXEMA va SPUTNIK ----
-            const darkLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-                maxZoom: 20, subdomains: 'abcd', attribution: '&copy; OpenStreetMap &copy; CARTO'
+            // DIQQAT: CARTO (basemaps.cartocdn.com) endi "API KEY REQUIRED" qaytaradi, shuning uchun kalitsiz manbalarga o'tildi:
+            // Yorug' — OpenStreetMap, Tungi — o'sha OpenStreetMap plitkalari CSS filtri bilan qoraytirilgan (.zm-dark-tiles),
+            // Sxema — Esri ko'cha xaritasi, Sputnik — Esri. Hech biri API kalit talab qilmaydi.
+            const darkLayer = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom: 19, className: 'zm-dark-tiles', attribution: '&copy; OpenStreetMap contributors'
             });
-                const lightLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-                    maxZoom: 20, subdomains: 'abcd', attribution: '&copy; OpenStreetMap &copy; CARTO'
-                });
-            const streetsLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                maxZoom: 19, attribution: '&copy; OpenStreetMap'
+            const lightLayer = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom: 19, attribution: '&copy; OpenStreetMap contributors'
+            });
+            const streetsLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', {
+                maxZoom: 19, attribution: 'Tiles &copy; Esri'
             });
             const satelliteLayer = L.tileLayer(
                 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
@@ -3220,7 +3215,11 @@
 
         // ---- JONLI XARITA (real vaqt): kuryerlar harakati, hamkorlar, mijoz manzillari ----
         const mapLayers = {};            // courier / partner / client / route
-        const mapFilters = { courier: true, partner: true, client: true };
+        const parcelMarkers = {};
+        const mapFilters = { courier: true, partner: true, client: true, taxi: true, rider: true };
+        const TAXI_MAP = {{ 'true' if (is_owner or operator_perms.get('taksi')) else 'false' }};
+        const taxiMarkers = {}, riderMarkers = {}, taxiTrails = {}, taxiTrailLines = {}, taxiRouteLines = {};
+        let lastTaxiData = null;
         const courierTrails = {};        // {id: [[lat,lng],...]}
         const trailLines = {};
         const routeLines = {};
@@ -3231,7 +3230,7 @@
 
         function ensureMapLayers() {
             if (!courierMap || mapLayers.courier) return;
-            ['route', 'partner', 'client', 'courier'].forEach(k => { mapLayers[k] = L.layerGroup().addTo(courierMap); });
+            ['route', 'partner', 'client', 'courier', 'taxi', 'rider'].forEach(k => { mapLayers[k] = L.layerGroup().addTo(courierMap); });
             // Legend (xarita ichida, pastki chap)
             const legend = L.control({ position: 'bottomleft' });
             legend.onAdd = function () {
@@ -3239,11 +3238,14 @@
                 d.innerHTML = '<label><input type="checkbox" data-f="courier" checked> 🛵 Kuryerlar <b id="ml-c">0</b></label>' +
                               '<label><input type="checkbox" data-f="partner" checked> 🏪 Hamkorlar <b id="ml-p">0</b></label>' +
                               '<label><input type="checkbox" data-f="client" checked> 📦 Mijozlar <b id="ml-o">0</b></label>' +
+                              (TAXI_MAP ? '<label><input type="checkbox" data-f="taxi" checked> 🚕 Taksilar <b id="ml-t">0</b></label>' +
+                                          '<label><input type="checkbox" data-f="rider" checked> 🧍 Taksi mijozlari <b id="ml-r">0</b></label>' : '') +
                               '<div class="zm-ml-sub">🟢 bo\'sh · 🔴 yo\'lda · ⚪ signal eski</div>';
                 L.DomEvent.disableClickPropagation(d);
                 d.querySelectorAll('input').forEach(i => i.addEventListener('change', () => {
                     mapFilters[i.dataset.f] = i.checked;
                     if (lastMapData) renderLiveMap(lastMapData, false);
+                    if (lastTaxiData) renderTaxiMap(lastTaxiData);
                 }));
                 return d;
             };
@@ -3283,7 +3285,8 @@
                 seenC.add(c.courier_id);
                 bounds.push([c.lat, c.lng]);
                 const popup = `<b>${esc(c.full_name)}</b> ${transportEmoji(c.transport_type)}<br>${esc(c.phone_number)}<br>` +
-                    (c.busy ? `🛵 Buyurtma #${c.active_order_id}<br>📍 ${esc(c.active_order_address || '')}` : "🟢 Bo'sh") +
+                    (c.active_parcel_id ? `📮 Pochta #${c.active_parcel_id} — ${c.parcel_status === 'picked_up' ? 'yetkazmoqda' : 'olishga ketmoqda'}<br>📍 ${esc(c.parcel_address || '')}` :
+                        (c.busy ? `🛵 Buyurtma #${c.active_order_id}<br>📍 ${esc(c.active_order_address || '')}` : "🟢 Bo'sh")) +
                     `<br><span style="color:#64748b;font-size:11px">📡 ${ageText(c.age_seconds)}${c.stale ? ' (signal eski)' : ''}</span>`;
                 const icon = courierDivIcon(c.transport_type, c.busy, c.stale);
                 let m = courierMarkers[c.courier_id];
@@ -3310,6 +3313,7 @@
                     const pts = [[c.lat, c.lng], [c.dest_lat, c.dest_lng]];
                     if (routeLines[c.courier_id]) routeLines[c.courier_id].setLatLngs(pts);
                     else routeLines[c.courier_id] = L.polyline(pts, { color: '#dc2626', weight: 2.5, dashArray: '6 8', opacity: .8 });
+                    routeLines[c.courier_id].setStyle({ color: c.active_parcel_id ? '#d97706' : '#dc2626' });
                     if (!mapLayers.route.hasLayer(routeLines[c.courier_id])) routeLines[c.courier_id].addTo(mapLayers.route);
                 } else if (routeLines[c.courier_id]) { mapLayers.route.removeLayer(routeLines[c.courier_id]); }
             });
@@ -3364,17 +3368,118 @@
         function renderMapList(data) {
             const el = document.getElementById('admin-map-list');
             if (!el) return;
+            // ---- POCHTALAR (ichki pochta): olish (📤) va topshirish (📥) nuqtalari ----
+            const seenP = new Set();
+            (data.parcels || []).forEach(pr => {
+                const stL = { new: 'yangi', accepted: 'kuryer olishga ketmoqda', picked_up: 'yo\'lda' }[pr.status] || pr.status;
+                const mk = (key, lat, lng, emoji, label, addr) => {
+                    if (lat == null || lng == null) return;
+                    seenP.add(key); bounds.push([lat, lng]);
+                    const popup = `<b>📮 Pochta #${pr.parcel_id}</b> — ${esc(stL)}<br>${label}: ${esc(addr || '')}<br>${esc(pr.item || '')}${pr.receiver_name ? ' · ' + esc(pr.receiver_name) : ''}`;
+                    let m = parcelMarkers[key];
+                    if (m) m.getPopup().setContent(popup);
+                    else { m = L.marker([lat, lng], { icon: L.divIcon({ className: '', html: `<div style="font-size:18px;line-height:18px">${emoji}</div>`, iconSize: [20, 20], iconAnchor: [10, 10] }) }).bindPopup(popup); parcelMarkers[key] = m; }
+                    if (mapFilters.client) { if (!mapLayers.client.hasLayer(m)) m.addTo(mapLayers.client); } else mapLayers.client.removeLayer(m);
+                };
+                if (pr.status !== 'picked_up') mk('p' + pr.parcel_id, pr.pickup_lat, pr.pickup_lng, '📤', 'Olish', pr.pickup_address);
+                mk('d' + pr.parcel_id, pr.dropoff_lat, pr.dropoff_lng, '📥', 'Topshirish', pr.dropoff_address);
+            });
+            Object.keys(parcelMarkers).forEach(k => { if (!seenP.has(k)) { mapLayers.client.removeLayer(parcelMarkers[k]); delete parcelMarkers[k]; } });
+
             const rows = data.couriers.slice().sort((a, b) => (b.busy - a.busy) || String(a.full_name).localeCompare(String(b.full_name)));
             el.innerHTML = '<div class="zm-ml-title">🛵 Kuryerlar (' + rows.length + ')</div>' + (rows.length ? rows.map(c =>
                 `<button type="button" class="zm-ml-row" onclick="focusCourier(${c.courier_id})">
                     <span class="zm-dot ${c.stale ? 'st' : (c.busy ? 'bz' : 'fr')}"></span>
                     <span class="zm-ml-name">${esc(c.full_name)}</span>
-                    <span class="zm-ml-meta">${c.busy ? '#' + c.active_order_id : "bo'sh"} · ${ageText(c.age_seconds)}</span>
+                    <span class="zm-ml-meta">${c.active_parcel_id ? '📮#' + c.active_parcel_id : (c.busy ? '#' + c.active_order_id : "bo'sh")} · ${ageText(c.age_seconds)}</span>
                 </button>`).join('') : '<div class="zm-ml-empty">Hozircha online kuryer yo\'q</div>');
         }
         function focusCourier(id) {
             const m = courierMarkers[id];
             if (m && courierMap) { courierMap.setView(m.getLatLng(), Math.max(courierMap.getZoom(), 15)); m.openPopup(); }
+        }
+
+        function taxiDivIcon(busy, stale) {
+            const color = stale ? '#94a3b8' : (busy ? '#f97316' : '#eab308');
+            return L.divIcon({
+                html: `<div style="background:${color}; width:28px; height:28px; border-radius:8px; display:flex; align-items:center; justify-content:center; border:2px solid #fff; box-shadow:0 2px 6px rgba(0,0,0,.4); font-size:15px;">🚕</div>`,
+                className: '', iconSize: [28, 28], iconAnchor: [14, 14],
+            });
+        }
+        function riderDivIcon() {
+            return L.divIcon({
+                html: `<div style="background:#7c3aed; width:24px; height:24px; border-radius:50%; display:flex; align-items:center; justify-content:center; border:2px solid #fff; box-shadow:0 2px 6px rgba(0,0,0,.4); font-size:13px;">🧍</div>`,
+                className: '', iconSize: [24, 24], iconAnchor: [12, 12],
+            });
+        }
+        function renderTaxiMap(data) {
+            if (!courierMap || !TAXI_MAP) return;
+            ensureMapLayers();
+            const seenD = new Set(), seenR = new Set();
+            data.drivers.forEach(d => {
+                seenD.add(d.driver_id);
+                adminMapBounds.push([d.lat, d.lng]);
+                const popup = `<b>🚕 ${esc(d.full_name)}</b><br>${esc(d.phone)}<br>${esc(d.car)}<br>` +
+                    (d.busy ? `🧍 Safar #${d.ride_id} (yo'lovchi bilan)` : "🟢 Bo'sh, online") +
+                    `<br><span style="color:#64748b;font-size:11px">📡 ${ageText(d.age_seconds)}${d.stale ? ' (signal eski)' : ''}</span>`;
+                const icon = taxiDivIcon(d.busy, d.stale);
+                let m = taxiMarkers[d.driver_id];
+                if (m) { animateMarker('t' + d.driver_id, m, [d.lat, d.lng]); m.setIcon(icon); m.getPopup().setContent(popup); }
+                else { m = L.marker([d.lat, d.lng], { icon: icon, zIndexOffset: 900 }).bindPopup(popup); taxiMarkers[d.driver_id] = m; }
+                if (mapFilters.taxi) { if (!mapLayers.taxi.hasLayer(m)) m.addTo(mapLayers.taxi); } else mapLayers.taxi.removeLayer(m);
+                const tr = taxiTrails[d.driver_id] = taxiTrails[d.driver_id] || [];
+                const last = tr[tr.length - 1];
+                if (!last || last[0] !== d.lat || last[1] !== d.lng) tr.push([d.lat, d.lng]);
+                if (tr.length > 25) tr.shift();
+                if (taxiTrailLines[d.driver_id]) taxiTrailLines[d.driver_id].setLatLngs(tr);
+                else taxiTrailLines[d.driver_id] = L.polyline(tr, { color: '#eab308', weight: 3, opacity: .55 });
+                if (mapFilters.taxi) { if (!mapLayers.taxi.hasLayer(taxiTrailLines[d.driver_id])) taxiTrailLines[d.driver_id].addTo(mapLayers.taxi); } else mapLayers.taxi.removeLayer(taxiTrailLines[d.driver_id]);
+            });
+            Object.keys(taxiMarkers).forEach(id => {
+                if (!seenD.has(Number(id))) {
+                    mapLayers.taxi.removeLayer(taxiMarkers[id]); delete taxiMarkers[id];
+                    if (taxiTrailLines[id]) { mapLayers.taxi.removeLayer(taxiTrailLines[id]); delete taxiTrailLines[id]; }
+                    delete taxiTrails[id];
+                }
+            });
+            data.riders.forEach(r => {
+                seenR.add(r.ride_id);
+                adminMapBounds.push([r.lat, r.lng]);
+                const popup = `<b>🧍 Taksi mijozi</b> — ${esc(r.label)}<br>${esc(r.client_name)}${r.client_phone ? ' · ' + esc(r.client_phone) : ''}<br>` +
+                    `📍 ${esc(r.from || '')}<br>🏁 ${esc(r.to || '')}<br>💰 ${Math.round(r.price || 0).toLocaleString('ru-RU')} so'm` +
+                    (r.driver_name ? `<br>🚕 ${esc(r.driver_name)}` : '');
+                let m = riderMarkers[r.ride_id];
+                if (m) { animateMarker('r' + r.ride_id, m, [r.lat, r.lng]); m.getPopup().setContent(popup); }
+                else { m = L.marker([r.lat, r.lng], { icon: riderDivIcon(), zIndexOffset: 800 }).bindPopup(popup); riderMarkers[r.ride_id] = m; }
+                if (mapFilters.rider) { if (!mapLayers.rider.hasLayer(m)) m.addTo(mapLayers.rider); } else mapLayers.rider.removeLayer(m);
+                // yo'l chizig'i: mashina -> (mijoz yoki manzil)
+                const drv = r.driver_id != null ? data.drivers.find(x => x.driver_id === r.driver_id) : null;
+                if (drv && r.dest_lat != null && r.dest_lng != null) {
+                    const pts = [[drv.lat, drv.lng], [r.dest_lat, r.dest_lng]];
+                    if (taxiRouteLines[r.ride_id]) taxiRouteLines[r.ride_id].setLatLngs(pts);
+                    else taxiRouteLines[r.ride_id] = L.polyline(pts, { color: '#7c3aed', weight: 2.5, dashArray: '6 8', opacity: .8 });
+                    if (mapFilters.rider && !mapLayers.route.hasLayer(taxiRouteLines[r.ride_id])) taxiRouteLines[r.ride_id].addTo(mapLayers.route);
+                    if (!mapFilters.rider) mapLayers.route.removeLayer(taxiRouteLines[r.ride_id]);
+                } else if (taxiRouteLines[r.ride_id]) { mapLayers.route.removeLayer(taxiRouteLines[r.ride_id]); delete taxiRouteLines[r.ride_id]; }
+            });
+            Object.keys(riderMarkers).forEach(id => {
+                if (!seenR.has(Number(id))) {
+                    mapLayers.rider.removeLayer(riderMarkers[id]); delete riderMarkers[id];
+                    if (taxiRouteLines[id]) { mapLayers.route.removeLayer(taxiRouteLines[id]); delete taxiRouteLines[id]; }
+                }
+            });
+            const set = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
+            set('ml-t', data.drivers.length); set('ml-r', data.riders.length);
+            const countEl = document.getElementById('courier-map-count');
+            if (countEl && !/taksi/.test(countEl.textContent)) countEl.textContent += ` · ${data.drivers.length} ta taksi · ${data.riders.length} ta taksi mijozi`;
+        }
+        function refreshTaxiLocations(force) {
+            if (!TAXI_MAP || (document.hidden && !force)) return;
+            const url = '/admin/taxi/live-locations' + (ADMIN_ACTIVE_CITY_ID !== null ? ('?city_id=' + ADMIN_ACTIVE_CITY_ID) : '');
+            fetch(url, { credentials: 'same-origin', cache: 'no-store' })
+                .then(res => res.ok ? res.json() : null)
+                .then(data => { if (data) { lastTaxiData = data; if (lastMapData) renderLiveMap(lastMapData, false); renderTaxiMap(data); } })
+                .catch(e => console.error('Taksi xaritasini yangilashda xatolik', e));
         }
 
         function refreshCourierLocations(force) {
@@ -3396,7 +3501,7 @@
                         if (dot) {
                             dot.classList.remove('bg-gray-300');
                             dot.classList.add(c.busy ? 'bg-red-500' : 'bg-green-500');
-                            dot.title = c.busy ? `Yo'lda — buyurtma #${c.active_order_id}` : "Bo'sh, online";
+                            dot.title = c.busy ? (c.active_parcel_id ? `Yo'lda — pochta #${c.active_parcel_id}` : `Yo'lda — buyurtma #${c.active_order_id}`) : "Bo'sh, online";
                         }
                     });
 
@@ -3404,6 +3509,7 @@
                     if (countEl) countEl.textContent = `${data.couriers.length} ta kuryer · ${data.partners.length} ta hamkor · ${data.active_clients.length} ta faol buyurtma · ${new Date().toLocaleTimeString('uz-UZ')}`;
 
                     renderLiveMap(data, true);
+                    if (lastTaxiData) renderTaxiMap(lastTaxiData);
                 })
                 .catch(e => {
                     console.error('Kuryerlar xaritasini yangilashda xatolik', e);
@@ -3411,7 +3517,7 @@
                     if (countEl && Date.now() - mapLastOk > 15000) countEl.textContent = '⚠️ Aloqa uzildi — qayta ulanmoqda...';
                 });
         }
-        document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshCourierLocations(true); });
+        document.addEventListener('visibilitychange', () => { if (!document.hidden) { refreshCourierLocations(true); refreshTaxiLocations(true); } });
 
         function showCourierOnMap(courierId) {
             showPage('kuryerlar');
@@ -3785,6 +3891,53 @@
         });
 
 
+        // ==================== MOLIYAVIY HISOBOT (faqat OWNER): davr tanlash, ochish/yopish ====================
+        const FIN_LABELS = { D1: 'Kunlik (bugun)', M1: 'Oylik (shu oy)', M3: '3 oylik', M6: '6 oylik', Y1: '1 yillik', Y3: '3 yillik', Y5: '5 yillik' };
+        let finPeriod = 'D1', finOpen = true;
+        try { finPeriod = FIN_LABELS[localStorage.getItem('admin_fin_period')] ? localStorage.getItem('admin_fin_period') : 'D1'; finOpen = localStorage.getItem('admin_fin_open') !== '0'; } catch (e) {}
+        function finSom(v) { return Math.round(v || 0).toLocaleString('ru-RU').replace(/,/g, ' ') + " so'm"; }
+        function finRow(label, val, extra, cls) {
+            return '<div class="flex justify-between ' + (cls || '') + '"><span class="' + (cls ? '' : 'text-gray-500') + '">' + label + '</span><span class="font-semibold">' + val + (extra || '') + '</span></div>';
+        }
+        function renderFinance() {
+            const card = document.getElementById('fin-card');
+            if (!card) return;
+            document.querySelectorAll('#fin-periods [data-p]').forEach(b => b.classList.toggle('active', b.dataset.p === finPeriod));
+            document.getElementById('fin-body').style.display = finOpen ? '' : 'none';
+            document.getElementById('fin-toggle').textContent = finOpen ? '▾ Yopish' : '▸ Ochish';
+            if (!finOpen) return;
+            const sep = ADMIN_ACTIVE_CITY_ID !== null ? ('&city_id=' + ADMIN_ACTIVE_CITY_ID) : '';
+            fetch('/admin/analytics/finance.json?period=' + finPeriod + sep, { credentials: 'same-origin' })
+                .then(r => r.ok ? r.json() : null)
+                .then(d => {
+                    if (!d) return;
+                    document.getElementById('fin-range').textContent = '· ' + FIN_LABELS[d.period] + ' · ' + d.from + (d.from !== d.to ? ' — ' + d.to : '');
+                    const t = FIN_LABELS[d.period].split(' (')[0];
+                    document.getElementById('fin-rows').innerHTML =
+                        finRow('Yetkazilgan buyurtmalar', d.order_count + ' ta') +
+                        finRow('📮 Yetkazilgan pochtalar', d.parcel_count + ' ta') +
+                        finRow('🚕 Taksi safarlari', d.taxi_count + ' ta') +
+                        finRow('🛵 Kuryerlar haqi', finSom(d.courier_pay), d.courier_pay_parcels ? ' <span class="text-[11px] opacity-60">(shundan pochta: ' + finSom(d.courier_pay_parcels) + ')</span>' : '') +
+                        finRow('🏪 Hamkorlar haqi', finSom(d.partner_pay)) +
+                        finRow('🚕 Taksichilar haqi', finSom(d.taxi_driver_pay)) +
+                        finRow('🏷️ Komissiya daromadi', finSom(d.commission_income)) +
+                        finRow('🚕 Taksi komissiyasi daromadi', finSom(d.taxi_commission)) +
+                        finRow('🚚 Yetkazishdan sof haq', finSom(d.delivery_income)) +
+                        finRow('📮 Pochta yetkazishdan sof haq', finSom(d.parcel_net)) +
+                        '<div class="flex justify-between border-t pt-2 mt-2 dark:border-gray-700"><span class="font-bold">💰 ' + t + ' sof daromad</span><span class="font-bold text-green-600">' + finSom(d.net_profit) + '</span></div>' +
+                        '<div class="flex justify-between text-red-600"><span>❌ Bekor qilingan (' + d.loss_count + ' ta)</span><span class="font-semibold">−' + finSom(d.loss_amount) + '</span></div>';
+                })
+                .catch(e => console.error('Moliyaviy hisobot yuklanmadi', e));
+        }
+        document.addEventListener('click', function (ev) {
+            const pb = ev.target.closest && ev.target.closest('#fin-periods [data-p]');
+            if (pb) { finPeriod = pb.dataset.p; try { localStorage.setItem('admin_fin_period', finPeriod); } catch (e) {} renderFinance(); return; }
+            if (ev.target.closest && ev.target.closest('#fin-toggle')) { finOpen = !finOpen; try { localStorage.setItem('admin_fin_open', finOpen ? '1' : '0'); } catch (e) {} renderFinance(); }
+        });
+        document.addEventListener('DOMContentLoaded', function () {
+            if (document.getElementById('fin-card')) { renderFinance(); setInterval(function () { if (finOpen && !document.hidden) renderFinance(); }, 30000); }
+        });
+
         // ---- TRANZAKSIYALAR: Kuryer/Hamkor bo'yicha filtr ----
         function formatSom(n) {
             const sign = n < 0 ? '−' : '+';
@@ -3872,6 +4025,7 @@
             if (document.getElementById('courier-map')) initCourierMap();
             refreshCourierLocations();
             setInterval(refreshCourierLocations, 3000);
+            if (TAXI_MAP) { refreshTaxiLocations(true); setInterval(refreshTaxiLocations, 3000); }
 
             refreshOrders();
             setInterval(refreshOrders, 5000);
