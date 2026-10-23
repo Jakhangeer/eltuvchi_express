@@ -37,6 +37,7 @@ from telegram_bot import (
     get_bot_username,
 )
 from models import (
+    CitySetting,
     CityRatingBonus,
     OrderRating,
     SupportMessage,
@@ -377,6 +378,113 @@ if not SESSION_SECRET_KEY:
 
 # DIQQAT: https_only (Secure cookie) ATAYLAB qo'yilmagan — http orqali (lokal tarmoq, proksi ortida) ochilganda
 # brauzer cookie'ni rad etib, foydalanuvchini qayta-qayta login oynasiga qaytarar edi.
+# ==================== SHAHAR BO'YICHA SOZLAMALAR (CitySetting) ====================
+# Yetkazish haqi, ichki pochta, tumanlararo pochta, magistral va shahar taksisi sozlamalari har bir shahar
+# uchun ALOHIDA qo'yilishi mumkin. Shahar uchun qiymat qo'yilmagan bo'lsa — umumiy (SystemSetting) qiymat ishlatiladi.
+# Joriy shahar so'rov bo'yicha aniqlanadi (_CITY_CTX): OWNER — yuqoridan tanlagan shahar (?city_id=), operator —
+# biriktirilgan shahri, terminal operatori — terminal shahri, boshqalar (mijoz/kuryer/haydovchi) — o'z shahri.
+import contextvars as _ctxv
+import time as _time_mod
+from enum import Enum as _PyEnum
+_CITY_CTX = _ctxv.ContextVar("zm_city_ctx", default=None)
+_AUTO = object()
+CITY_SETTING_KEYS = frozenset({
+    # Yetkazish haqi
+    "base_delivery_fee", "weather_condition", "weather_multiplier", "auto_weather_pricing",
+    "km_pricing_enabled", "km_base_radius", "km_base_price", "km_extra_price", "km_road_factor",
+    "courier_delivery_per_km", "courier_pickup_per_km",
+    # Shahar ichki pochta
+    "parcel_enabled", "parcel_base_fee", "parcel_per_km", "parcel_medium_fee", "parcel_large_fee", "parcel_courier_percent", "parcel_max_km",
+    # Tumanlararo pochta
+    "express_enabled", "express_courier_base", "express_courier_per_km", "express_courier_percent", "express_default_leg_km", "express_max_leg_km",
+    "ic_platform_percent", "ic_free_days", "ic_storage_fee_day", "ic_max_days", "ic_max_value",
+    # Magistral taksi
+    "taxi_magistral_enabled", "mag_radius_m", "mag_stale_min", "mag_commission_percent", "mag_min_deposit", "mag_seat_small", "mag_seat_medium", "mag_seat_large",
+    # Shahar taksisi
+    "taxi_local_enabled", "taxi_commission_percent", "taxi_bid_seconds", "taxi_max_bids", "taxi_radius_km", "taxi_base_fare", "taxi_per_km",
+    "taxi_min_balance", "taxi_stale_min", "taxi_pool_discount", "taxi_pool_max", "taxi_pool_pickup_km", "taxi_pool_detour_km",
+    "rating_block_below", "rating_min_count",
+})
+
+
+class _CitySettingView:
+    """SystemSetting ustidan shahar override'lari: o'qishda override bo'lsa shuni, bo'lmasa umumiyni qaytaradi;
+    yozishda shahar kalitlari CitySetting qatoriga, qolganlari umumiy SystemSetting'ga yoziladi."""
+    __slots__ = ("_b", "_db", "_city", "_rows")
+
+    def __init__(self, base, db, city_id, rows):
+        object.__setattr__(self, "_b", base)
+        object.__setattr__(self, "_db", db)
+        object.__setattr__(self, "_city", city_id)
+        object.__setattr__(self, "_rows", rows)
+
+    def __getattr__(self, name):
+        if name in CITY_SETTING_KEYS:
+            row = self._rows.get(name)
+            if row is not None:
+                v = json.loads(row.value)
+                if name == "weather_condition" and v is not None:
+                    try:
+                        return WeatherCondition(v)
+                    except Exception:
+                        return getattr(self._b, name)
+                return v
+        return getattr(self._b, name)
+
+    def __setattr__(self, name, value):
+        if name in CITY_SETTING_KEYS:
+            enc = json.dumps(value.value if isinstance(value, _PyEnum) else value)
+            row = self._rows.get(name)
+            if row is None:
+                row = CitySetting(city_id=self._city, key=name, value=enc)
+                self._db.add(row)
+                self._rows[name] = row
+            else:
+                row.value = enc
+        else:
+            setattr(self._b, name, value)
+
+
+_CITY_USER_CACHE: dict = {}
+
+
+async def _city_of_session_user(uid: int, request) -> Optional[int]:
+    """So'rov egasining shahri (60 soniya keshlanadi). OWNER uchun — tanlangan `?city_id=`."""
+    now = _time_mod.time()
+    hit = _CITY_USER_CACHE.get(uid)
+    if not hit or hit[2] < now:
+        async with AsyncSessionLocal() as s:
+            u = (await s.execute(select(User.role, User.city_id).where(User.id == uid))).first()
+            if not u:
+                return None
+            role, city = u
+            if role not in (UserRole.OWNER, UserRole.ADMIN):
+                op = (await s.execute(select(Terminal.city_id).join(TerminalOperator, TerminalOperator.terminal_id == Terminal.id).where(
+                    TerminalOperator.user_id == uid, TerminalOperator.is_active == True))).first()
+                td = (await s.execute(select(TaxiDriver.city_id).where(TaxiDriver.user_id == uid))).first()
+                ed = (await s.execute(select(ExpressDriver.city_id).where(ExpressDriver.user_id == uid))).first()
+                city = (op[0] if op else None) or (td[0] if td else None) or (ed[0] if ed else None) or city
+        hit = (role, city, now + 60)
+        _CITY_USER_CACHE[uid] = hit
+    role, city, _ = hit
+    if role == UserRole.OWNER:
+        q = request.query_params.get("city_id")
+        return int(q) if q and q.isdigit() else None
+    return city
+
+
+@app.middleware("http")
+async def _city_ctx_middleware(request: Request, call_next):
+    try:
+        if not request.url.path.startswith(("/static", "/favicon")):
+            uid = request.session.get("user_id")
+            if uid:
+                _CITY_CTX.set(await _city_of_session_user(uid, request))
+    except Exception as _e:
+        print(f"city ctx: {_e}")
+    return await call_next(request)
+
+
 app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET_KEY, same_site="lax", max_age=60 * 60 * 24 * 30)
 
 
@@ -625,11 +733,25 @@ async def get_panel_user(request: Request, db: AsyncSession = Depends(get_db)):
     return await get_current_admin_user(request, db)
 
 
+def _set_owner_city(request: Request, user) -> None:
+    """OWNER yuqoridagi shahar almashtirgichdan shahar tanlaganda (`?city_id=`) — barcha admin API'lar
+    shu shahar doirasida ishlaydi. Operator uchun e'tiborga olinmaydi (u o'z shahriga biriktirilgan)."""
+    if getattr(user, "role", None) == UserRole.OWNER:
+        cid = request.query_params.get("city_id")
+        user._owner_city_id = int(cid) if cid and cid.isdigit() else None
+
+
+async def _owner_city_dep(request: Request, user: User = Depends(get_current_admin_user)):
+    _set_owner_city(request, user)
+    return user
+
+
 async def require_magistral(request: Request, db: AsyncSession = Depends(get_db)):
     """Magistral logistika: OWNER, "magistral" ruxsati berilgan operator yoki terminal operatori."""
     user = await get_panel_user(request, db)
     if getattr(user, "_is_terminal_op", False):
         return user
+    _set_owner_city(request, user)
     if not await operator_can_see(db, user, "magistral"):
         raise HTTPException(status_code=403, detail="Bu bo'limni ko'rish huquqingiz yo'q — administrator bilan bog'laning.")
     return user
@@ -638,7 +760,7 @@ async def require_magistral(request: Request, db: AsyncSession = Depends(get_db)
 admin_router = APIRouter(tags=["Admin Dashboard"])
 settings_router = APIRouter(
     prefix="/admin/settings", tags=["Tizim Sozlamalari"], dependencies=[Depends(require_owner)]
-)
+)   # OWNER tanlagan shahar — middleware (_CITY_CTX) orqali aniqlanadi
 orders_router = APIRouter(
     prefix="/admin/orders", tags=["Buyurtmalar Boshqaruvi"], dependencies=[Depends(require_section("buyurtmalar"))]
 )
@@ -1025,8 +1147,7 @@ async def admin_dashboard(
     orders = orders_query.scalars().all()
 
     # ---- TIZIM SOZLAMASI ----
-    setting_query = await db.execute(select(SystemSetting))
-    system_setting = setting_query.scalars().first()
+    system_setting = await _get_or_create_setting(db, active_city_id)
 
     if system_setting:
         suggested_delivery_fee = system_setting.base_delivery_fee * system_setting.weather_multiplier
@@ -1448,28 +1569,16 @@ async def update_settings(
     if not (1 <= max_cards_per_courier <= 20) or not (1 <= max_cards_per_partner <= 20):
         raise HTTPException(status_code=400, detail="Karta soni chegarasi 1 dan 20 gacha bo'lishi kerak")
 
-    setting_query = await db.execute(select(SystemSetting))
-    setting = setting_query.scalars().first()
-
-    if not setting:
-        setting = SystemSetting(
-            base_delivery_fee=base_fee,
-            weather_condition=weather_enum,
-            weather_multiplier=weather_multiplier,
-            service_commission_percent=service_commission_percent,
-            courier_share_percent=courier_share_percent,
-            max_cards_per_courier=max_cards_per_courier,
-            max_cards_per_partner=max_cards_per_partner,
-        )
-        db.add(setting)
-    else:
-        setting.base_delivery_fee = base_fee
-        setting.weather_condition = weather_enum
-        setting.weather_multiplier = weather_multiplier
-        setting.service_commission_percent = service_commission_percent
-        setting.courier_share_percent = courier_share_percent
-        setting.max_cards_per_courier = max_cards_per_courier
-        setting.max_cards_per_partner = max_cards_per_partner
+    # Shahar tanlangan bo'lsa — yetkazish haqi va km sozlamalari FAQAT shu shaharga yoziladi (CitySetting);
+    # komissiya, kuryer ulushi, karta limiti, AI kabi umumiy sozlamalar esa hamma shaharga umumiy.
+    setting = await _get_or_create_setting(db)
+    setting.base_delivery_fee = base_fee
+    setting.weather_condition = weather_enum
+    setting.weather_multiplier = weather_multiplier
+    setting.service_commission_percent = service_commission_percent
+    setting.courier_share_percent = courier_share_percent
+    setting.max_cards_per_courier = max_cards_per_courier
+    setting.max_cards_per_partner = max_cards_per_partner
 
     # ---- Masofa (km) sozlamalari — mavjud sozlamalar yonida YANGI blok ----
     if km_form:
@@ -1506,7 +1615,29 @@ async def update_settings(
             setting.ai_delay_promo_amount = ai_delay_promo_amount
 
     await db.commit()
-    return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
+    _cc = _CITY_CTX.get()
+    return RedirectResponse(url=(f"/admin?city_id={_cc}" if _cc else "/admin"), status_code=status.HTTP_303_SEE_OTHER)
+
+
+@settings_router.get("/city-overrides")
+async def city_overrides_info(db: AsyncSession = Depends(get_db)):
+    """Tanlangan shahar uchun nechta alohida sozlama qo'yilgani."""
+    cid = _CITY_CTX.get()
+    if cid is None:
+        return {"city_id": None, "count": 0, "keys": []}
+    keys = [k for (k,) in (await db.execute(select(CitySetting.key).where(CitySetting.city_id == cid))).all()]
+    return {"city_id": cid, "count": len(keys), "keys": keys}
+
+
+@settings_router.post("/city-reset")
+async def city_overrides_reset(db: AsyncSession = Depends(get_db)):
+    """Tanlangan shaharning alohida sozlamalarini o'chiradi — shahar umumiy qiymatlarga qaytadi."""
+    cid = _CITY_CTX.get()
+    if cid is None:
+        raise HTTPException(status_code=400, detail="Avval shaharni tanlang")
+    await db.execute(delete(CitySetting).where(CitySetting.city_id == cid))
+    await db.commit()
+    return {"ok": True}
 
 
 # Faqat shu formatlarga ruxsat — boshqa fayl turlari (masalan .exe, .php)
@@ -1743,13 +1874,18 @@ async def validate_promo_for_client(db: AsyncSession, code: str, client: User, l
     return promo, None
 
 
-async def _get_or_create_setting(db: AsyncSession) -> SystemSetting:
+async def _get_or_create_setting(db: AsyncSession, city_id=_AUTO):
+    """Umumiy sozlama; joriy shahar (yoki city_id) uchun override'lar bo'lsa — ular ustiga qo'yilgan ko'rinish."""
     result = await db.execute(select(SystemSetting))
     setting = result.scalars().first()
     if not setting:
         setting = SystemSetting()
         db.add(setting)
-    return setting
+    cid = _CITY_CTX.get() if city_id is _AUTO else city_id
+    if cid is None:
+        return setting
+    rows = (await db.execute(select(CitySetting).where(CitySetting.city_id == cid))).scalars().all()
+    return _CitySettingView(setting, db, cid, {r.key: r for r in rows})
 
 
 async def _validate_assignable_courier(db: AsyncSession, courier_id: int) -> None:
@@ -2686,8 +2822,7 @@ async def create_order(
             detail=f"Bu do'konda minimal buyurtma summasi {partner_for_city.min_order_amount:.0f} so'm",
         )
 
-    setting_query = await db.execute(select(SystemSetting))
-    setting = setting_query.scalars().first()
+    setting = await _get_or_create_setting(db, partner_for_city.city_id)   # yetkazish haqi do'kon shahri bo'yicha
     delivery_fee = setting.base_delivery_fee * setting.weather_multiplier if setting else 10000.0
 
     new_order = Order(
@@ -5644,10 +5779,10 @@ async def shop_delivery_quote(body: DeliveryQuoteBody, db: AsyncSession = Depend
     """Savatda mijozga yetkazish narxini (masofa bo'yicha) ko'rsatish uchun.
     Buyurtma yaratilganda narx baribir serverda QAYTA hisoblanadi."""
     _get_telegram_user_or_403(body.init_data)
-    setting = await _get_or_create_setting(db)
     partner = (await db.execute(select(PartnerProfile).where(PartnerProfile.id == body.partner_id))).scalars().first()
     if not partner:
         raise HTTPException(status_code=404, detail="Do'kon topilmadi")
+    setting = await _get_or_create_setting(db, partner.city_id)   # do'kon shahri bo'yicha narx
     km = _road_km(setting, partner.latitude, partner.longitude, body.lat, body.lng)
     fee = compute_delivery_fee(setting, km)
     return {
@@ -5750,8 +5885,7 @@ async def shop_create_order(body: ShopOrderBody, db: AsyncSession = Depends(get_
         remaining_after_promo = max(total_price - discount_amount, 0)
         cashback_used = min(client.cashback_balance, remaining_after_promo)
 
-    setting_result = await db.execute(select(SystemSetting))
-    setting = setting_result.scalars().first()
+    setting = await _get_or_create_setting(db, partner.city_id)   # yetkazish haqi do'kon shahri bo'yicha
     delivery_fee = (setting.base_delivery_fee * setting.weather_multiplier) if setting else 10000.0
 
     # Mijoz Mini App ichida yuborgan GPS koordinatasi (shop.html'dagi
@@ -9265,7 +9399,7 @@ async def courier_parcel_delivered(pid: int, body: ParcelCodeBody, db: AsyncSess
 
 
 # ---- Owner / operator paneli ----
-admin_parcel_router = APIRouter(prefix="/admin/pochta", tags=["Pochta boshqaruvi"])
+admin_parcel_router = APIRouter(prefix="/admin/pochta", tags=["Pochta boshqaruvi"], dependencies=[Depends(_owner_city_dep)])
 
 
 def _parcel_admin_dict(o: ParcelOrder) -> dict:
@@ -9282,7 +9416,16 @@ def _parcel_admin_dict(o: ParcelOrder) -> dict:
 def _parcel_scope(current_user: User):
     if getattr(current_user, "_is_terminal_op", False):
         return current_user._term_city_id
-    return current_user.city_id if is_scoped_to_city(current_user) else None
+    if is_scoped_to_city(current_user):
+        return current_user.city_id
+    return getattr(current_user, "_owner_city_id", None)   # OWNER tanlagan shahar (None — barcha shaharlar)
+
+
+def _need_city(current_user: User, city_id) -> None:
+    """Shahar tanlangan (yoki operator) bo'lsa — faqat shu shaharga tegishli o'zgartirish ruxsat etiladi."""
+    sc = _parcel_scope(current_user)
+    if sc is not None and city_id is not None and city_id != sc:
+        raise HTTPException(status_code=403, detail="Tanlangan shahar doirasidan tashqarida o'zgartirish kiritib bo'lmaydi")
 
 
 @admin_parcel_router.get("/list")
@@ -10546,6 +10689,7 @@ class IcTerminalBody(BaseModel):
 
 @admin_express_router.post("/terminal")
 async def admin_ic_terminal(body: IcTerminalBody, db: AsyncSession = Depends(get_db), owner: User = Depends(require_owner)):
+    _need_city(owner, body.city_id)
     if len(body.name.strip()) < 2 or len(body.address.strip()) < 3:
         raise HTTPException(status_code=400, detail="Nom va manzilni kiriting")
     if body.lat is not None and not (-90 <= body.lat <= 90 and -180 <= (body.lng or 0) <= 180):
@@ -10565,8 +10709,10 @@ async def admin_ic_terminal(body: IcTerminalBody, db: AsyncSession = Depends(get
 @admin_express_router.post("/operators/create")
 async def admin_ic_operator_create(full_name: str = Form(...), phone_number: str = Form(...), password: str = Form(...), terminal_id: int = Form(...),
                                    db: AsyncSession = Depends(get_db), owner: User = Depends(require_owner)):
-    if not (await db.execute(select(Terminal.id).where(Terminal.id == terminal_id))).first():
+    _tc = (await db.execute(select(Terminal.city_id).where(Terminal.id == terminal_id))).first()
+    if not _tc:
         raise HTTPException(status_code=404, detail="Terminal topilmadi")
+    _need_city(owner, _tc[0])
     u = await find_or_create_login_user(db, phone_number, password, full_name, None)
     if (await db.execute(select(TerminalOperator.id).where(TerminalOperator.user_id == u.id))).first():
         raise HTTPException(status_code=400, detail="Bu foydalanuvchi allaqachon terminal operatori")
@@ -10589,6 +10735,30 @@ async def admin_ic_operator_active(uid: int, body: IcToggle, db: AsyncSession = 
     return {"ok": True}
 
 
+@admin_express_router.post("/operators/{uid}/delete")
+async def admin_ic_operator_delete(uid: int, db: AsyncSession = Depends(get_db), owner: User = Depends(require_owner)):
+    """Terminal operatorini butunlay o'chirish: terminal biriktirilishi o'chadi. Agar bu foydalanuvchining
+    boshqa roli/profili bo'lmasa (oddiy login-akkaunt), akkauntning o'zi ham o'chiriladi; aks holda akkaunt
+    saqlanadi (boshqa rollari ishlashda qoladi)."""
+    op = (await db.execute(select(TerminalOperator).where(TerminalOperator.user_id == uid))).scalars().first()
+    if not op:
+        raise HTTPException(status_code=404, detail="Operator topilmadi")
+    await db.delete(op)
+    await db.commit()
+    user_deleted = False
+    u = (await db.execute(select(User).options(selectinload(User.courier_profile), selectinload(User.partner_profile)).where(User.id == uid))).scalars().first()
+    if u and u.role == UserRole.CLIENT and not u.courier_profile and not u.partner_profile \
+            and not (await db.execute(select(ExpressDriver.id).where(ExpressDriver.user_id == uid))).first() \
+            and not (await db.execute(select(TaxiDriver.id).where(TaxiDriver.user_id == uid))).first():
+        try:
+            await db.delete(u)
+            await db.commit()
+            user_deleted = True
+        except Exception:
+            await db.rollback()   # akkauntga boshqa yozuvlar bog'langan — akkaunt saqlanadi
+    return {"ok": True, "user_deleted": user_deleted}
+
+
 class IcHubBody(BaseModel):
     city_id: int
     lat: Optional[float] = None
@@ -10606,6 +10776,9 @@ class IcFareBody(BaseModel):
 
 @admin_express_router.post("/fare")
 async def admin_ic_fare(body: IcFareBody, db: AsyncSession = Depends(get_db), owner: User = Depends(require_owner)):
+    _sc = _parcel_scope(owner)
+    if _sc is not None and _sc not in (body.from_city_id, body.to_city_id):
+        raise HTTPException(status_code=403, detail="Narx tanlangan shaharga tegishli bo'lishi kerak")
     if body.from_city_id == body.to_city_id or min(body.price_small, body.price_medium, body.price_large) < 0 or max(body.price_small, body.price_medium, body.price_large) > 100_000_000:
         raise HTTPException(status_code=400, detail="Qiymatlar noto'g'ri")
     f = (await db.execute(select(ExpressFare).where(ExpressFare.from_city_id == body.from_city_id, ExpressFare.to_city_id == body.to_city_id))).scalars().first()
@@ -10620,7 +10793,11 @@ async def admin_ic_fare(body: IcFareBody, db: AsyncSession = Depends(get_db), ow
 
 @admin_express_router.post("/fare/{fid}/delete")
 async def admin_ic_fare_delete(fid: int, db: AsyncSession = Depends(get_db), owner: User = Depends(require_owner)):
-    await db.execute(delete(ExpressFare).where(ExpressFare.id == fid))
+    _sc = _parcel_scope(owner)
+    _q = delete(ExpressFare).where(ExpressFare.id == fid)
+    if _sc is not None:
+        _q = _q.where(or_(ExpressFare.from_city_id == _sc, ExpressFare.to_city_id == _sc))
+    await db.execute(_q)
     await db.commit()
     return {"ok": True}
 
@@ -10629,6 +10806,9 @@ async def admin_ic_fare_delete(fid: int, db: AsyncSession = Depends(get_db), own
 async def admin_ic_driver_create(full_name: str = Form(...), phone_number: str = Form(...), password: str = Form(...),
                                  car_model: str = Form(""), car_plate: str = Form(""), city_id: Optional[int] = Form(None),
                                  db: AsyncSession = Depends(get_db), owner: User = Depends(require_owner)):
+    if city_id is None:
+        city_id = _parcel_scope(owner)   # shahar tanlangan bo'lsa — haydovchi shu shaharga biriktiriladi
+    _need_city(owner, city_id)
     if city_id is not None and not (await db.execute(select(City.id).where(City.id == city_id))).first():
         raise HTTPException(status_code=404, detail="Shahar topilmadi")
     u = await find_or_create_login_user(db, phone_number, password, full_name, city_id)
@@ -11265,6 +11445,9 @@ class MagRouteBody(BaseModel):
 
 @admin_mag_router.post("/route")
 async def admin_mag_route(body: MagRouteBody, db: AsyncSession = Depends(get_db), owner: User = Depends(require_owner)):
+    _sc = _parcel_scope(owner)
+    if _sc is not None and _sc not in (body.from_city_id, body.to_city_id):
+        raise HTTPException(status_code=403, detail="Yo'nalish tanlangan shaharga tegishli bo'lishi kerak")
     if body.from_city_id == body.to_city_id or not (0 < body.seat_price <= 100_000_000) or not (0 <= body.min_income <= 1_000_000_000):
         raise HTTPException(status_code=400, detail="Qiymatlar noto'g'ri")
     r = (await db.execute(select(MagRoute).where(MagRoute.from_city_id == body.from_city_id, MagRoute.to_city_id == body.to_city_id))).scalars().first()
@@ -11278,7 +11461,11 @@ async def admin_mag_route(body: MagRouteBody, db: AsyncSession = Depends(get_db)
 
 @admin_mag_router.post("/route/{rid}/delete")
 async def admin_mag_route_delete(rid: int, db: AsyncSession = Depends(get_db), owner: User = Depends(require_owner)):
-    await db.execute(delete(MagRoute).where(MagRoute.id == rid))
+    _sc = _parcel_scope(owner)
+    _q = delete(MagRoute).where(MagRoute.id == rid)
+    if _sc is not None:
+        _q = _q.where(or_(MagRoute.from_city_id == _sc, MagRoute.to_city_id == _sc))
+    await db.execute(_q)
     await db.commit()
     return {"ok": True}
 
@@ -11848,7 +12035,7 @@ async def taxi_driver_cancel(rid: int, db: AsyncSession = Depends(get_db), user:
 
 
 # ---------------- Admin ----------------
-admin_taxi_router = APIRouter(prefix="/admin/taxi", tags=["Ichki taksi boshqaruvi"])
+admin_taxi_router = APIRouter(prefix="/admin/taxi", tags=["Ichki taksi boshqaruvi"], dependencies=[Depends(_owner_city_dep)])
 
 
 @admin_taxi_router.get("/overview")
@@ -11899,6 +12086,7 @@ async def admin_taxi_settings(commission: float = Form(10.0, allow_inf_nan=False
 @admin_taxi_router.post("/drivers/create")
 async def admin_taxi_driver_create(full_name: str = Form(...), phone_number: str = Form(...), password: str = Form(...), city_id: int = Form(...),
                                    car_model: str = Form(""), car_plate: str = Form(""), gender: str = Form(""), db: AsyncSession = Depends(get_db), owner: User = Depends(require_owner)):
+    _need_city(owner, city_id)
     if not (await db.execute(select(City.id).where(City.id == city_id))).first():
         raise HTTPException(status_code=404, detail="Shahar topilmadi")
     u = await find_or_create_login_user(db, phone_number, password, full_name, city_id)

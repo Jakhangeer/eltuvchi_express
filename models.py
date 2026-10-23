@@ -1,6 +1,6 @@
 import enum
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Float, Boolean, ForeignKey, DateTime, Date, Enum, Text, LargeBinary
+from sqlalchemy import Column, Integer, String, Float, Boolean, ForeignKey, DateTime, Date, Enum, Text, LargeBinary, UniqueConstraint
 from sqlalchemy.orm import relationship
 from database import Base
 
@@ -963,6 +963,19 @@ class ParcelOrder(Base):
 
     client = relationship("User", foreign_keys=[client_id])
     courier = relationship("User", foreign_keys=[courier_id])
+
+
+class CitySetting(Base):
+    """Shahar bo'yicha sozlama (SystemSetting ustidan override). Qator yo'q bo'lsa — umumiy qiymat ishlatiladi.
+    value — JSON ko'rinishida (son, bool, matn yoki enum qiymati)."""
+    __tablename__ = "city_settings"
+    __table_args__ = (UniqueConstraint("city_id", "key", name="uq_city_setting"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    city_id = Column(Integer, ForeignKey("cities.id", ondelete="CASCADE"), nullable=False, index=True)
+    key = Column(String, nullable=False)
+    value = Column(Text, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class ExpressDriver(Base):

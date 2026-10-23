@@ -274,6 +274,33 @@
         body.dark .zm-top-tab.active { background: linear-gradient(135deg, #4f46e5, #6366f1); color: #fff; }
         @media (max-width: 640px) { .zm-top-tab { font-size: .85rem; padding: .7rem .5rem; } }
     </style>
+    <script>
+    // OWNER shahar tanlaganda (?city_id=X) magistral/pochta/taksi API so'rovlariga shu shahar avtomatik qo'shiladi
+    (function () {
+        var cid = new URLSearchParams(location.search).get('city_id');
+        if (!cid || !/^\d+$/.test(cid)) return;
+        var of = window.fetch;
+        window.fetch = function (u, o) {
+            try {
+                if (typeof u === 'string' && /^\/admin\/(express|mag|taxi|pochta|settings)(\/|$|\?)/.test(u) && u.indexOf('city_id=') < 0) {
+                    u += (u.indexOf('?') < 0 ? '?' : '&') + 'city_id=' + cid;
+                }
+            } catch (e) {}
+            return of.call(this, u, o);
+        };
+    })();
+    </script>
+    <script>
+    // Yetkazish sozlamalari formasi tanlangan shaharga yuboriladi
+    document.addEventListener('DOMContentLoaded', function () {
+        var cid = new URLSearchParams(location.search).get('city_id');
+        if (!cid || !/^\d+$/.test(cid)) return;
+        document.querySelectorAll('form[data-city-form]').forEach(function (f) {
+            var a = f.getAttribute('action') || '';
+            if (a.indexOf('city_id=') < 0) f.setAttribute('action', a + (a.indexOf('?') < 0 ? '?' : '&') + 'city_id=' + cid);
+        });
+    });
+    </script>
     <link rel="stylesheet" href="/static/css/light-mode.css?v=3">
     <link rel="stylesheet" href="/static/css/themes.css?v=3">
 </head>
@@ -456,7 +483,12 @@
             {% if is_owner %}
             <div class="card-bg bg-white p-6 rounded-xl shadow-md col-span-1 md:row-span-2 self-start">
                 <h2 class="theme-title text-lg font-bold mb-4 text-indigo-700">⚙️ Tizim Sozlamalari</h2>
-                <form action="/admin/settings" method="POST" class="space-y-4">
+                {% if active_city_id is not none %}
+                <div class="mb-3 p-2 rounded-lg bg-indigo-50 text-indigo-700 text-xs font-semibold" style="background:rgba(99,102,241,.1)">
+                    📍 {% for c in all_cities %}{% if c.id == active_city_id %}{{ c.name }}{% endif %}{% endfor %} — yetkazish haqi va km narxlari faqat shu shaharga yoziladi (qiymat qo'yilmasa umumiysi ishlatiladi). Komissiya, kuryer ulushi, karta limiti va AI sozlamalari barcha shaharlarga umumiy.
+                </div>
+                {% endif %}
+                <form action="/admin/settings" method="POST" class="space-y-4" data-city-form="1">
                     <div>
                         <label class="block text-sm font-medium">Asosiy Yetkazish Narxi (so'm)</label>
                         <input type="number" name="base_fee" value="{{ system_setting.base_delivery_fee if system_setting else 10000 }}" class="w-full mt-1 p-2 border rounded-lg dark:bg-gray-800 dark:border-gray-700" required>
@@ -2416,7 +2448,7 @@
                 function form(url,fd){return j(url,{method:'POST',body:fd});}
                 var O=null,SV=null,CN={};
                 var INP='class="block w-full mt-1 p-2 border rounded-lg text-sm dark:bg-gray-800"';
-                function opts(sel){return O.cities.map(function(c){return '<option value="'+c.id+'"'+(sel==c.id?' selected':'')+'>'+e(c.name)+'</option>';}).join('');}
+                function opts(sel){var A=new URLSearchParams(location.search).get('city_id');return O.cities.filter(function(c){return !A||String(c.id)===A;}).map(function(c){return '<option value="'+c.id+'"'+(sel==c.id?' selected':'')+'>'+e(c.name)+'</option>';}).join('');}
                 function tname(id){var t=O.terminals.filter(function(x){return x.id==id;})[0];return t?t.name:'—';}
                 function num(l,nm,v,st){return '<div><label class="text-xs">'+l+'</label><input '+INP+' type="number" step="'+(st||1)+'" min="0" name="'+nm+'" value="'+v+'"></div>';}
                 function ownerHtml(){
@@ -2432,7 +2464,7 @@
                       +'<input name="name" placeholder="Nomi" class="p-1.5 border rounded text-xs dark:bg-gray-800" required><input name="address" placeholder="Manzil" class="p-1.5 border rounded text-xs dark:bg-gray-800" required>'
                       +'<input name="lat" placeholder="Kenglik" class="p-1.5 border rounded text-xs w-24 dark:bg-gray-800" required><input name="lng" placeholder="Uzunlik" class="p-1.5 border rounded text-xs w-24 dark:bg-gray-800" required><input name="hours" placeholder="Ish vaqti" class="p-1.5 border rounded text-xs w-28 dark:bg-gray-800">'
                       +'<label class="text-xs flex items-center gap-1"><input type="checkbox" name="active" checked> faol</label><button class="bg-indigo-600 text-white py-1.5 px-3 rounded text-xs font-bold">Saqlash / yangilash</button></form></div>';
-                    P+='<div><b class="text-xs">👷 Terminal operatorlari</b><div class="space-y-1 mt-1">'+(O.operators.map(function(o){return '<div class="p-2 border rounded-lg text-xs flex flex-wrap gap-2 items-center"><b>'+e(o.name)+'</b> '+e(o.phone)+' · '+e(tname(o.terminal_id))+' <button data-opact="'+o.user_id+'" data-v="'+(o.active?'0':'1')+'" class="px-2 py-0.5 rounded bg-gray-100">'+(o.active?'O\'chirish':'Yoqish')+'</button></div>';}).join('')||'<p class="text-xs text-gray-500">Hali operator yo\'q</p>')+'</div>'
+                    P+='<div><b class="text-xs">👷 Terminal operatorlari</b><div class="space-y-1 mt-1">'+(O.operators.map(function(o){return '<div class="p-2 border rounded-lg text-xs flex flex-wrap gap-2 items-center"><b>'+e(o.name)+'</b> '+e(o.phone)+' · '+e(tname(o.terminal_id))+' <span class="px-2 py-0.5 rounded-full text-[10px] font-bold '+(o.active?'bg-emerald-100 text-emerald-700':'bg-gray-200 text-gray-600')+'">'+(o.active?'Faol':'Nofaol')+'</span>'+(O.is_owner?' <button data-opact="'+o.user_id+'" data-v="'+(o.active?'0':'1')+'" class="px-2 py-0.5 rounded bg-gray-100">'+(o.active?'⏸ Faolsizlantirish':'▶️ Faollashtirish')+'</button> <button data-opdel="'+o.user_id+'" class="px-2 py-0.5 rounded bg-rose-100 text-rose-700">🗑 O\'chirish</button>':'')+'</div>';}).join('')||'<p class="text-xs text-gray-500">Hali operator yo\'q</p>')+'</div>'
                       +'<form id="ex-op" class="flex flex-wrap items-end gap-2 mt-2"><input name="full_name" placeholder="Ismi" class="p-1.5 border rounded text-xs dark:bg-gray-800" required><input name="phone_number" placeholder="+998..." class="p-1.5 border rounded text-xs dark:bg-gray-800" required><input name="password" placeholder="Parol" class="p-1.5 border rounded text-xs dark:bg-gray-800" required>'
                       +'<select name="terminal_id" class="p-1.5 border rounded text-xs dark:bg-gray-800">'+O.terminals.map(function(t){return '<option value="'+t.id+'">'+e(t.name)+'</option>';}).join('')+'</select><button class="bg-indigo-600 text-white py-1.5 px-3 rounded text-xs font-bold">Operator qo\'shish</button></form><p class="text-[11px] text-gray-500 mt-1">Operator /login orqali kiradi va terminal panelini ko\'radi.</p></div>';
                     h+='<div><b class="text-xs">💵 Magistral narxlar (qat\'iy: shaharlar juftligi × hajm)</b><div class="space-y-1 mt-1">'+(O.fares.map(function(f){return '<div class="flex flex-wrap items-center gap-2 p-2 border rounded-lg text-xs"><b>'+e(CN[f.from])+' → '+e(CN[f.to])+'</b> kichik '+n(f.small)+' · o\'rta '+n(f.medium)+' · katta '+n(f.large)+' <button data-fdel="'+f.id+'" class="px-2 py-0.5 rounded bg-rose-100 text-rose-700">O\'chirish</button></div>';}).join('')||'<p class="text-xs text-gray-500">Hali yo\'nalish yo\'q</p>')+'</div>'
@@ -2471,6 +2503,7 @@
                     var f=document.getElementById('ex-set');f.onsubmit=function(ev){ev.preventDefault();form('/admin/express/settings',new FormData(f)).then(function(){document.getElementById('ex-set-msg').textContent='✓ Saqlandi';load();}).catch(function(x){alert(x.message);});};
                     document.querySelectorAll('[data-svc]').forEach(function(c){c.onchange=function(){post('/admin/express/services',{key:c.dataset.svc,value:c.checked}).then(load).catch(function(x){alert(x.message);c.checked=!c.checked;});};});
                     document.querySelectorAll('[data-fdel]').forEach(function(b){b.onclick=function(){if(confirm('Yo\'nalishni o\'chirasizmi?'))post('/admin/express/fare/'+b.dataset.fdel+'/delete').then(load).catch(function(x){alert(x.message);});};});
+                    document.querySelectorAll('[data-opdel]').forEach(function(b){b.onclick=function(){if(confirm('Terminal operatorini butunlay o\'chirasizmi? Bu amalni qaytarib bo\'lmaydi.'))post('/admin/express/operators/'+b.dataset.opdel+'/delete').then(load).catch(function(x){alert(x.message);});};});
                     document.querySelectorAll('[data-opact]').forEach(function(b){b.onclick=function(){post('/admin/express/operators/'+b.dataset.opact+'/active',{active:b.dataset.v==='1'}).then(load).catch(function(x){alert(x.message);});};});
                     var ff=document.getElementById('ex-fare');ff.onsubmit=function(ev){ev.preventDefault();var g=function(k){return ff.elements[k].value;};post('/admin/express/fare',{from_city_id:+g('from'),to_city_id:+g('to'),price_small:+g('s'),price_medium:+g('m')||0,price_large:+g('l')||0}).then(load).catch(function(x){alert(x.message);});};
                     var ft=document.getElementById('ex-term');ft.onsubmit=function(ev){ev.preventDefault();var g=function(k){return ft.elements[k].value;};post('/admin/express/terminal',{city_id:+g('city'),name:g('name'),address:g('address'),lat:+g('lat'),lng:+g('lng'),hours:g('hours'),active:ft.elements.active.checked}).then(load).catch(function(x){alert(x.message);});};
@@ -2901,6 +2934,7 @@
 
         // ===== Yuqori tablar: menyu guruhlarini display none/block bilan almashtirish =====
         const IS_TERM_OP = {{ 'true' if is_terminal_op else 'false' }};
+        const IS_OWNER = {{ 'true' if is_owner else 'false' }};
         const NAV_HOME = { city: 'bosh', magistral: 'mg-bosh' };
         let currentNavGroup = 'city';
         let _mobileNavGroups = null;
@@ -2941,8 +2975,19 @@
         document.addEventListener('zmscope', function (ev) {
             const c = ev.detail && ev.detail.scope_city;
             document.querySelectorAll('[data-scope-badge]').forEach(el => {
-                el.textContent = c ? ('📍 ' + c.name + ' (sizga biriktirilgan shahar)') : '';
+                el.textContent = c ? ('📍 ' + c.name + (IS_OWNER ? ' (tanlangan shahar — o\'zgartirishlar faqat shu shaharga tegishli)' : ' (sizga biriktirilgan shahar)')) : '';
                 el.style.display = c ? '' : 'none';
+                if (c && IS_OWNER) {
+                    fetch('/admin/settings/city-overrides').then(r => r.json()).then(d => {
+                        if (!d || !d.count) { el.textContent += ' · alohida sozlama yo\'q (umumiy qiymatlar ishlatiladi)'; return; }
+                        el.textContent += ' · alohida sozlamalar: ' + d.count + ' ta ';
+                        const b = document.createElement('button');
+                        b.type = 'button'; b.textContent = '↩ Umumiyga qaytarish';
+                        b.className = 'ml-1 px-2 py-0.5 rounded bg-rose-100 text-rose-700';
+                        b.onclick = () => { if (confirm('Bu shaharning barcha alohida sozlamalari o\'chirilib, umumiy qiymatlarga qaytiladi. Davom etasizmi?')) fetch('/admin/settings/city-reset', { method: 'POST' }).then(() => location.reload()); };
+                        el.appendChild(b);
+                    }).catch(() => {});
+                }
             });
         });
 
