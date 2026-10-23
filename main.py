@@ -635,6 +635,7 @@ SECTION_LABELS_UZ = {
     "banner_sorovlari": "📣 Hamkorlarning banner reklama so'rovlarini ko'rish (o'z shahrida)",
     "pochta": "📮 Pochta (shaxsiy buyum yuborish) — o'z shahri buyurtmalari",
     "taksi": "🚕 Taksi bo'limi",
+    "bosh_pt": "📊 Bosh sahifa: bugungi pochta va taksi statistikasi (yetkazilgan pochta, taksi mijozlari, tushum) — o'z shahri doirasida",
     "magistral": "🚛 Magistral logistika (terminallar, tumanlararo pochta, magistral taksi, haydovchilar, terminal operatorlari) — o'z shahri doirasida",
 }
 DEFAULT_OPERATOR_SECTION_VISIBILITY = {
@@ -659,6 +660,7 @@ DEFAULT_OPERATOR_SECTION_VISIBILITY = {
     "mahsulot_qoshish": False,   # standart YOPIQ — egasi ruxsat bergandagina operator mahsulot qo'sha oladi
     "pochta": True,              # pochta buyurtmalarini operator o'z shahrida boshqaradi (egasi xohlasa yopadi)
     "taksi": False,
+    "bosh_pt": False,            # standart YOPIQ — egasi ruxsat bergandagina operator bosh sahifada pochta/taksi statistikasini ko'radi
     "magistral": False,          # standart YOPIQ — egasi ruxsat bergandagina operator "Magistral logistika" tabini ko'radi
 }
 # "xavfzone" (tizimni butunlay tozalash) — BU YERDA ATAYLAB YO'Q: shu bo'lim
@@ -1131,7 +1133,32 @@ async def admin_dashboard(
 
     today_orders_count = (await db.execute(orders_count_stmt)).scalar() or 0
     today_revenue_val = (await db.execute(revenue_stmt)).scalar() or 0.0
-    today_revenue = f"{today_revenue_val:,.0f}".replace(",", " ")
+
+    # ---- BUGUNGI POCHTA VA TAKSI (O'zbekiston kuni; shahar tanlangan bo'lsa — faqat shu shahar) ----
+    # Egasi doim ko'radi; operator — faqat "bosh_pt" ruxsati berilgan bo'lsa. Tushum umumiy "Bugungi Tushum"ga qo'shiladi:
+    # faqat platformaning ulushi (pochta — kuryer haqidan olinadigan komissiya, taksi — komissiya); kuryer/haydovchi haqi
+    # va mijoz to'lagan to'liq summa yozilmaydi. Tumanlararo pochta bu yerga kiritilmaydi (magistral logistikada alohida).
+    show_pt_stats = is_owner or bool((await get_operator_permissions(db)).get("bosh_pt"))
+    pt = {"parcel_n": 0, "parcel_sum": 0.0, "taxi_n": 0, "taxi_sum": 0.0}
+    if show_pt_stats:
+        _d0 = datetime.combine(today, datetime.min.time()) - UZB_TZ_OFFSET
+        _d1 = _d0 + timedelta(days=1)
+        _pq = select(func.count(ParcelOrder.id), func.coalesce(func.sum(
+            func.coalesce(ParcelOrder.platform_share, ParcelOrder.fee - func.coalesce(ParcelOrder.courier_earning, 0.0))), 0.0)).where(
+            ParcelOrder.status == "delivered", ParcelOrder.delivered_at >= _d0, ParcelOrder.delivered_at < _d1)
+        _tq = select(func.count(TaxiRide.id), func.coalesce(func.sum(TaxiRide.commission), 0.0)).where(
+            TaxiRide.status == "completed", TaxiRide.completed_at >= _d0, TaxiRide.completed_at < _d1)
+        if active_city_id is not None:
+            _pq = _pq.where(ParcelOrder.city_id == active_city_id)
+            _tq = _tq.where(TaxiRide.city_id == active_city_id)
+        for _k, _q in (("parcel", _pq), ("taxi", _tq)):
+            _n, _sm = (await db.execute(_q)).one()
+            pt[_k + "_n"], pt[_k + "_sum"] = int(_n or 0), float(_sm or 0.0)
+        today_revenue_val += pt["parcel_sum"] + pt["taxi_sum"]
+    _fmt = lambda v: f"{v:,.0f}".replace(",", " ")
+    today_revenue = _fmt(today_revenue_val)
+    pt_view = {"show": show_pt_stats, "parcel_n": pt["parcel_n"], "pochta_sum": _fmt(pt["parcel_sum"]),
+               "taxi_n": pt["taxi_n"], "taxi_sum": _fmt(pt["taxi_sum"])}
 
     # ---- BUYURTMALAR (tarkibi bilan, shahar bo'yicha filtrlangan) ----
     orders_stmt = (
@@ -1377,6 +1404,7 @@ async def admin_dashboard(
             "active_partners": active_partners,
             "today_orders_count": today_orders_count,
             "today_revenue": today_revenue,
+            "pt_stats": pt_view,
             "system_setting": system_setting,
             "orders": orders,
             "couriers": couriers,

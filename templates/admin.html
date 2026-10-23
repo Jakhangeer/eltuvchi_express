@@ -689,6 +689,18 @@
                         <p class="text-xs uppercase font-semibold">Bugungi Tushum</p>
                         <p class="text-2xl font-extrabold text-purple-700 dark:text-purple-400 mt-1">{{ today_revenue }} so'm</p>
                     </div>
+                    {% if pt_stats and pt_stats.show %}
+                    <div class="bg-sky-50 dark:bg-gray-800 p-4 rounded-lg text-center border col-span-1 md:col-span-2">
+                        <p class="text-xs uppercase font-semibold">📮 Bugungi Pochtalar (yetkazildi)</p>
+                        <p class="text-3xl font-extrabold text-sky-700 dark:text-sky-400 mt-1">{{ pt_stats.parcel_n }}</p>
+                        <p class="text-[11px] opacity-70 mt-1">Komissiya tushumi: <b>{{ pt_stats.pochta_sum }}</b> so'm</p>
+                    </div>
+                    <div class="bg-amber-50 dark:bg-gray-800 p-4 rounded-lg text-center border col-span-1 md:col-span-2">
+                        <p class="text-xs uppercase font-semibold">🚕 Bugungi Taksi Mijozlari (manzilga yetkazildi)</p>
+                        <p class="text-3xl font-extrabold text-amber-700 dark:text-amber-400 mt-1">{{ pt_stats.taxi_n }}</p>
+                        <p class="text-[11px] opacity-70 mt-1">Komissiya tushumi: <b>{{ pt_stats.taxi_sum }}</b> so'm</p>
+                    </div>
+                    {% endif %}
                 </div>
             </div>
 
