@@ -1119,9 +1119,12 @@ async def admin_dashboard(
     operators = operators_query.scalars().all()
 
     # ---- BUGUNGI STATISTIKA ----
-    orders_count_stmt = select(func.count(Order.id)).where(func.date(Order.created_at) == today)
-    revenue_stmt = select(func.sum(Order.delivery_fee)).where(
-        func.date(Order.created_at) == today, Order.status == OrderStatus.DELIVERED
+    # Bugun — O'ZBEKISTON kuni oralig'i (grafik bilan bir xil); tushum — yetkazilgan buyurtmalarning total_price yig'indisi.
+    _o0 = datetime.combine(today, datetime.min.time()) - UZB_TZ_OFFSET
+    _o1 = _o0 + timedelta(days=1)
+    orders_count_stmt = select(func.count(Order.id)).where(Order.created_at >= _o0, Order.created_at < _o1)
+    revenue_stmt = select(func.sum(Order.total_price)).where(
+        Order.created_at >= _o0, Order.created_at < _o1, Order.status == OrderStatus.DELIVERED
     )
     if active_city_id is not None:
         orders_count_stmt = orders_count_stmt.join(
