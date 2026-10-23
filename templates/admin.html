@@ -706,19 +706,44 @@
 
         </div>
 
-        <!-- JONLI GRAFIK — bugungi kunning soat bo'yicha buyurtmalar/tushum dinamikasi -->
-        <div class="card-bg bg-white p-6 rounded-xl shadow-md">
-            <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
-                <h2 class="theme-title text-lg font-bold text-indigo-700">📈 Bugungi Dinamika (soat bo'yicha)</h2>
+        <!-- JONLI GRAFIK — 6 liniya: buyurtmalar / pochtalar / taksi (soni va tushumi), timeframe: H1 H4 D1 W1 MN M6 M12 -->
+        <div class="card-bg bg-white p-6 rounded-xl shadow-md" id="dyn-card">
+            <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+                <h2 class="theme-title text-lg font-bold text-indigo-700">📈 Dinamika</h2>
                 <span class="text-xs font-semibold flex items-center gap-1.5 text-gray-500">
                     <span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
                     Har 30 soniyada yangilanadi
                 </span>
             </div>
-            <div class="chart-wrap">
+            <div class="flex flex-wrap gap-1.5 mb-3" id="dyn-tf">
+                <button type="button" data-tf="H1" class="dyn-tf-btn">H1</button>
+                <button type="button" data-tf="H4" class="dyn-tf-btn">H4</button>
+                <button type="button" data-tf="D1" class="dyn-tf-btn">D1</button>
+                <button type="button" data-tf="W1" class="dyn-tf-btn">W1</button>
+                <button type="button" data-tf="MN" class="dyn-tf-btn">MN</button>
+                <button type="button" data-tf="M6" class="dyn-tf-btn">M6</button>
+                <button type="button" data-tf="M12" class="dyn-tf-btn">M12</button>
+                <span class="text-[11px] opacity-60 self-center ml-1" id="dyn-tf-hint"></span>
+            </div>
+            <div class="flex flex-wrap gap-2 mb-2" id="dyn-groups"></div>
+            <div class="flex flex-wrap gap-1.5 mb-2" id="dyn-lines"></div>
+            <details class="mb-3 text-xs" id="dyn-colors">
+                <summary class="cursor-pointer font-semibold text-indigo-600 select-none">🎨 Liniya ranglarini o'zgartirish</summary>
+                <div class="mt-2 flex flex-wrap gap-3 items-center" id="dyn-color-list"></div>
+            </details>
+            <div class="chart-wrap" style="height:320px">
                 <canvas id="hourly-chart"></canvas>
             </div>
         </div>
+        <style>
+            .dyn-tf-btn { padding: 4px 12px; border-radius: 8px; font-size: 12px; font-weight: 700; border: 1px solid rgba(100,116,139,.35); background: transparent; color: inherit; cursor: pointer; }
+            .dyn-tf-btn.active { background: #4f46e5; color: #fff; border-color: #4f46e5; }
+            .dyn-pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; border: 1px solid rgba(100,116,139,.35); cursor: pointer; user-select: none; }
+            .dyn-pill.off { opacity: .4; text-decoration: line-through; }
+            .dyn-sw { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+            #dyn-color-list label { display: inline-flex; align-items: center; gap: 6px; }
+            #dyn-color-list input[type=color] { width: 28px; height: 22px; padding: 0; border: none; background: none; cursor: pointer; }
+        </style>
 
         {% if is_owner and analytics %}
         <!-- ANALITIKA (faqat OWNER) -->
@@ -3643,56 +3668,121 @@
             });
         }
 
-        // ==================== JONLI GRAFIK (Chart.js) ====================
+        // ==================== JONLI GRAFIK (Chart.js) — 6 liniya, timeframe, rang va ko'rinish sozlamalari ====================
+        const DYN_LINES = [
+            { key: 'orders_count',    group: 'orders',  label: 'Buyurtmalar soni',      axis: 'y',  color: '#3b82f6', dash: [] },
+            { key: 'orders_revenue',  group: 'orders',  label: "Buyurtmalar tushumi",   axis: 'y1', color: '#22c55e', dash: [6, 4] },
+            { key: 'parcels_count',   group: 'parcels', label: 'Pochtalar soni',        axis: 'y',  color: '#f59e0b', dash: [] },
+            { key: 'parcels_revenue', group: 'parcels', label: 'Pochta tushumi',        axis: 'y1', color: '#ef4444', dash: [6, 4] },
+            { key: 'taxi_count',      group: 'taxi',    label: 'Taksi xizmatlari soni', axis: 'y',  color: '#a855f7', dash: [] },
+            { key: 'taxi_revenue',    group: 'taxi',    label: 'Taksi tushumi',         axis: 'y1', color: '#14b8a6', dash: [6, 4] },
+        ];
+        const DYN_GROUPS = { orders: '📦 Buyurtmalar', parcels: '📮 Pochtalar', taxi: '🚕 Taksi' };
+        const DYN_TF_HINT = { H1: 'soatlik · oxirgi 24 soat', H4: '4 soatlik · 7 kun', D1: 'kunlik · 30 kun', W1: 'haftalik · 12 hafta', MN: 'joriy oy (kunlar)', M6: 'oylik · 6 oy', M12: 'oylik · 12 oy' };
         let hourlyChartInstance = null;
+        let dynState = null, dynLastData = null;
+        function dynLoadState() {
+            let st = {};
+            try { st = JSON.parse(localStorage.getItem('admin_dyn_state') || '{}') || {}; } catch (e) {}
+            dynState = { tf: DYN_TF_HINT[st.tf] ? st.tf : 'H1', colors: st.colors || {}, hidden: st.hidden || {} };
+        }
+        function dynSave() { try { localStorage.setItem('admin_dyn_state', JSON.stringify(dynState)); } catch (e) {} }
+        function dynColor(l) { return dynState.colors[l.key] || l.color; }
+        function dynVisibleLines() { return DYN_LINES.filter(l => !(dynLastData && !dynLastData.pt && l.group !== 'orders')); }
+        function dynBuildControls() {
+            const lines = dynVisibleLines();
+            const gEl = document.getElementById('dyn-groups'), lEl = document.getElementById('dyn-lines'), cEl = document.getElementById('dyn-color-list');
+            if (!gEl || !lEl || !cEl) return;
+            gEl.innerHTML = ''; lEl.innerHTML = ''; cEl.innerHTML = '';
+            Object.keys(DYN_GROUPS).forEach(g => {
+                const gl = lines.filter(l => l.group === g);
+                if (!gl.length) return;
+                const allOff = gl.every(l => dynState.hidden[l.key]);
+                const b = document.createElement('span');
+                b.className = 'dyn-pill' + (allOff ? ' off' : '');
+                b.textContent = DYN_GROUPS[g];
+                b.title = "Soni va tushumi liniyalarini birga ochish/yopish";
+                b.onclick = () => { gl.forEach(l => { dynState.hidden[l.key] = !allOff; }); dynSave(); dynBuildControls(); dynApply(); };
+                gEl.appendChild(b);
+            });
+            lines.forEach(l => {
+                const p = document.createElement('span');
+                p.className = 'dyn-pill' + (dynState.hidden[l.key] ? ' off' : '');
+                p.innerHTML = '<span class="dyn-sw" style="background:' + dynColor(l) + '"></span>' + l.label;
+                p.onclick = () => { dynState.hidden[l.key] = !dynState.hidden[l.key]; dynSave(); dynBuildControls(); dynApply(); };
+                lEl.appendChild(p);
+                const lab = document.createElement('label');
+                const inp = document.createElement('input');
+                inp.type = 'color'; inp.value = dynColor(l);
+                inp.oninput = () => { dynState.colors[l.key] = inp.value; dynSave(); dynApply(); lEl.querySelectorAll('.dyn-sw').forEach((sw, i) => { sw.style.background = dynColor(lines[i]); }); };
+                lab.appendChild(inp); lab.appendChild(document.createTextNode(' ' + l.label));
+                cEl.appendChild(lab);
+            });
+            const reset = document.createElement('button');
+            reset.type = 'button'; reset.textContent = '↩ Standart ranglar';
+            reset.className = 'px-2 py-1 rounded bg-gray-100 dark:bg-gray-800 font-semibold';
+            reset.onclick = () => { dynState.colors = {}; dynSave(); dynBuildControls(); dynApply(); };
+            cEl.appendChild(reset);
+            document.querySelectorAll('.dyn-tf-btn').forEach(b => b.classList.toggle('active', b.dataset.tf === dynState.tf));
+            const hint = document.getElementById('dyn-tf-hint'); if (hint) hint.textContent = DYN_TF_HINT[dynState.tf];
+        }
+        function dynDatasets() {
+            return dynVisibleLines().map(l => ({
+                label: l.label, data: dynLastData.series[l.key], yAxisID: l.axis, hidden: !!dynState.hidden[l.key],
+                borderColor: dynColor(l), backgroundColor: dynColor(l), borderDash: l.dash, borderWidth: 2,
+                tension: .3, pointRadius: dynLastData.labels.length > 40 ? 0 : 2, pointHoverRadius: 4, fill: false,
+            }));
+        }
+        function dynApply() {
+            if (!hourlyChartInstance || !dynLastData) return;
+            hourlyChartInstance.data.labels = dynLastData.labels;
+            hourlyChartInstance.data.datasets = dynDatasets();
+            hourlyChartInstance.update('none');
+        }
         function renderHourlyChart() {
             const canvas = document.getElementById('hourly-chart');
             if (!canvas || typeof Chart === 'undefined') return;
-            const url = '/admin/analytics/hourly.json' + (ADMIN_ACTIVE_CITY_ID !== null ? ('?city_id=' + ADMIN_ACTIVE_CITY_ID) : '');
-            fetch(url, { credentials: 'same-origin' })
+            if (!dynState) dynLoadState();
+            const sep = ADMIN_ACTIVE_CITY_ID !== null ? ('&city_id=' + ADMIN_ACTIVE_CITY_ID) : '';
+            fetch('/admin/analytics/dynamics.json?tf=' + dynState.tf + sep, { credentials: 'same-origin' })
                 .then(res => res.ok ? res.json() : null)
                 .then(data => {
                     if (!data) return;
+                    const rebuild = !dynLastData || dynLastData.pt !== data.pt;
+                    dynLastData = data;
+                    if (rebuild) dynBuildControls();
                     const isDark = document.body.classList.contains('dark');
                     const gridColor = isDark ? 'rgba(255,255,255,.08)' : 'rgba(0,0,0,.06)';
                     const textColor = isDark ? '#cbd5e1' : '#475569';
-
-                    if (hourlyChartInstance) {
-                        hourlyChartInstance.data.datasets[0].data = data.order_counts;
-                        hourlyChartInstance.data.datasets[1].data = data.revenue_by_hour;
-                        hourlyChartInstance.update('none');
-                        return;
-                    }
-
+                    if (hourlyChartInstance) { dynApply(); return; }
                     hourlyChartInstance = new Chart(canvas.getContext('2d'), {
-                        data: {
-                            labels: data.hours,
-                            datasets: [
-                                {
-                                    type: 'bar', label: 'Buyurtmalar soni', data: data.order_counts,
-                                    backgroundColor: isDark ? 'rgba(99,102,241,.55)' : 'rgba(37,99,235,.55)', borderRadius: 4, yAxisID: 'y',
-                                },
-                                {
-                                    type: 'line', label: "Tushum (so'm)", data: data.revenue_by_hour,
-                                    borderColor: isDark ? '#34d399' : '#10B981', backgroundColor: isDark ? 'rgba(52,211,153,.15)' : 'rgba(16,185,129,.12)',
-                                    tension: .35, fill: true, yAxisID: 'y1', pointRadius: 2,
-                                },
-                            ],
-                        },
+                        type: 'line',
+                        data: { labels: data.labels, datasets: dynDatasets() },
                         options: {
                             responsive: true, maintainAspectRatio: false,
                             interaction: { mode: 'index', intersect: false },
-                            plugins: { legend: { labels: { color: textColor, font: { size: 11 } } } },
+                            plugins: {
+                                legend: { display: false },
+                                tooltip: { callbacks: { title: items => (dynLastData.full_labels && dynLastData.full_labels[items[0].dataIndex]) || items[0].label } },
+                            },
                             scales: {
-                                x: { ticks: { color: textColor, font: { size: 10 } }, grid: { color: gridColor } },
-                                y: { position: 'left', beginAtZero: true, ticks: { color: textColor, precision: 0 }, grid: { color: gridColor } },
-                                y1: { position: 'right', beginAtZero: true, ticks: { color: textColor }, grid: { display: false } },
+                                x: { ticks: { color: textColor, font: { size: 10 }, maxRotation: 0, autoSkip: true }, grid: { color: gridColor } },
+                                y: { position: 'left', beginAtZero: true, title: { display: true, text: 'Soni', color: textColor }, ticks: { color: textColor, precision: 0 }, grid: { color: gridColor } },
+                                y1: { position: 'right', beginAtZero: true, title: { display: true, text: "Tushum (so'm)", color: textColor }, ticks: { color: textColor }, grid: { display: false } },
                             },
                         },
                     });
                 })
                 .catch(e => console.error('Grafikni yuklashda xatolik', e));
         }
+        document.addEventListener('click', function (ev) {
+            const b = ev.target.closest && ev.target.closest('.dyn-tf-btn');
+            if (!b) return;
+            if (!dynState) dynLoadState();
+            dynState.tf = b.dataset.tf; dynSave(); dynLastData = null;
+            if (hourlyChartInstance) { hourlyChartInstance.destroy(); hourlyChartInstance = null; }
+            dynBuildControls(); renderHourlyChart();
+        });
 
 
         // ---- TRANZAKSIYALAR: Kuryer/Hamkor bo'yicha filtr ----

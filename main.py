@@ -1550,6 +1550,94 @@ async def admin_analytics_hourly(
     })
 
 
+@admin_router.get("/admin/analytics/dynamics.json")
+async def admin_analytics_dynamics(
+    tf: str = "H1",
+    city_id: Optional[int] = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin_user),
+):
+    """Bosh sahifadagi "Dinamika" grafigi: 6 ta liniya — buyurtmalar (soni, tushum), pochtalar (soni, komissiya tushumi),
+    taksi (soni, komissiya tushumi). Timeframe'lar (trading kabi): H1 — soatlik (oxirgi 24 soat), H4 — 4 soatlik (7 kun),
+    D1 — kunlik (30 kun), W1 — haftalik (12 hafta), MN — joriy oy (kunlar), M6 / M12 — oylik (6 / 12 oy).
+    Barcha vaqtlar O'zbekiston vaqti bo'yicha. Shahar tanlangan (yoki operator) bo'lsa — faqat shu shahar.
+    Pochta/taksi — faqat egasiga yoki "bosh_pt" ruxsati bor operatorga."""
+    from bisect import bisect_right
+    is_owner = current_user.role == UserRole.OWNER
+    active_city_id = city_id if is_owner else current_user.city_id
+    show_pt = is_owner or bool((await get_operator_permissions(db)).get("bosh_pt"))
+    tf = tf if tf in ("H1", "H4", "D1", "W1", "MN", "M6", "M12") else "H1"
+
+    now = datetime.utcnow() + UZB_TZ_OFFSET
+    def _month_start(y, m):
+        return datetime(y + (m - 1) // 12, (m - 1) % 12 + 1, 1)
+    if tf == "H1":
+        end0 = now.replace(minute=0, second=0, microsecond=0)
+        starts = [end0 - timedelta(hours=23 - i) for i in range(24)]
+        step_end = lambda d: d + timedelta(hours=1)
+        fmt = lambda d: d.strftime("%H:00")
+    elif tf == "H4":
+        base = now.replace(hour=(now.hour // 4) * 4, minute=0, second=0, microsecond=0)
+        starts = [base - timedelta(hours=4 * (41 - i)) for i in range(42)]
+        step_end = lambda d: d + timedelta(hours=4)
+        fmt = lambda d: d.strftime("%d.%m %H:00")
+    elif tf == "D1":
+        base = datetime.combine(now.date(), datetime.min.time())
+        starts = [base - timedelta(days=29 - i) for i in range(30)]
+        step_end = lambda d: d + timedelta(days=1)
+        fmt = lambda d: d.strftime("%d.%m")
+    elif tf == "W1":
+        base = datetime.combine(now.date() - timedelta(days=now.weekday()), datetime.min.time())
+        starts = [base - timedelta(weeks=11 - i) for i in range(12)]
+        step_end = lambda d: d + timedelta(weeks=1)
+        fmt = lambda d: d.strftime("%d.%m")
+    elif tf == "MN":
+        first = datetime(now.year, now.month, 1)
+        starts = [first + timedelta(days=i) for i in range(now.day)]
+        step_end = lambda d: d + timedelta(days=1)
+        fmt = lambda d: d.strftime("%d")
+    else:
+        n = 6 if tf == "M6" else 12
+        starts = [_month_start(now.year, now.month - (n - 1 - i)) for i in range(n)]
+        step_end = lambda d: _month_start(d.year, d.month + 1)
+        fmt = lambda d: d.strftime("%m.%Y")
+
+    start_utc = starts[0] - UZB_TZ_OFFSET
+    end_utc = step_end(starts[-1]) - UZB_TZ_OFFSET
+    n_b = len(starts)
+    zero = lambda: [0] * n_b
+    series = {k: zero() for k in ("orders_count", "orders_revenue", "parcels_count", "parcels_revenue", "taxi_count", "taxi_revenue")}
+
+    def put(dt_utc, ck, rk=None, val=0.0):
+        i = bisect_right(starts, dt_utc + UZB_TZ_OFFSET) - 1
+        if 0 <= i < n_b:
+            series[ck][i] += 1
+            if rk:
+                series[rk][i] += float(val or 0.0)
+
+    oq = select(Order.created_at, Order.total_price, Order.status).where(Order.created_at >= start_utc, Order.created_at < end_utc)
+    if active_city_id is not None:
+        oq = oq.join(PartnerProfile, Order.partner_id == PartnerProfile.id).where(PartnerProfile.city_id == active_city_id)
+    for created_at, total_price, st in (await db.execute(oq)).all():
+        put(created_at, "orders_count", "orders_revenue" if st == OrderStatus.DELIVERED else None, total_price)
+
+    if show_pt:
+        pq = select(ParcelOrder.delivered_at, ParcelOrder.platform_share, ParcelOrder.fee, ParcelOrder.courier_earning).where(
+            ParcelOrder.status == "delivered", ParcelOrder.delivered_at >= start_utc, ParcelOrder.delivered_at < end_utc)
+        tq = select(TaxiRide.completed_at, TaxiRide.commission).where(
+            TaxiRide.status == "completed", TaxiRide.completed_at >= start_utc, TaxiRide.completed_at < end_utc)
+        if active_city_id is not None:
+            pq = pq.where(ParcelOrder.city_id == active_city_id)
+            tq = tq.where(TaxiRide.city_id == active_city_id)
+        for dt, share, fee, earn in (await db.execute(pq)).all():
+            put(dt, "parcels_count", "parcels_revenue", share if share is not None else (fee or 0.0) - (earn or 0.0))
+        for dt, comm in (await db.execute(tq)).all():
+            put(dt, "taxi_count", "taxi_revenue", comm)
+
+    return JSONResponse({"tf": tf, "pt": show_pt, "labels": [fmt(d) for d in starts], "series": series,
+                         "full_labels": [d.strftime("%d.%m.%Y %H:%M") for d in starts]})
+
+
 # ==================== 2. TIZIM SOZLAMALARI (faqat OWNER) ====================
 @settings_router.post("")
 async def update_settings(
